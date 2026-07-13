@@ -1,0 +1,25 @@
+#!/bin/sh
+git fetch origin --quiet || { echo "PRE-PUSH BLOCK: fetch failed — cannot verify freshness (GOVERNANCE §3)"; exit 1; }
+if ! git merge-base --is-ancestor origin/main HEAD; then
+  echo "PRE-PUSH BLOCK: origin/main is not an ancestor of HEAD — stale base (GOVERNANCE §3, F-022). Fetch/rebase, then retry."
+  exit 1
+fi
+
+python .githooks/validate_artifacts.py . || { echo "PRE-PUSH BLOCK: ARTIFACT_STANDARD Tier 0 violation (see above)."; exit 1; }
+
+# Leak-grep (BLUEPRINT §6 P0): block common secret/credential patterns in
+# everything about to be pushed. Diffs against origin/main when it exists,
+# against the empty tree otherwise (first push).
+LEAK_PATTERN='(AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Za-z0-9]{20,}|(api|secret|access)[_-]?key["'"'"' ]*[:=]["'"'"' ]*[A-Za-z0-9/+_-]{16,}|password["'"'"' ]*[:=]["'"'"' ]*[^ ]{6,})'
+if git rev-parse --verify -q origin/main >/dev/null; then
+  base="origin/main"
+else
+  base="$(git hash-object -t tree /dev/null)"
+fi
+if git diff --diff-filter=ACM "$base" HEAD | grep -Eio "$LEAK_PATTERN" >/dev/null; then
+  echo "PRE-PUSH BLOCK: possible secret detected in pushed diff (leak-grep)."
+  echo "Remove the secret from history before pushing. See GOVERNANCE.md §1."
+  exit 1
+fi
+
+echo "pre-push: Tier 0 + leak-grep PASS"
