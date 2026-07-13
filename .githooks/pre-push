@@ -1,7 +1,7 @@
 #!/bin/sh
-git fetch origin --quiet || { echo "PRE-PUSH BLOCK: fetch failed — cannot verify freshness (GOVERNANCE §3)"; exit 1; }
+git fetch origin --quiet || { echo "PRE-PUSH BLOCK: fetch failed — cannot verify freshness"; exit 1; }
 if ! git merge-base --is-ancestor origin/main HEAD; then
-  echo "PRE-PUSH BLOCK: origin/main is not an ancestor of HEAD — stale base (GOVERNANCE §3, F-022). Fetch/rebase, then retry."
+  echo "PRE-PUSH BLOCK: origin/main is not an ancestor of HEAD — stale base. Fetch/rebase, then retry."
   exit 1
 fi
 
@@ -18,7 +18,7 @@ else
 fi
 if git diff --diff-filter=ACM "$base" HEAD | grep -Eio "$LEAK_PATTERN" >/dev/null; then
   echo "PRE-PUSH BLOCK: possible secret detected in pushed diff (leak-grep)."
-  echo "Remove the secret from history before pushing. See GOVERNANCE.md §1."
+  echo "Remove the secret from history before pushing. See the OS governance rules §1."
   exit 1
 fi
 

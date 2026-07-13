@@ -14,10 +14,14 @@ pre-registered, BLUEPRINT §0).
 gate items (telemetry dry run shown, leak-grep hook tested against
 seeded fixture, repo-publish-gate run).
 **Open decisions:** rename window open until 2026-07-20 or first
-external link (D-2). Fixture final counts → quantization integers at
-Phase 1 freeze (D-6). Canonical validator does not recognize decisions/
-(two repos now affected: marketing, this one). Canonical patch belongs
-to the queued kristian-os hook-maintenance batch — not this repo's work.
+external link. Fixture final counts → quantization integers at Phase 1
+freeze. Canonical validator does not recognize decisions/ (two repos
+now affected: marketing, this one). Canonical patch belongs to the
+queued hook-maintenance batch in the private operations OS — not this
+repo's work.
 **Change log:**
 - 2026-07-13 — repo created; BLUEPRINT v1.0, CLAUDE.md, decisions/0001,
-  STATE.md committed in scaffold commit (Fable session, D-7).
+  STATE.md committed in scaffold commit (Fable session).
+- 2026-07-13 — publish-gate FAIL on internal references (caught
+  pre-push by the gate); redacted per spec; labeled cross-reference map
+  preserved privately.

@@ -18,9 +18,9 @@ CURRENT_FLAGSHIP = "ai-reliability-engine"
 IS_FLAGSHIP = ROOT.resolve().name == CURRENT_FLAGSHIP
 errors = []
 
-# GOVERNANCE.md §3, Build-repo STATE rule: STATE.md is part of the scaffold.
+# OS governance rules §3, Build-repo STATE rule: STATE.md is part of the scaffold.
 if not (ROOT / "STATE.md").exists():
-    errors.append("STATE.md missing (GOVERNANCE section 3, Build-repo STATE rule)")
+    errors.append("STATE.md missing (Build-repo STATE rule)")
 
 readme = ROOT / "README.md"
 if not readme.exists():
