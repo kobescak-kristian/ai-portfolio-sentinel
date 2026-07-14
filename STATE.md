@@ -33,7 +33,13 @@ distribute these items into the existing phase gates as exit
 criteria (CI belongs in Phase 0 — cheapest from the first commit)
 and bump the blueprint changelog accordingly; until that lands,
 this STATE entry is the decision's home and the blueprint is
-one amendment behind.
+one amendment behind. Amendment note for that touch: locked
+decision 6 (Actions as SCHEDULER, Phase 5 exit criterion) and
+this decision's CI-on-push (Phase 0) are two different uses of
+the same platform — continuous integration on push vs. a
+cron-scheduled workflow. Both stand; the amendment states this
+explicitly so no session "resolves" a contradiction that does
+not exist.
 
 Scope clarification 2026-07-14 (Kristian): the portfolio website
 (the public site repo) is an explicit monitored surface, two
