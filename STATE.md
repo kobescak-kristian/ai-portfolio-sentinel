@@ -19,6 +19,21 @@ freeze. Canonical validator does not recognize decisions/ (two repos
 now affected: marketing, this one). Canonical patch belongs to the
 queued hook-maintenance batch in the private operations OS — not this
 repo's work.
+
+Scope decision 2026-07-14 (Kristian): sentinel is built to
+production engineering standard as an explicit learning objective —
+CI on every push, unit+integration+FI test depth with coverage
+stated, structured logging + failure alerting, pinned deps +
+versioned releases, ops runbook (deploy/rollback/diagnose). Claim
+vocabulary unchanged per CLAUDE.md ladder: "production engineering
+standard, operated at n=1" — never "production-ready" unqualified.
+Phase gates absorb these as exit criteria, not a separate phase.
+Next action from this decision: at the next blueprint touch,
+distribute these items into the existing phase gates as exit
+criteria (CI belongs in Phase 0 — cheapest from the first commit)
+and bump the blueprint changelog accordingly; until that lands,
+this STATE entry is the decision's home and the blueprint is
+one amendment behind.
 **Change log:**
 - 2026-07-13 — repo created; BLUEPRINT v1.0, CLAUDE.md, decisions/0001,
   STATE.md committed in scaffold commit (Fable session).
