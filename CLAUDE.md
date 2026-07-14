@@ -6,6 +6,35 @@ every session here. Read BLUEPRINT.md §0 before any work; read
 STATE.md for current truth. A condensed operating spec captures the
 blueprint's rules — build sessions execute it, they do not re-decide it.
 
+## Public-live writing rules (this repo publishes on every push)
+- Every commit here is instantly public — there is no flip gate
+  to catch mistakes later. Third parties (companies, clients,
+  hiring processes, individuals) never appear by name in this
+  repo; external context enters as anonymized reason-shapes
+  ("an external hiring-process timeline", "a client engagement").
+  Names resolve in the private governance repo (kristian-os),
+  which is the ledger for identities. Evidence (numbers, hashes,
+  gate outputs, run logs) is always verbatim — anonymization
+  applies to third parties, never to measurements.
+- No absolute local paths; no private-repo path fragments
+  (bare governance-repo name permitted in this file only).
+
+## Claims ladder (deployment honesty — binding on README, STATE,
+## and all writeups in this repo)
+- Permitted when true: "runs unattended on a schedule against my
+  real public repos"; "in production for my own operations since
+  <date>: N consecutive scheduled runs inside cost caps, full run
+  history and cost telemetry published."
+- Never permitted, regardless of how good the run log looks:
+  "production-ready" as an unqualified label; "battle-tested";
+  any availability/reliability claim; anything implying users
+  other than the operator. n=1 with published telemetry is the
+  claim — the log is the evidence, adjectives are not.
+- Live runs are REAL data (this portfolio's actual repos); the
+  eval gate runs on SYNTHETIC fixtures with a frozen answer key.
+  Both labels stated wherever results appear — never blur the
+  two.
+
 PRE-EMPTION RULE (verbatim twin of BLUEPRINT §0 — both copies change
 together or the change is invalid): OS task queue items, job
 applications, outreach, and client work ALWAYS pre-empt this lane.
