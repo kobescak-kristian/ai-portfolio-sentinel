@@ -34,6 +34,19 @@ criteria (CI belongs in Phase 0 — cheapest from the first commit)
 and bump the blueprint changelog accordingly; until that lands,
 this STATE entry is the decision's home and the blueprint is
 one amendment behind.
+
+Scope clarification 2026-07-14 (Kristian): the portfolio website
+(the public site repo) is an explicit monitored surface, two
+checks: (1) its URLs participate in link-rot checking wherever
+other surfaces point at them; (2) claims parity — numbers and
+gate statements on site cards must match the committed files of
+the repos they cite (the manual cross-check the site publish gate
+performs, automated weekly). Boundary: sentinel checks
+repo-content parity only; served-site verification (Pages build
+bound to commit, cache) remains the publish gate's job. No
+availability or uptime monitoring — that would exceed the claims
+ladder. Blueprint absorbs this with the same next-touch amendment
+already owed.
 **Change log:**
 - 2026-07-13 — repo created; BLUEPRINT v1.0, CLAUDE.md, decisions/0001,
   STATE.md committed in scaffold commit (Fable session).
