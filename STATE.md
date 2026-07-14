@@ -47,6 +47,18 @@ bound to commit, cache) remains the publish gate's job. No
 availability or uptime monitoring — that would exceed the claims
 ladder. Blueprint absorbs this with the same next-touch amendment
 already owed.
+
+Roadmap decision 2026-07-14 (Kristian): a REMEDIATION agent is
+pre-registered as a separate future automation — consumes sentinel
+findings, drafts mechanical parity fixes ONLY (claim/number drift,
+link targets) as pull requests; a human merges every change,
+always; no push access to main; judgment-class findings stay
+flag-only. Sentinel itself remains read-only permanently — the
+fixer is a second bounded system, never a sentinel capability.
+Trigger to build: a real findings history exists (several live
+runs) AND the fix workload proves annoying by experience, not by
+anticipation. Claims line when built: "proposes fixes; a human
+merges every change."
 **Change log:**
 - 2026-07-13 — repo created; BLUEPRINT v1.0, CLAUDE.md, decisions/0001,
   STATE.md committed in scaffold commit (Fable session).
