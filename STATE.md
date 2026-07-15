@@ -9,6 +9,10 @@ no production claims.
 
 **Classification:** EXPERIMENT · T0 (BLUEPRINT.md header; reclassification
 pre-registered, BLUEPRINT §0).
+**Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
+2026-07-15, canonical record in kristian-os
+domains/github-ops/STATE.md (same date). Public-while-dormant is
+intended; do not flag.
 **Phase status:** Phase 0 IN PROGRESS — scaffold commit is this commit.
 **Plan:** Phases 0–6 per BLUEPRINT §6. Next action: complete Phase 0
 gate items (telemetry dry run shown, leak-grep hook tested against
