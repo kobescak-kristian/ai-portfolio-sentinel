@@ -1,5 +1,7 @@
 # ai-portfolio-sentinel
 
+[![CI](https://github.com/kobescak-kristian/ai-portfolio-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/kobescak-kristian/ai-portfolio-sentinel/actions/workflows/ci.yml)
+
 > **LEARNING LANE (EXPERIMENT).** This is a personal learning project, not a
 > product or a client-facing service. The eval gate runs on labeled
 > **synthetic** fixtures; live scheduled runs monitor only Kristian's own
@@ -47,3 +49,4 @@ evidence (BLUEPRINT.md §6).
 | version | date | change |
 |---|---|---|
 | v0.1 | 2026-07-13 | Tier 0 scaffold: BLUEPRINT.md, CLAUDE.md, decisions/0001, STATE.md committed. Phase 0 in progress. |
+| v0.2 | 2026-08-03 | Phase 0 closed: SPEC.md, claims-ladder amendments, program ADR, cost telemetry (CostRow + JSONL ledger + dry run + 36 tests), CI on push, publish-gate canary. Production-readiness program opened (owner ruling 2026-08-03). |

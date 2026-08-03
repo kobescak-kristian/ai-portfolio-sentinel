@@ -12,9 +12,12 @@ pre-registered, BLUEPRINT §0).
 **Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
 2026-07-15, canonical record in the private operations OS (same
 date). Public-while-dormant is intended; do not flag.
-**Phase status:** Phase 0 IN PROGRESS — foundation implemented this
-commit; closure pending the first green CI run on this commit plus a
-separate evidence-backed closure record.
+**Phase status:** Phase 0 CLOSED 2026-08-03 — evidence: foundation
+and canary commits public on main; repository publish gate OVERALL
+PASS from the closing HEAD; CI green on push (Actions run
+30852395018, conclusion success; 36/36 tests, ubuntu-latest, Python
+3.12). Next action: Phase 1 per BLUEPRINT §6 (fixtures, answer key,
+eval gate freeze — owner approval checkpoint).
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
