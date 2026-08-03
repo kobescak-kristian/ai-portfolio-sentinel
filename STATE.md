@@ -10,15 +10,27 @@ no production claims.
 **Classification:** EXPERIMENT · T0 (BLUEPRINT.md header; reclassification
 pre-registered, BLUEPRINT §0).
 **Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
-2026-07-15, canonical record in kristian-os
-domains/github-ops/STATE.md (same date). Public-while-dormant is
-intended; do not flag.
-**Phase status:** Phase 0 IN PROGRESS — scaffold commit is this commit.
-**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: complete Phase 0
-gate items (telemetry dry run shown, leak-grep hook tested against
-seeded fixture, repo-publish-gate run).
-**Open decisions:** rename window open until 2026-07-20 or first
-external link. Fixture final counts → quantization integers at Phase 1
+2026-07-15, canonical record in the private operations OS (same
+date). Public-while-dormant is intended; do not flag.
+**Phase status:** Phase 0 IN PROGRESS — foundation implemented this
+commit; closure pending the first green CI run on this commit plus a
+separate evidence-backed closure record.
+**Status:** in development toward production-ready (program opened by
+owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
+amended 2026-08-03.
+**License:** choice RESOLVED — Apache-2.0, portfolio default, owner
+ruling 2026-08-03. The LICENSE file is assigned to the coordinated
+fleet rollout; that rollout must SKIP this repository while any
+implementation session holds its pen — this repo receives its LICENSE
+in a later repo-exclusive rollout step. Remaining program-closure
+dependency = completion of that rollout, not an unresolved owner
+choice.
+**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: Phase 0 closure
+dispatch after green CI evidence.
+**Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
+name kept). Internal path reference removed from the Visibility line
+2026-08-03 (this repo's own public-live rule; content unchanged
+otherwise). Fixture final counts → quantization integers at Phase 1
 freeze. Canonical validator does not recognize decisions/ (two repos
 now affected: marketing, this one). Canonical patch belongs to the
 queued hook-maintenance batch in the private operations OS — not this

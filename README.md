@@ -5,6 +5,10 @@
 > **synthetic** fixtures; live scheduled runs monitor only Kristian's own
 > public repositories. No production, uptime, autonomy, or third-party
 > monitoring claim is made anywhere in this repo.
+> **Status: in development toward production-ready.** No production
+> claim is made at the present development stage. A bounded
+> production-ready claim may be made only after every
+> production-readiness program gate passes (BLUEPRINT §11).
 
 ## Problem
 

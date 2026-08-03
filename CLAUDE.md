@@ -21,15 +21,23 @@ blueprint's rules — build sessions execute it, they do not re-decide it.
 
 ## Claims ladder (deployment honesty — binding on README, STATE,
 ## and all writeups in this repo)
-- Permitted when true: "runs unattended on a schedule against my
-  real public repos"; "in production for my own operations since
-  <date>: N consecutive scheduled runs inside cost caps, full run
-  history and cost telemetry published."
+- Permitted when true and evidenced: "runs unattended on a schedule
+  against my real public repos." While any production-readiness
+  program gate remains open (program opened 2026-08-03), no "in
+  production" or "production-ready" claim is permitted. After every
+  program gate passes, the sole permitted production claim is,
+  verbatim: "Production-ready for unattended, read-only monitoring
+  of Kristian's own public repositories, operated at n=1."
 - Never permitted, regardless of how good the run log looks:
   "production-ready" as an unqualified label; "battle-tested";
   any availability/reliability claim; anything implying users
   other than the operator. n=1 with published telemetry is the
   claim — the log is the evidence, adjectives are not.
+  Amendment 2026-08-03 (owner ruling): during the
+  production-readiness program the status language is "in
+  development toward production-ready"; after every program gate
+  passes, one bounded claim is permitted verbatim per the bullet
+  above. The unqualified ban stands.
 - Live runs are REAL data (this portfolio's actual repos); the
   eval gate runs on SYNTHETIC fixtures with a frozen answer key.
   Both labels stated wherever results appear — never blur the
@@ -51,8 +59,9 @@ COST: EUR 50/month hard ceiling; per-run caps enforced in code
 (BLUEPRINT §7). Frequency drops when spend trends high; caps never rise.
 
 CLAIMS: synthetic fixtures labeled; live runs = "scheduled runs on own
-infrastructure against own repos"; no production/availability/autonomy
-claims, ever.
+infrastructure against own repos"; no "in production" or
+"production-ready" claim while any program gate is open; bounded
+production-ready claim only per the ladder amendment dated 2026-08-03.
 
 Task source: this repo's STATE.md. The private operations OS's task
 queue is read-only here (cross-dependencies only). Tier 0 artifacts

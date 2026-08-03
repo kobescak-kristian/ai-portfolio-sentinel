@@ -1,5 +1,6 @@
 # BLUEPRINT — ai-portfolio-sentinel
-*v1.0 — 2026-07-13. Authored Fable-tier inside the closing window
+*v1.1 — 2026-08-03 (amendments in §11). Originally v1.0
+2026-07-13. Authored Fable-tier inside the closing window
 (~2026-08-07); every phase below is executable by Sonnet + Code from
 this document alone. Judgment is pre-frozen here the way
 the adjudication policy and the orchestrator Phase-1 spec froze it —
@@ -59,12 +60,20 @@ design: scheduler off or reduced to weekly, repo stays public, STATE
 records the park and the reopening condition. The lane pausing when
 income lanes demand it is the system working, not failing.
 
-**Deployment honesty (claims ladder, 2026-07-12).** The eval gate runs
+**Deployment honesty (claims ladder, 2026-07-12; amended 2026-08-03,
+owner ruling — production-readiness program).** The eval gate runs
 on labeled synthetic fixtures. Live scheduled runs monitor Kristian's
 own public repos. Permitted claim: "scheduled runs on own
-infrastructure against own repos." Never claimed: production use,
-availability/uptime, autonomy, monitoring for third parties.
-Verifiability over capability, always.
+infrastructure against own repos." Program status language: "in
+development toward production-ready." Never claimed while any
+program gate is open: production use, availability/uptime, autonomy,
+monitoring for third parties. After every program closure gate
+passes, exactly one bounded claim becomes permitted, verbatim:
+"Production-ready for unattended, read-only monitoring of Kristian's
+own public repositories, operated at n=1."
+Verifiability over capability, always. (v1.0 wording superseded by
+this dated amendment; original preserved in git history; amendment
+recorded in §11.)
 
 ## 1. Problem
 
@@ -227,12 +236,12 @@ authoring (per the visibility ruling). Model routing per phase in §7.
 
 | P | Deliverable | Gate (accept when) | Learning objective |
 |---|---|---|---|
-| 0 | Public repo scaffolded per CONVENTIONS checklist + new-project skill; this BLUEPRINT + SPEC.md (condensed) + CLAUDE.md + STATE.md + decisions/0001 committed; cost-telemetry harness (every run, incl. dev, writes a CostRow); leak-grep wired INTO pre-push hook; README with LEARNING LANE + synthetic-data banner in first screen | Repo pushed public; dry run writes a CostRow (shown); hook BLOCKS a seeded leak fixture (guard tested, then fixture removed); repo-publish-gate run from scaffold commit | Enforcement as code: hooks that guard, telemetry designed before the thing it measures exists |
+| 0 | Public repo scaffolded per CONVENTIONS checklist + new-project skill; this BLUEPRINT + SPEC.md (condensed) + CLAUDE.md + STATE.md + decisions/0001 committed; cost-telemetry harness (every run, incl. dev, writes a CostRow); leak-grep wired INTO pre-push hook; README with LEARNING LANE + synthetic-data banner in first screen | Repo pushed public; dry run writes a CostRow (shown); hook BLOCKS a seeded leak fixture (guard tested, then fixture removed); repo-publish-gate run from scaffold commit; CI green on push — one declared-runtime leg, ubuntu-latest + Python 3.12; runtime matrix decided at P2 (§11a) | Enforcement as code: hooks that guard, telemetry designed before the thing it measures exists |
 | 1 | Contracts + ledger schema + fixture corpus + answer key (protocol §5) + eval_config with quantization comments + FI skeletons. **No agent code exists yet** | Kristian approves fixtures + thresholds; quantization integers stated; committed | Eval engineering for long-horizon systems: fixture design, injection classes, quantized thresholds |
-| 2 | Deterministic control plane end-to-end with stub checkers: live inventory, deterministic checks, dedup + lifecycle, FINDINGS writer; LOCAL scheduler (Windows Task Scheduler — phase entry, known ground). Zero LLM calls so far | Pipeline green on stubs + fixtures; FI subset green; TWO consecutive scheduled local runs land in ledger untouched by hand (shown) | Deterministic-first decomposition; idempotency; dedup/lifecycle design; scheduling basics |
-| 3 | Caged checker agent (Haiku dev) replacing judgment stubs; bounds tests incl. no-write-access-by-construction | Dev gate leg green on fixtures; every run within per-run cap; bounds green | Caging a model for a judgment task; drawing the deterministic/AI line correctly |
-| 4 | Long-horizon layer: run-over-run state hardening, cross-run dedup, circuit breakers (cost + consecutive-failure), bounded-loop runner — v2 pattern: runner + frozen gate + published ITERATION_LOG.md + caps. **This runner is built as the REUSABLE pattern for the orchestrator's own queued v2 re-gate cycle — build once, cite twice** | Loop completes N≤10 iterations under caps with published log; both breakers proven by SEEDED faults (a breaker never tested is a hope — principle 8) | Loop safety + agent reliability: the market-named skill, evidenced not claimed |
-| 5 | Scheduler migration to GitHub Actions (new skill is the EXIT criterion, not entry barrier); official gate run (Sonnet) on frozen fixtures; then 5 consecutive Actions-scheduled live runs within caps, zero lost runs | Official gate GREEN or honest FAIL + miss-pattern analysis committed; 5/5 scheduled runs recorded in ledger with CostRows | CI-based scheduling (Actions cron, secrets handling in CI, workflow debugging) — deliberate new ground |
+| 2 | Deterministic control plane end-to-end with stub checkers: live inventory, deterministic checks, dedup + lifecycle, FINDINGS writer; LOCAL scheduler (Windows Task Scheduler — phase entry, known ground). Zero LLM calls so far | Pipeline green on stubs + fixtures; FI subset green; TWO consecutive scheduled local runs land in ledger untouched by hand (shown); unit+integration test depth with coverage stated; structured logging in place; dependencies pinned (§11a) | Deterministic-first decomposition; idempotency; dedup/lifecycle design; scheduling basics |
+| 3 | Caged checker agent (Haiku dev) replacing judgment stubs; bounds tests incl. no-write-access-by-construction | Dev gate leg green on fixtures; every run within per-run cap; bounds green; test depth maintained with coverage stated (§11a) | Caging a model for a judgment task; drawing the deterministic/AI line correctly |
+| 4 | Long-horizon layer: run-over-run state hardening, cross-run dedup, circuit breakers (cost + consecutive-failure), bounded-loop runner — v2 pattern: runner + frozen gate + published ITERATION_LOG.md + caps. **This runner is built as the REUSABLE pattern for the orchestrator's own queued v2 re-gate cycle — build once, cite twice** | Loop completes N≤10 iterations under caps with published log; both breakers proven by SEEDED faults (a breaker never tested is a hope — principle 8); failure alerting proven via the seeded faults; FI test depth with coverage stated (§11a) | Loop safety + agent reliability: the market-named skill, evidenced not claimed |
+| 5 | Scheduler migration to GitHub Actions (new skill is the EXIT criterion, not entry barrier); official gate run (Sonnet) on frozen fixtures; then 5 consecutive Actions-scheduled live runs within caps, zero lost runs | Official gate GREEN or honest FAIL + miss-pattern analysis committed; 5/5 scheduled runs recorded in ledger with CostRows; versioned release tagged; evidence-backed ops runbook (deploy/rollback/diagnose) from real operation (§11a) | CI-based scheduling (Actions cron, secrets handling in CI, workflow debugging) — deliberate new ground |
 | 6 | README (house structure) + architecture diagram + learning-trail writeup assembled from the six per-gate posts; first full-month cost telemetry summary | Stop conditions §9 all met | Public technical narrative from a run record, not from memory |
 
 ## 7. Model routing
@@ -292,3 +301,57 @@ of cost telemetry under ceiling, committed.
     (2026-07-13).
 12. Placement: blueprint lives in this repo from the scaffold commit
     (ruling, 2026-07-13).
+
+## 11. Amendments (v1.1, 2026-08-03)
+
+Dated amendment record and mapping. The operative gate changes live
+in the §6 rows above; this section records what changed and why.
+
+(a) Production-engineering exit criteria inserted into the §6 gate
+cells this amendment: CI-on-push → P0, one declared-runtime leg at
+P0 (ubuntu-latest + Python 3.12) with the runtime matrix decided at
+P2 from the genuinely supported surface — platforms tested only
+where the repository claims support, never for appearance; test
+depth with coverage stated → P2–P4; structured logging + failure
+alerting → P2/P4; pinned dependencies + versioned releases →
+P2/P5; evidence-based ops runbook → P5. Per the 2026-07-14 scope
+decision recorded in STATE.md.
+
+(b) Non-contradiction note: locked decision 6 (Actions as
+SCHEDULER, P5 exit criterion) and CI-on-push (P0) are two distinct
+uses of the same platform; both stand.
+
+(c) The portfolio website is a monitored surface: link
+participation plus weekly claims parity per the 2026-07-14
+clarification in STATE.md.
+
+(d) Production-readiness program (owner ruling 2026-08-03). Status
+language: "in development toward production-ready." Bounded final
+claim, permitted only after every program closure gate passes,
+verbatim: "Production-ready for unattended, read-only monitoring of
+Kristian's own public repositories, operated at n=1." Closure-gate
+artifact set mapped to phases: DATA_CONTRACT.md +
+DATA_RETENTION_POLICY.md → P2; THREAT_MODEL.md + MODEL_CARD.md
+draft → P3; TEST_MATRIX.md + INCIDENT_RESPONSE.md + MONITORING.md
+draft + RUNBOOK.md draft → P4; RUNBOOK.md + MONITORING.md +
+MODEL_CARD.md final + SLO.md → P5; SYSTEM_WALKTHROUGH.md +
+PRODUCTION_READINESS.md + SYSTEM_CARD.md → P6. Each artifact lands
+alongside or after the capability and evidence it describes — never
+as a placeholder.
+
+(e) SLO.md framing (owner ruling 2026-08-03), verbatim header for
+the P5 artifact: "Internal operator objectives for an n=1 system.
+No service, availability guarantee, or uptime commitment is offered
+to another party." Permitted objective classes: scheduled-run
+success rate; maximum consecutive failed or missed runs;
+finding-detection latency; cost per run and monthly cost ceiling;
+telemetry completeness. Never service availability or uptime
+percentages. Objectives become claims only when backed by measured
+operating history.
+
+(f) Claims-level consistency rule (2026-08-03), three levels:
+factual operating claim ("runs unattended on a schedule against my
+real public repos", when true and evidenced); no "in production" or
+"production-ready" claim while any program gate is open; after all
+gates pass, the sole permitted production claim is the bounded
+statement in (d). SPEC.md and the program ADR mirror this rule.
