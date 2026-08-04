@@ -51,18 +51,12 @@ versioned releases, ops runbook (deploy/rollback/diagnose). Claim
 vocabulary unchanged per CLAUDE.md ladder: "production engineering
 standard, operated at n=1" — never "production-ready" unqualified.
 Phase gates absorb these as exit criteria, not a separate phase.
-Next action from this decision: at the next blueprint touch,
-distribute these items into the existing phase gates as exit
-criteria (CI belongs in Phase 0 — cheapest from the first commit)
-and bump the blueprint changelog accordingly; until that lands,
-this STATE entry is the decision's home and the blueprint is
-one amendment behind. Amendment note for that touch: locked
-decision 6 (Actions as SCHEDULER, Phase 5 exit criterion) and
-this decision's CI-on-push (Phase 0) are two different uses of
-the same platform — continuous integration on push vs. a
-cron-scheduled workflow. Both stand; the amendment states this
-explicitly so no session "resolves" a contradiction that does
-not exist.
+Resolution 2026-08-04: absorbed into BLUEPRINT v1.2 and the
+Phase 0–1 implementation record. CI-on-push, test-depth,
+structured-logging, dependency-pinning and production-readiness
+exit criteria now live in the amended phase gates. The earlier
+"next blueprint touch" and "blueprint is one amendment behind"
+wording is superseded.
 
 Scope clarification 2026-07-14 (Kristian): the portfolio website
 (the public site repo) is an explicit monitored surface, two
@@ -74,8 +68,13 @@ performs, automated weekly). Boundary: sentinel checks
 repo-content parity only; served-site verification (Pages build
 bound to commit, cache) remains the publish gate's job. No
 availability or uptime monitoring — that would exceed the claims
-ladder. Blueprint absorbs this with the same next-touch amendment
-already owed.
+ladder. Resolution 2026-08-04: BLUEPRINT v1.2 §11(h) records site
+gate-statement parity as in scope but deferred and ungated. It is
+not implemented and no live run reports site-parity findings until
+an ADR adds class 7, paired fixtures, answer-key rows, scoring
+semantics and restated pooled integers before or with the check
+code. The P6 backstop remains binding. The earlier "same next-touch
+amendment" wording is superseded.
 
 Roadmap decision 2026-07-14 (Kristian): a REMEDIATION agent is
 pre-registered as a separate future automation — consumes sentinel
