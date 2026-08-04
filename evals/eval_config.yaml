@@ -1,0 +1,72 @@
+# Eval gate configuration — frozen at Phase 1 (BLUEPRINT §5; ADR 0004;
+# SPEC §3). Threshold ratios are locked: changeable only by ADR before
+# a run, never after.
+#
+# Quantization mandate: every threshold states its integer meaning at
+# the FINAL fixture counts below. Integers derive from Decimal
+# arithmetic (never binary floats):
+#   recall:      max_misses = n - ceil(Decimal(ratio_min) * n)
+#   false-flag:  max_flagged = floor(Decimal(ratio_max) * clean_units)
+#   precision:   allowed_fp  = emitted - ceil(Decimal(ratio_min) * emitted)
+# tests/test_eval_config.py re-derives each integer in CI; a threshold
+# whose integer meaning is unstated is not frozen.
+#
+# Ratios are quoted strings on purpose: consumers parse them through
+# Decimal, never as binary floats.
+
+schema_version: 1
+
+classes:
+  - broken-link
+  - number-mismatch
+  - stale-STATE-marker
+  - missing-required-file
+  - missing-synthetic-label
+  - readme-structure
+
+fixture_counts:
+  snapshots: 8            # synthetic-01..06 injected; 07..08 all-clean
+  injected_total: 60
+  injected_per_class:
+    broken-link: 10
+    number-mismatch: 10
+    stale-STATE-marker: 10
+    missing-required-file: 10
+    missing-synthetic-label: 10
+    readme-structure: 10
+  clean_units_total: 166  # exhaustive inventory, evals/clean_surfaces.jsonl
+                          # (158 at generation + 8 units restored by the
+                          # D6 item-1 reconciliation, 2026-08-04)
+
+thresholds:
+  pooled_precision:
+    ratio_min: "0.90"
+    # Binding over the findings actually emitted:
+    #   allowed_false_positives = emitted - ceil(Decimal("0.90") * emitted)
+    # Reference quantization at 60 emitted flags: 6 false positives
+    # (54/60 = 0.90 passes exactly; 7 FPs at 60 = 0.883 FAIL). The
+    # integer is restated at gate time from the actual emitted count —
+    # it is deliberately NOT hardcoded here.
+  pooled_recall:
+    ratio_min: "0.85"
+    max_misses: 9         # 60 - ceil(0.85 * 60) = 9; 51/60 = 0.85 passes
+                          # exactly; 10 misses = 50/60 = 0.833 FAIL
+  per_class_recall:
+    ratio_min: "0.80"
+    max_misses_per_class: 2   # 10 - ceil(0.80 * 10) = 2; 8/10 = 0.80
+                              # passes exactly; 3 misses = 0.70 FAIL
+  clean_false_flag:
+    ratio_max: "0.10"
+    max_flagged_clean_units: 16   # floor(0.10 * 166) = 16; 16/166 =
+                                  # 0.0964 PASS; 17/166 = 0.1024 FAIL
+
+invariants:               # 100% — integer tolerance zero by definition
+  every_task_terminal: true
+  zero_lost_tasks: true
+  idempotent_rerun: true
+  dedup_correct_on_doubled_fixture_run: true
+
+gate:
+  official_model: sonnet  # exact provider-visible model id recorded in
+  dev_model: haiku        # the run evidence when each run happens
+  max_regates: 1

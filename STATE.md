@@ -12,29 +12,33 @@ pre-registered, BLUEPRINT §0).
 **Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
 2026-07-15, canonical record in the private operations OS (same
 date). Public-while-dormant is intended; do not flag.
-**Phase status:** Phase 0 CLOSED 2026-08-03 — evidence: foundation
-and canary commits public on main; repository publish gate OVERALL
-PASS from the closing HEAD; CI green on push (Actions run
-30852395018, conclusion success; 36/36 tests, ubuntu-latest, Python
-3.12). Next action: Phase 1 per BLUEPRINT §6 (fixtures, answer key,
-eval gate freeze — owner approval checkpoint).
+**Phase status:** Phase 1 CLOSED 2026-08-04 — eval gate frozen by
+this commit (fixture corpus, answer key, clean inventory, scoring
+contract, quantized thresholds and review evidence committed; see
+the 2026-08-04 change-log entry and evals/). Phase 0 CLOSED
+2026-08-03 — evidence: foundation and canary commits public on main;
+repository publish gate OVERALL PASS from the closing HEAD; CI green
+on push (Actions run 30852395018, conclusion success; 36/36 tests,
+ubuntu-latest, Python 3.12). Next action: Phase 2 per BLUEPRINT §6
+(deterministic control plane; P2 closure artifacts additionally wait
+on the queued canonical hook-maintenance batch in the private
+operations OS, per the plan's recorded dependency).
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
-**License:** choice RESOLVED — Apache-2.0, portfolio default, owner
-ruling 2026-08-03. The LICENSE file is assigned to the coordinated
-fleet rollout; that rollout must SKIP this repository while any
-implementation session holds its pen — this repo receives its LICENSE
-in a later repo-exclusive rollout step. Remaining program-closure
-dependency = completion of that rollout, not an unresolved owner
-choice.
-**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: Phase 0 closure
-dispatch after green CI evidence.
+**License:** RESOLVED and LANDED — Apache-2.0 (portfolio default,
+owner ruling 2026-08-03); LICENSE file committed 2026-08-03 at
+2283b4f via the repo-exclusive rollout step. No remaining
+license-related program-closure dependency.
+**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: Phase 2 build
+dispatch (deterministic control plane on the frozen fixture bed).
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
 name kept). Internal path reference removed from the Visibility line
 2026-08-03 (this repo's own public-live rule; content unchanged
-otherwise). Fixture final counts → quantization integers at Phase 1
-freeze. Canonical validator does not recognize decisions/ (two repos
+otherwise). Fixture final counts → quantization integers: RESOLVED
+2026-08-04 at the Phase 1 freeze (integers stated in
+evals/eval_config.yaml and CI-enforced). Canonical validator does not
+recognize decisions/ (two repos
 now affected: marketing, this one). Canonical patch belongs to the
 queued hook-maintenance batch in the private operations OS — not this
 repo's work.
@@ -101,3 +105,20 @@ merges every change."
   deferred and ungated per BLUEPRINT §11(h), with a P6 backstop;
   blind-review wording corrected in BLUEPRINT §5 / SPEC §4 (the review
   certifies defect presence and location, not blind class discovery).
+- 2026-08-04 — Phase 1 CLOSED: eval gate frozen by this commit.
+  Corpus: 8 synthetic snapshots (owner feasibility ruling; two
+  all-clean), 60 injected positives — 10 per class across the six
+  classes — and 166 exhaustively enumerated clean units. Quantized
+  integers frozen: pooled recall 9 misses of 60; per-class recall 2
+  of 10; precision ≥ 0.90 over actual emitted findings (reference 6
+  false positives at 60); clean false-flag 16 of 166; invariants at
+  100%. Answer-key review (SPEC §4, cost-adapted): sample pass of 24
+  positives + 6 clean controls, reviewer GPT-5.6 Thinking, zero
+  target-injection disagreements; all 19 additional reviewer
+  observations dispositioned as genuine co-occurring answer-key
+  rows; zero over-flags; no corpus-integrity event; full pass not
+  triggered. D6 reconciliation restored eight undercounted clean
+  units (clean-159..166, provenance-marked, scorable but
+  control-ineligible) — counting defect record in
+  evals/adjudication.md. Owner approved the corrected package and
+  ratified the recorded deviations, 2026-08-04.

@@ -1,0 +1,6 @@
+#!/bin/sh
+# SYNTHETIC FIXTURE - part of the ai-portfolio-sentinel eval bed; all content in this file is synthetic.
+# Inert placeholder hook: the real repository's hook logic is not part
+# of the eval bed. This file exists so required-file presence checks
+# have a genuine surface to inspect.
+exit 0

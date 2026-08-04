@@ -1,0 +1,5 @@
+# SYNTHETIC FIXTURE - part of the ai-portfolio-sentinel eval bed; all content in this file is synthetic.
+# Placeholder gate file for synthetic-01: stands in for the
+# required eval-config path in required-file presence checks.
+schema_version: 1
+placeholder: true
