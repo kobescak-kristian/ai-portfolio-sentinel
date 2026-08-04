@@ -10,7 +10,11 @@ BANNED_WITHOUT_TRIGGER = ["SYSTEM_WALKTHROUGH.md", "CHANGELOG.md", "RUNBOOK.md",
                           "PRODUCTION_READINESS.md", "THREAT_MODEL.md", "MONITORING.md",
                           "INCIDENT_RESPONSE.md", "TEST_MATRIX.md",
                           "DEMO_SCRIPT.md", "ASSURANCE_ONE_PAGER.md",
-                          "TECHNICAL_OWNERSHIP_GUIDE.md"]
+                          "TECHNICAL_OWNERSHIP_GUIDE.md",
+                          # Added 2026-08-04: canonical + sentinel copies only, scoped
+                          # by owner ruling.
+                          "SLO.md", "MODEL_CARD.md", "DATA_CONTRACT.md",
+                          "DATA_RETENTION_POLICY.md", "SYSTEM_CARD.md", "SPEC.md"]
 # Tier 1 artifacts (ARTIFACT_STANDARD.md #Tier 1) are allowed without an ADR
 # trigger only for the current flagship — exactly one at a time.
 TIER1_ARTIFACTS = {"DEMO_SCRIPT.md", "ASSURANCE_ONE_PAGER.md", "TECHNICAL_OWNERSHIP_GUIDE.md"}
@@ -18,7 +22,7 @@ CURRENT_FLAGSHIP = "ai-reliability-engine"
 IS_FLAGSHIP = ROOT.resolve().name == CURRENT_FLAGSHIP
 errors = []
 
-# OS governance rules §3, Build-repo STATE rule: STATE.md is part of the scaffold.
+# Build-repo STATE rule: STATE.md is part of the scaffold.
 if not (ROOT / "STATE.md").exists():
     errors.append("STATE.md missing (Build-repo STATE rule)")
 
@@ -31,26 +35,32 @@ else:
         if section not in text:
             errors.append(f"README missing section: {section}")
 
+# Decision-record requirement: adr/ and decisions/ both satisfy it —
+# a repo may use either name for its decision-record folder.
 adr = ROOT / "adr"
-if not adr.is_dir():
-    errors.append("adr/ folder missing")
+decisions = ROOT / "decisions"
+decision_dirs = [d for d in (adr, decisions) if d.is_dir()]
+if not decision_dirs:
+    errors.append("adr/ (or decisions/) folder missing")
 else:
-    count = len([f for f in adr.glob("*.md") if "template" not in f.name.lower()])
+    decision_files = [f for d in decision_dirs for f in d.glob("*.md")
+                       if "template" not in f.name.lower()]
+    count = len(decision_files)
     if count == 0:
-        errors.append("adr/ has no decisions (need 1-5)")
+        errors.append("adr/ (or decisions/) has no decisions (need 1-5)")
     elif count > 5:
-        errors.append(f"adr/ has {count} decisions (cap is 5 - decisions were not decisions)")
+        errors.append(f"adr/ (or decisions/) has {count} decisions (cap is 5 - decisions were not decisions)")
 
 for banned in BANNED_WITHOUT_TRIGGER:
     if (ROOT / banned).exists():
         if banned in TIER1_ARTIFACTS and IS_FLAGSHIP:
             continue
-        # allowed only if an ADR mentions it (the trigger record)
-        justified = adr.is_dir() and any(
+        # allowed only if a decision-record file mentions it (the trigger record)
+        justified = any(
             re.search(re.escape(banned), f.read_text(encoding="utf-8"))
-            for f in adr.glob("*.md"))
+            for d in decision_dirs for f in d.glob("*.md"))
         if not justified:
-            errors.append(f"{banned} exists without an ADR citing its trigger")
+            errors.append(f"{banned} exists without an ADR/decision record citing its trigger")
 
 if errors:
     print("ARTIFACT_STANDARD violations:")
