@@ -1,5 +1,5 @@
 # BLUEPRINT — ai-portfolio-sentinel
-*v1.1 — 2026-08-03 (amendments in §11). Originally v1.0
+*v1.2 — 2026-08-04 (amendments in §11). Originally v1.0
 2026-07-13. Authored Fable-tier inside the closing window
 (~2026-08-07); every phase below is executable by Sonnet + Code from
 this document alone. Judgment is pre-frozen here the way
@@ -191,10 +191,11 @@ ai-portfolio-sentinel/
 ## 5. Eval gate (frozen at Phase 1, before any agent code)
 
 Fixture bed: ~6 synthetic repo snapshots, labeled synthetic on
-adjacent lines, with injected defects across 5 classes: broken-link ·
-number-mismatch · stale-STATE-marker · missing-required-file ·
-missing-synthetic-label. Target ~10 injected cases per class (~50
-positives) + ≥30 clean distractor surfaces. Deterministic-class cases
+adjacent lines, with injected defects across 6 classes (ADR 0004):
+broken-link · number-mismatch · stale-STATE-marker ·
+missing-required-file · missing-synthetic-label · readme-structure.
+Target ~10 injected cases per class (~60 positives) + ≥30 clean
+distractor surfaces. Deterministic-class cases
 gate the deterministic checks; judgment-class cases gate the agent.
 
 Thresholds (locked now, changeable only by ADR before a run, never
@@ -211,14 +212,23 @@ target sizing: per-class recall 0.80 at 10 cases = exactly 2 misses
 allowed (3 misses = 0.70, FAIL); pooled recall 0.85 at 50 = 7 misses;
 precision 0.90 at ~50 flags = 5 false positives. If final counts
 differ, Code recomputes and states the integers in the comments — a
-threshold whose integer meaning is unstated is not frozen.
+threshold whose integer meaning is unstated is not frozen. Worked
+integers restated at six classes (ADR 0004, 2026-08-04): pooled
+recall 0.85 at 60 = 9 misses; precision 0.90 at ~60 flags = 6 false
+positives (reference — the ratio over actual emitted findings binds);
+per-class recall unchanged at 2 misses per 10.
 
 Answer-key authorship (three-actor, cost-adapted variant — deliberate
 recorded deviation from the orchestrator's full protocol): injection
 spec pre-frozen in the condensed operating spec at Phase 0
 condensation (authored by this document); Code executes injections;
-ChatGPT blind-labels a 40% sample (not full — learning-lane cost
-profile); Kristian adjudicates disagreements. Sample disagreement rate
+ChatGPT reviews a 40% sample (not full — learning-lane cost
+profile); Kristian adjudicates disagreements. The reviewer is blind
+to the expected answer and expected location, but packet shape may
+reveal the candidate class. The independent review certifies defect
+presence or absence and independently identifies the location; it
+does not certify blind class discovery (wording corrected per ADR
+0004). Sample disagreement rate
 > 10% escalates to full blind pass before freeze.
 
 Official gate runs on Sonnet; dev iterations on Haiku (§7 routing).
@@ -302,7 +312,7 @@ of cost telemetry under ceiling, committed.
 12. Placement: blueprint lives in this repo from the scaffold commit
     (ruling, 2026-07-13).
 
-## 11. Amendments (v1.1, 2026-08-03)
+## 11. Amendments (v1.1, 2026-08-03; v1.2, 2026-08-04)
 
 Dated amendment record and mapping. The operative gate changes live
 in the §6 rows above; this section records what changed and why.
@@ -323,7 +333,8 @@ uses of the same platform; both stand.
 
 (c) The portfolio website is a monitored surface: link
 participation plus weekly claims parity per the 2026-07-14
-clarification in STATE.md.
+clarification in STATE.md. Deferral note 2026-08-04: gate-statement
+parity is deferred and ungated in v1 — see (h) and adr/0004.
 
 (d) Production-readiness program (owner ruling 2026-08-03). Status
 language: "in development toward production-ready." Bounded final
@@ -355,3 +366,22 @@ real public repos", when true and evidenced); no "in production" or
 "production-ready" claim while any program gate is open; after all
 gates pass, the sole permitted production claim is the bounded
 statement in (d). SPEC.md and the program ADR mirror this rule.
+
+(g) Six-class check scope (ADR 0004, 2026-08-04). readme-structure
+added as the sixth v1 check class so the README structural check
+claimed in §2 step 2 is gated, not merely shipped. §5 fixture bed
+and worked quantization integers updated to six classes / ~60
+positives by this amendment. Blind-review wording in §5 corrected
+per adr/0004: the review certifies defect presence or absence and
+location, not blind class discovery.
+
+(h) Site gate-statement parity deferral (2026-08-04). Deferred
+2026-08-04: site gate-statement parity (§11(c)) is in the
+sentinel's scope but ungated. Until its eval class exists, the
+check is not implemented and no live run reports site-parity
+findings. Reopens at the implementation decision: the ADR adding
+class 7, paired fixtures, answer key, scoring rule and restated
+pooled integers lands before or with the check's code. As a
+backstop, the P6 stop-condition review must decide whether it is
+built and gated post-v1 or moved to §8 out-of-scope by dated
+ruling. It does not survive P6 as pending.

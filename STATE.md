@@ -95,3 +95,9 @@ merges every change."
   unsatisfiable on a brand-new remote with no origin/main yet. One-time
   only; hook file untouched and fully enforcing from the second push
   onward. Not precedent for any push where origin/main exists.
+- 2026-08-04 — Phase 1 scope ruling (ADR 0004): v1 check-class set
+  frozen at six — readme-structure added, gating the README structural
+  check the pipeline already claimed; site gate-statement parity
+  deferred and ungated per BLUEPRINT §11(h), with a P6 backstop;
+  blind-review wording corrected in BLUEPRINT §5 / SPEC §4 (the review
+  certifies defect presence and location, not blind class discovery).
