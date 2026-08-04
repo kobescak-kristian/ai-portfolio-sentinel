@@ -29,10 +29,10 @@ overstated what the cost-adapted answer-key review certifies.
    integers before or with the check's code; the P6 stop-condition
    review must resolve it — it does not survive P6 as pending. This
    deferral does not weaken the bounded final claim recorded in
-   adr/0003 (the Q-77 program's closing claim): that claim's scope is
-   defined by the capabilities that are gated, and after this ruling
-   every check capability claimed and gated in v1 has a defined class,
-   fixtures, scoring rule and frozen threshold.
+   adr/0003 (the production-readiness program's closing claim): that
+   claim's scope is defined by the capabilities that are gated, and
+   after this ruling every check capability claimed and gated in v1
+   has a defined class, fixtures, scoring rule and frozen threshold.
 4. Blind-review terminology, binding for governing documents and
    committed evidence: the reviewer is blind to the expected answer
    and expected location, but packet shape may reveal the candidate
