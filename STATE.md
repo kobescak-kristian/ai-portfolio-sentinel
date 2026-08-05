@@ -137,6 +137,35 @@ merges every change."
   in this session. **Phase 3 remains OPEN.** Q-77 remains open.
   `SentinelDailyRun` unchanged, stub-mode. Subsequent remediation
   requires a separately approved ADR — not designed in this record.
+- 2026-08-05 — Phase 3 gate diagnosis (dispatch q77-p3-diagnose-a):
+  post-gate diagnosis completed, reconstructing the honest FAIL above
+  from persisted evidence only (`var/phase3_gate/gate.sqlite3`,
+  `gate.jsonl`, `cost_ledger.jsonl`, `evals/answer_key.jsonl`,
+  `evals/clean_surfaces.jsonl`). Database SHA-256
+  `6a66b70b2131343b3e5f65a035ff1ea0607fa278a32175a47bd9b1b6a07ff25f`
+  (identical before and after querying). Diagnosis commit pending until
+  committed — not embedded here, a commit cannot truthfully cite its own
+  hash. Run 1 judgment-class calls: 15 COMPLETED, 2 FAILED, 7 EXHAUSTED
+  (of 24 expected). Run 2: all 24 judgment tasks EXHAUSTED, zero real
+  model calls occurred. Of the 13 total misses: 2 attributable with
+  certainty to run-level shared-budget exhaustion (inj-059, inj-060, no
+  model call made); 2 more from a separate, distinct per-call
+  maximum-budget guard that failed an in-progress call (inj-004,
+  inj-005) — both budget mechanisms proven by exact persisted rejection
+  text, not inferred, and not the same pool; 9 misses occurred after a
+  completed call (not budget-related). False positives: 9 (3
+  missing-synthetic-label, 6 stale-STATE-marker); only 1 of the 9
+  matches a registered frozen clean unit (clean-162, the sole
+  `clean_flagged: 1/166` — the other 8 are off-manifest and their
+  substantive correctness is not determined by this record). Whether
+  host-side validation ever rejected a substantively correct model
+  answer: NOT DETERMINABLE FROM RETAINED METADATA (no schema persists
+  raw model text). No model call occurred, no gate rerun occurred, no
+  implementation or gate contract changed in this diagnostic session.
+  Full record: `PHASE3_GATE_DIAGNOSIS.md`,
+  `artifacts/phase3_gate_diagnosis.json`. **Phase 3 remains OPEN. Q-77
+  remains OPEN.** Remediation ADR remains the next decision point and
+  was not designed in this record.
 - 2026-08-05 — Phase 3 IMPLEMENTATION (dispatch q77-p3-a; commit SHA
   recorded in the kristian-os Q-77 annotation, not embedded here — a
   commit cannot truthfully cite its own hash). Landed: `agents/checker/`
