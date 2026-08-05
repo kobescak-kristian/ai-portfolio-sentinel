@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -15,12 +15,17 @@ from sentinel.scheduling import ALLOWED_CADENCES, build_run_argv, build_task_par
 
 
 def test_golden_argv_exact():
+    """Uses PureWindowsPath deliberately — a Windows-style absolute
+    path (with a drive letter) is what this builder always receives
+    in real scheduled-task use, and PureWindowsPath's is_absolute()/
+    str() behavior is platform-independent, so this golden test is
+    exact on both this Windows dev machine and ubuntu-latest CI."""
     argv = build_run_argv(
         python_exe="C:\\Python312\\python.exe",
         github_user="kobescak-kristian",
-        db_path=Path("C:/ProgramData/sentinel/var/sentinel.sqlite3"),
-        findings_path=Path("C:/ProgramData/sentinel/FINDINGS.md"),
-        log_path=Path("C:/ProgramData/sentinel/var/logs/sentinel-scheduled.jsonl"),
+        db_path=PureWindowsPath("C:/ProgramData/sentinel/var/sentinel.sqlite3"),
+        findings_path=PureWindowsPath("C:/ProgramData/sentinel/FINDINGS.md"),
+        log_path=PureWindowsPath("C:/ProgramData/sentinel/var/logs/sentinel-scheduled.jsonl"),
     )
     assert argv == [
         "C:\\Python312\\python.exe",
