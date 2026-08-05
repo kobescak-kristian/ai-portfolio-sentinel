@@ -1,14 +1,18 @@
-<!-- Describes the system as landed at Phase 2 (BLUEPRINT §6 P2, §11(d);
-ADR 0003). Status: in development toward production-ready. No production
-claim is made in this document. -->
+<!-- Describes the system as landed through Phase 3 (BLUEPRINT §6 P2/P3,
+§11(d); ADR 0003; dispatch q77-p3-a). Status: in development toward
+production-ready. No production claim is made in this document. -->
 
 # DATA_RETENTION_POLICY — ai-portfolio-sentinel
 
 ## 1. Scope and status
 
 This policy governs data handling for the Phase 2 deterministic
-control plane as landed. Operator-only, n=1: there is no service, no
-third party, and no data subject other than the operator.
+control plane plus the Phase-3 caged checker agent (§13). Operator-only,
+n=1: there is no service, no third party, and no data subject other
+than the operator. The agent's own credential relationship (the
+operator's Claude subscription auth) is covered in `THREAT_MODEL.md`
+§7 — it is unrelated to, and never mixed with, any monitored
+repository's data.
 
 ## 2. Data classes at a glance
 
@@ -135,3 +139,28 @@ encryption at rest beyond the host's own, no retention automation, no
 verified restore exercise yet (a Phase-4 recovery-exercise concern
 under the production-readiness program). No availability, durability,
 or uptime commitment is made or implied anywhere in this document.
+
+## 13. Phase-3 addition: caged checker agent audit data
+
+`agent_calls` rows (SQLite, additive to the same never-delete ledger
+as §5 — same triggers, same discipline, no second database) persist,
+per attempted judgment call: run/task identity, check class, surface,
+model, an auth-mode label, call lifecycle timestamps and terminal
+state, reserved and charged EUR micro-euros, SDK turn/result metadata,
+token counts and the SDK's own USD cost estimate when available, FX
+source/date/retrieval-time/exact rate, tool-call attempts, and
+accepted/rejected status with reason. Empty (zero rows) for every
+stub-mode run, including the standing scheduled task's runs.
+
+**Never persisted by default**: raw complete prompts, full model
+transcripts, authentication material, secrets, or machine-local
+credential paths — the same absence-of-secrets discipline as §9,
+extended to this table (`THREAT_MODEL.md` §8-9). A row still
+`RESERVED` at reconciliation time (a crash mid-call) is never rewritten
+to a terminal state — it stays visibly unresolved, and its reservation
+is what's conservatively charged into the run's aggregate CostRow
+(`sentinel/costs.py::build_agent_cost_row`), never the row itself.
+
+Retention follows §5's rule exactly: never deleted, no TTL or rotation
+at Phase 3, same growth-review threshold reasoning (an agent-mode run
+adds a few rows per judgment task, not per finding).

@@ -7,12 +7,14 @@ written), 2 usage/config error (no run row created), 3 recovery-only.
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Sequence
 
 from sentinel import ledger
 from sentinel.config import RunConfig
+from sentinel.ids import RandomIdFactory
 from sentinel.logs import RunLogger
 from sentinel.pipeline import Deps, execute_run, recover_interrupted_runs
 
@@ -39,6 +41,11 @@ def build_parser():
     run_p.add_argument("--allow-task-failure", action="store_true")
     run_p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     run_p.add_argument("--run-id")
+    # Phase 3 (dispatch q77-p3-a). Default "stub" preserves Phase 2
+    # behavior unchanged (NullJudgmentStub, zero-cost CostRow).
+    # SentinelDailyRun's resolved command carries no --judgment-mode
+    # flag, so it stays "stub" by construction.
+    run_p.add_argument("--judgment-mode", choices=["stub", "agent"], default="stub")
 
     recover_p = sub.add_parser("recover", help="sweep any interrupted run to a terminal FAILED state")
     recover_p.add_argument("--db", type=Path, required=True)
@@ -73,7 +80,29 @@ def _config_from_args(args) -> RunConfig:
         fail_run_on_task_failure=not args.allow_task_failure,
         log_level=args.log_level,
         run_id=args.run_id,
+        judgment_mode=args.judgment_mode,
     )
+
+
+def _build_agent_mode_deps(config: RunConfig) -> tuple[RunConfig, Optional[Deps], Optional[str]]:
+    """Agent mode needs a run_id fixed before the first model call, so
+    it's generated here (or taken from --run-id) rather than left to
+    execute_run's own default. Any setup failure (auth-override risk,
+    FX resolution failure, or anything else) is caught here and
+    reported as a usage/config error — no run row is created, no model
+    call is ever attempted. Returns (config, deps, error_message)."""
+    run_id = config.run_id or RandomIdFactory().new_run_id()
+    config = replace(config, run_id=run_id)
+    try:
+        # Imported lazily so `sentinel run --judgment-mode stub` (the
+        # default, and CI's own path) never requires the Agent SDK to
+        # be importable at all -- only agent mode does.
+        from agents.checker.harness import build_caged_judgment_stub
+
+        judgment = build_caged_judgment_stub(run_id=run_id, db_path=config.db_path)
+    except Exception as exc:  # noqa: BLE001 - any setup failure fails closed, pre-run
+        return config, None, f"agent mode setup failed: {exc}"
+    return config, Deps(judgment=judgment), None
 
 
 def main(argv: Sequence[str], *, deps: Optional[Deps] = None) -> int:
@@ -90,6 +119,11 @@ def main(argv: Sequence[str], *, deps: Optional[Deps] = None) -> int:
             print(f"error: {error}", file=sys.stderr)
             return 2
         config = _config_from_args(args)
+        if deps is None and config.judgment_mode == "agent":
+            config, deps, setup_error = _build_agent_mode_deps(config)
+            if setup_error:
+                print(f"error: {setup_error}", file=sys.stderr)
+                return 2
         outcome = execute_run(config, deps)
         return outcome.exit_code
 

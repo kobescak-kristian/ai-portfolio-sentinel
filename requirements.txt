@@ -1,1 +1,7 @@
 pydantic==2.13.4
+# Phase 3 (dispatch q77-p3-a) -- direct dependencies of agents/checker/
+# only. Never imported by sentinel/ or checks/ directly
+# (tests/test_read_only_boundary.py enforces the ban there).
+claude-agent-sdk==0.2.110
+anyio==4.14.0
+certifi==2026.6.17

@@ -162,6 +162,53 @@ def test_containment_writes_only_under_explicit_paths(tmp_path, monkeypatch):
         assert str(path).startswith(str(tmp_path / "out"))
 
 
+def test_judgment_mode_defaults_to_stub_and_needs_no_agent_setup(tmp_path):
+    """A stub-mode run must succeed with no Agent SDK setup at all --
+    proving --judgment-mode's default doesn't require FX/auth."""
+    fixtures_root = _empty_fixtures_root(tmp_path)
+    code = main(
+        [
+            "run", "--run-kind", "dev", "--source", "fixtures",
+            "--fixtures-root", str(fixtures_root),
+            "--db", str(tmp_path / "sentinel.sqlite3"),
+            "--findings", str(tmp_path / "FINDINGS.md"),
+            "--log", str(tmp_path / "run.jsonl"),
+            "--cost-ledger", str(tmp_path / "cost.jsonl"),
+        ]
+    )
+    assert code == 0
+
+
+def test_judgment_mode_agent_setup_failure_exits_2_before_any_run_row(tmp_path, monkeypatch):
+    """If agent-mode setup fails (e.g. an auth-override risk or FX
+    resolution failure), the CLI must exit 2 -- usage/config error, no
+    run row created -- never attempt execute_run at all."""
+    from agents.checker import auth
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "canary-should-block")
+    fixtures_root = _empty_fixtures_root(tmp_path)
+    db = tmp_path / "sentinel.sqlite3"
+    code = main(
+        [
+            "run", "--run-kind", "dev", "--source", "fixtures",
+            "--fixtures-root", str(fixtures_root),
+            "--db", str(db),
+            "--findings", str(tmp_path / "FINDINGS.md"),
+            "--log", str(tmp_path / "run.jsonl"),
+            "--cost-ledger", str(tmp_path / "cost.jsonl"),
+            "--judgment-mode", "agent",
+        ]
+    )
+    assert code == 2
+    assert not db.exists()  # ledger.open_ledger inside build_caged_judgment_stub
+    # never got called with a usable auth state before failing
+
+
+def test_judgment_mode_invalid_value_exits_2():
+    code = main(["run", "--run-kind", "dev", "--source", "fixtures", "--judgment-mode", "bogus"])
+    assert code == 2
+
+
 def test_recover_subcommand_returns_3(tmp_path):
     from sentinel import ledger
 

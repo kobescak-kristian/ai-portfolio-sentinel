@@ -84,15 +84,18 @@ def open_ledger(
 
 
 def initialize_schema(conn: sqlite3.Connection) -> bool:
-    """Apply the frozen DDL if the schema doesn't exist yet. Returns
-    True if it was just created, False if it already existed."""
+    """Apply the DDL. Every statement in the DDL file is idempotent
+    (``IF NOT EXISTS``), so this always executes the full script —
+    that's what lets a Phase-3 additive table (``agent_calls``) reach
+    a pre-Phase-3 database on its next open, with no separate
+    migration step. Returns True if the base schema was just created,
+    False if it already existed (agent_calls may still have been
+    added either way)."""
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='runs'"
     ).fetchone()
-    if row is not None:
-        return False
     conn.executescript(DDL_PATH.read_text(encoding="utf-8"))
-    return True
+    return row is None
 
 
 @contextmanager
@@ -442,3 +445,166 @@ def resolve_finding(
     )
     if cur.rowcount != 1:
         raise LedgerConflict(f"finding {finding_id!r} was not resolved (race?)")
+
+
+# --------------------------------------------------------------------------
+# agent_calls (Phase 3 addition — caged checker agent audit trail,
+# dispatch q77-p3-a). Additive to the frozen v1 tables above.
+# --------------------------------------------------------------------------
+
+
+class AgentCallRow(NamedTuple):
+    id: int
+    run_id: str
+    task_key: str
+    surface: str
+    check_class: str
+    model: str
+    auth_mode: str
+    state: str
+    started_at_utc: datetime
+    finished_at_utc: datetime | None
+    reserved_eur_micros: int
+    charged_eur_micros: int | None
+    sdk_turns: int | None
+    sdk_is_error: bool | None
+    sdk_subtype: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    usd_cost_estimate: str | None
+    fx_source: str
+    fx_rate_date: str
+    fx_retrieved_at_utc: datetime
+    fx_rate_decimal: str
+    tool_attempts: int
+    accepted: bool
+    rejection_reason: str | None
+
+
+def _agent_call_from_row(row: sqlite3.Row) -> AgentCallRow:
+    data = dict(row)
+    data["started_at_utc"] = _dt(data["started_at_utc"])
+    data["finished_at_utc"] = _dt(data["finished_at_utc"]) if data["finished_at_utc"] else None
+    data["fx_retrieved_at_utc"] = _dt(data["fx_retrieved_at_utc"])
+    data["sdk_is_error"] = bool(data["sdk_is_error"]) if data["sdk_is_error"] is not None else None
+    data["accepted"] = bool(data["accepted"])
+    return AgentCallRow(**data)
+
+
+def insert_agent_call_reserved(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    task_key: str,
+    surface: str,
+    check_class: str,
+    model: str,
+    auth_mode: str,
+    started_at_utc: datetime,
+    reserved_eur_micros: int,
+    fx_source: str,
+    fx_rate_date: str,
+    fx_retrieved_at_utc: datetime,
+    fx_rate_decimal: str,
+) -> int:
+    """Durably record a call's reservation *before* the SDK is
+    invoked — the row starts in-flight (state=RESERVED,
+    finished_at_utc NULL) and is later closed by
+    ``finalize_agent_call``. A row still RESERVED when a run is
+    reconciled means the call's final usage was never recovered
+    (crash mid-call); it is never silently rewritten to a terminal
+    state — see ``unresolved_agent_calls``."""
+    cur = conn.execute(
+        """
+        INSERT INTO agent_calls (
+            run_id, task_key, surface, check_class, model, auth_mode,
+            state, started_at_utc, finished_at_utc, reserved_eur_micros,
+            fx_source, fx_rate_date, fx_retrieved_at_utc, fx_rate_decimal,
+            tool_attempts, accepted
+        ) VALUES (?, ?, ?, ?, ?, ?, 'RESERVED', ?, NULL, ?, ?, ?, ?, ?, 0, 0)
+        """,
+        (
+            run_id,
+            task_key,
+            surface,
+            check_class,
+            model,
+            auth_mode,
+            serialize_db_datetime(started_at_utc),
+            reserved_eur_micros,
+            fx_source,
+            fx_rate_date,
+            serialize_db_datetime(fx_retrieved_at_utc),
+            fx_rate_decimal,
+        ),
+    )
+    assert cur.lastrowid is not None
+    return cur.lastrowid
+
+
+def finalize_agent_call(
+    conn: sqlite3.Connection,
+    call_id: int,
+    *,
+    state: Literal["COMPLETED", "FAILED", "REJECTED", "EXHAUSTED"],
+    finished_at_utc: datetime,
+    charged_eur_micros: int,
+    sdk_turns: int | None = None,
+    sdk_is_error: bool | None = None,
+    sdk_subtype: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    usd_cost_estimate: str | None = None,
+    tool_attempts: int = 0,
+    accepted: bool = False,
+    rejection_reason: str | None = None,
+) -> None:
+    """Move a RESERVED row to a terminal state, guarded by an
+    optimistic ``WHERE state = 'RESERVED'`` so a call can only be
+    finalized once (mirrors ``transition_task``'s discipline)."""
+    cur = conn.execute(
+        """
+        UPDATE agent_calls
+           SET state = ?, finished_at_utc = ?, charged_eur_micros = ?,
+               sdk_turns = ?, sdk_is_error = ?, sdk_subtype = ?,
+               input_tokens = ?, output_tokens = ?, usd_cost_estimate = ?,
+               tool_attempts = ?, accepted = ?, rejection_reason = ?
+         WHERE id = ? AND state = 'RESERVED'
+        """,
+        (
+            state,
+            serialize_db_datetime(finished_at_utc),
+            charged_eur_micros,
+            sdk_turns,
+            int(sdk_is_error) if sdk_is_error is not None else None,
+            sdk_subtype,
+            input_tokens,
+            output_tokens,
+            usd_cost_estimate,
+            tool_attempts,
+            int(accepted),
+            rejection_reason,
+            call_id,
+        ),
+    )
+    if cur.rowcount != 1:
+        raise LedgerConflict(f"agent_call {call_id!r} was not RESERVED (already finalized?)")
+
+
+def list_agent_calls_for_run(conn: sqlite3.Connection, run_id: str) -> list[AgentCallRow]:
+    rows = conn.execute(
+        "SELECT * FROM agent_calls WHERE run_id = ? ORDER BY id", (run_id,)
+    ).fetchall()
+    return [_agent_call_from_row(row) for row in rows]
+
+
+def unresolved_agent_calls(conn: sqlite3.Connection, run_id: str) -> list[AgentCallRow]:
+    """Rows still RESERVED for a run: a call that started but whose
+    final usage was never recovered (crash mid-call). Reconciliation
+    charges these at their reserved amount, never zero — the row
+    itself is never rewritten; it stays visibly unresolved."""
+    rows = conn.execute(
+        "SELECT * FROM agent_calls WHERE run_id = ? AND state = 'RESERVED' ORDER BY id",
+        (run_id,),
+    ).fetchall()
+    return [_agent_call_from_row(row) for row in rows]

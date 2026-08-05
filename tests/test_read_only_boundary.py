@@ -1,14 +1,20 @@
-"""Phase-2 boundary tests: zero-model-call invariant and no-write-
-access-by-construction.
+"""Phase-2 boundary tests: zero-model-call invariant (in *stub* mode)
+and no-write-access-by-construction.
 
 **Scoping note**: this is a narrower, differently-scoped file than
-the full cage suite (tests/test_bounds.py), which lands at Phase 3
-with the caged checker agent per BLUEPRINT §4/§6 P3 and per
-tests/test_failures.py's module docstring. This file only proves what
-Phase 2's actual surface supports: no model SDK is ever imported, no
-model call is ever made (every CostRow is zero-token/zero-cost), no
-write-scoped credential is ever used, and no byte is written outside
-the four explicit CLI paths.
+the full cage suite (tests/test_bounds.py), which landed at Phase 3
+with the caged checker agent per BLUEPRINT §4/§6 P3, per
+tests/test_failures.py's module docstring, and per dispatch q77-p3-a.
+This file proves what the *deterministic* control plane supports on
+its own: no model SDK is ever imported anywhere under sentinel/ or
+checks/ (the caged agent's own SDK import lives only under agents/ —
+tests/test_dependency_surface.py is the complementary check that it's
+*only* allowed there), a stub-mode run makes no model call (every
+CostRow is zero-token/zero-cost), no write-scoped credential is ever
+used, and no byte is written outside the four explicit CLI paths. The
+zero-model-call test below selects stub mode explicitly, rather than
+relying on it being RunConfig's default — this invariant must hold
+because stub mode was asked for, not because nothing else exists.
 """
 
 from __future__ import annotations
@@ -81,7 +87,9 @@ def test_dynamic_full_run_makes_zero_model_calls_and_zero_cost(tmp_path, make_co
     from telemetry.cost_ledger import read_cost_rows
     from tests.conftest import ListSurfaceProvider, T0, make_repo_surface
 
-    config = make_config(tmp_path)
+    # judgment_mode is explicit stub here, not relied upon as a
+    # default -- this is the invariant a stub-mode run must uphold.
+    config = make_config(tmp_path, judgment_mode="stub")
     repo = make_repo_surface("acme", {"README.md": "## Solution\n"})
     outcome = execute_run(
         config, make_deps(clock=fixed_clock(T0), surface_provider=ListSurfaceProvider([repo]))

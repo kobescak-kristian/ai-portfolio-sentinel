@@ -12,18 +12,27 @@ pre-registered, BLUEPRINT §0).
 **Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
 2026-07-15, canonical record in the private operations OS (same
 date). Public-while-dormant is intended; do not flag.
-**Phase status:** Phase 2 CLOSED 2026-08-05 — deterministic control
-plane end to end, scheduler-gate proven; see the 2026-08-05 change-log
-entry for full evidence. Phase 1 CLOSED 2026-08-04 — eval gate frozen by
-this commit (fixture corpus, answer key, clean inventory, scoring
-contract, quantized thresholds and review evidence committed; see
-the 2026-08-04 change-log entry and evals/). Phase 0 CLOSED
-2026-08-03 — evidence: foundation and canary commits public on main;
-repository publish gate OVERALL PASS from the closing HEAD; CI green
-on push (Actions run 30852395018, conclusion success; 36/36 tests,
-ubuntu-latest, Python 3.12). Next action: Phase 3 per BLUEPRINT §6
-(caged checker agent replacing the two Phase-2 judgment stubs; bounds
-tests incl. no-write-access-by-construction).
+**Phase status:** Phase 3 IMPLEMENTATION COMPLETE, gate PENDING — the
+caged checker agent (`agents/checker/`), run-scoped EUR budget, main-
+ledger audit (`agent_calls`), `--judgment-mode stub|agent` activation,
+`tests/test_bounds.py` cage suite, the activated
+`test_per_run_cost_cap_halts_checker` FI stub, `scripts/run_phase3_dev_gate.py`,
+`THREAT_MODEL.md`, and `MODEL_CARD.md` (draft) are implemented and
+committed at this commit; the designated real Haiku dev-gate run
+(BLUEPRINT §6 P3: "Dev gate leg green on fixtures") has not yet run.
+Phase 3 does not close until that gate runs and either passes every
+frozen threshold/invariant or is recorded as an honest FAIL. See the
+2026-08-05 (Phase 3 implementation) change-log entry. Phase 2 CLOSED
+2026-08-05 — deterministic control plane end to end, scheduler-gate
+proven; see that change-log entry for full evidence. Phase 1 CLOSED
+2026-08-04 — eval gate frozen by this commit (fixture corpus, answer
+key, clean inventory, scoring contract, quantized thresholds and
+review evidence committed; see the 2026-08-04 change-log entry and
+evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
+commits public on main; repository publish gate OVERALL PASS from the
+closing HEAD; CI green on push (Actions run 30852395018, conclusion
+success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: run
+the designated Phase-3 Haiku dev gate.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -31,9 +40,10 @@ amended 2026-08-03.
 owner ruling 2026-08-03); LICENSE file committed 2026-08-03 at
 2283b4f via the repo-exclusive rollout step. No remaining
 license-related program-closure dependency.
-**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: Phase 3 build
-dispatch (caged checker agent; bounds tests incl.
-no-write-access-by-construction).
+**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: run the designated
+Phase-3 Haiku dev gate (implementation landed this commit; activating
+the standing scheduled task in agent mode is a separate, later
+decision — SentinelDailyRun stays stub-mode, unedited).
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
 name kept). Internal path reference removed from the Visibility line
 2026-08-03 (this repo's own public-live rule; content unchanged
@@ -90,6 +100,40 @@ runs) AND the fix workload proves annoying by experience, not by
 anticipation. Claims line when built: "proposes fixes; a human
 merges every change."
 **Change log:**
+- 2026-08-05 — Phase 3 IMPLEMENTATION (dispatch q77-p3-a; commit SHA
+  recorded in the kristian-os Q-77 annotation, not embedded here — a
+  commit cannot truthfully cite its own hash). Landed: `agents/checker/`
+  (config, auth fail-closed override check, ECB FX resolution, run-
+  scoped EUR-budget coordinator, host-side evidence validation, the
+  one `emit_finding` in-process MCP tool, SDK harness implementing
+  `JudgmentStub` as `CagedCheckerStub`) with zero changes to the
+  existing `checks/judgment/stubs.py` Protocol or its two adapters;
+  `agent_calls` main-ledger audit table (additive, idempotent DDL,
+  no second database); `--judgment-mode stub|agent` (default `stub`,
+  unchanged Phase-2 behavior; `SentinelDailyRun`'s resolved command
+  carries no such flag and is unedited); real agent-mode CostRow
+  aggregation checked from ledger state so crash-recovery reconciliation
+  is unaffected; `tests/test_bounds.py` (49 tests: cage construction,
+  circuit breaker, shared run budget, FX/auth fail-closed paths,
+  durable audit, evidence-fabrication/prompt-injection resistance,
+  fingerprint stability, containment, credential-leak canary);
+  `test_per_run_cost_cap_halts_checker` activated for real (the
+  self-guard test now expects exactly the three remaining Phase-4
+  skips); `scripts/run_phase3_dev_gate.py` (reads `fixtures/`/`evals/`
+  read-only; validated end-to-end in stub mode: all four deterministic
+  classes score 40/40 true positives, 0 false positives, 0 clean
+  false-flags, all invariants green — confirming the scorer and
+  pipeline wiring before any real model call); `THREAT_MODEL.md`;
+  `MODEL_CARD.md` (draft); `DATA_CONTRACT.md`/`DATA_RETENTION_POLICY.md`
+  updated for the `agent_calls` addition. Test suite: 532 passed, 3
+  skipped (all Phase 4), coverage measured over `agents` too. A real
+  environmental finding surfaced and confirmed correct during this
+  build: the auth-override fail-closed check correctly refused to
+  proceed inside the build session's own tool-execution environment
+  (which carries `ANTHROPIC_BASE_URL` for its own unrelated routing) —
+  flagged to the owner before the designated gate is attempted from a
+  clean environment. **Phase 3 does not close on this commit** — see
+  Phase status above; the designated Haiku dev gate is next.
 - 2026-07-13 — repo created; BLUEPRINT v1.0, CLAUDE.md, decisions/0001,
   STATE.md committed in scaffold commit (Fable session).
 - 2026-07-13 — publish-gate FAIL on internal references (caught

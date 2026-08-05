@@ -125,9 +125,18 @@ def _write_run_outputs(conn, config: RunConfig, run_id: str, *, logger: RunLogge
     if not costs.has_cost_row_for_run(config.cost_ledger_path, run_id):
         costs.repair_trailing_fragment(config.cost_ledger_path)
         if not costs.has_cost_row_for_run(config.cost_ledger_path, run_id):
-            row = costs.append_zero_cost_row(
-                config.cost_ledger_path, run_id=run_id, run_kind=run.run_kind, recorded_at_utc=stamp
-            )
+            # Checked from ledger state, not a Deps flag, so the same
+            # reconciliation path (crash recovery included) always
+            # builds the right row regardless of how the run was
+            # invoked (dispatch q77-p3-a, section F).
+            if costs.has_agent_calls_for_run(conn, run_id):
+                row = costs.append_agent_cost_row(
+                    config.cost_ledger_path, conn, run_id=run_id, run_kind=run.run_kind, recorded_at_utc=stamp
+                )
+            else:
+                row = costs.append_zero_cost_row(
+                    config.cost_ledger_path, run_id=run_id, run_kind=run.run_kind, recorded_at_utc=stamp
+                )
             logger.log("INFO", "cost.row_appended", now=row.recorded_at_utc, run_id=run_id)
 
 

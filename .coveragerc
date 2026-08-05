@@ -1,7 +1,7 @@
 [run]
 branch = true
 parallel = false
-source = contracts, telemetry, sentinel, checks
+source = contracts, telemetry, sentinel, checks, agents
 
 [report]
 show_missing = true

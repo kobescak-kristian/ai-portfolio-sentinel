@@ -513,21 +513,100 @@ def test_only_phase_3_and_4_stubs_remain_skipped():
             skipped[node.name] = reason
 
     assert set(skipped) == {
-        "test_per_run_cost_cap_halts_checker",
         "test_cost_breaker_trips_on_seeded_overspend",
         "test_consecutive_failure_breaker_trips_on_seeded_failures",
         "test_seeded_breaker_trip_produces_failure_alert",
     }
     for name, reason in skipped.items():
-        assert reason is not None and ("Phase 3" in reason or "Phase 4" in reason), (name, reason)
+        assert reason is not None and "Phase 4" in reason, (name, reason)
 
 
-# --- Phase 3: caged checker agent ------------------------------------------
+# --- Phase 3: caged checker agent (dispatch q77-p3-a) -----------------------
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 3: per-run cost cap")
-def test_per_run_cost_cap_halts_checker():
-    raise NotImplementedError
+def test_per_run_cost_cap_halts_checker(tmp_path, make_config, make_deps, fixed_clock):
+    """FI (activated at Phase 3): per-run cost cap. A run-scoped budget
+    sized for exactly one judgment call drains on the first call;
+    every remaining judgment task must dead-letter without another
+    model call, deterministic tasks still complete normally, no
+    partial finding survives for a dead-lettered judgment scope, the
+    run fails overall (fail_run_on_task_failure defaults True), and
+    the aggregate charged cost never exceeds the budget."""
+    from decimal import Decimal
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from agents.checker.budget import RunBudgetCoordinator
+    from agents.checker.fx import FxRate
+    from agents.checker.harness import CagedCheckerStub
+    from sentinel import costs
+
+    calls_made: list[str] = []
+
+    def tiny_query_fn(check_class, reservation, state, user_prompt):
+        calls_made.append(check_class)
+        # total_cost_usd=None -> "unresolved usage" path -> the full
+        # reservation is charged, deliberately draining the entire
+        # tiny budget on this one call so every later judgment task
+        # hits BudgetExhausted before any further call.
+        return SimpleNamespace(
+            is_error=False, subtype="success", num_turns=1,
+            total_cost_usd=None, usage={}, result="",
+        )
+
+    rate = FxRate(source="ecb-eurofxref-daily", rate_date="2026-08-05", retrieved_at_utc=T0, usd_per_eur=Decimal("1.1554"))
+    # Sized to exactly one call's worth (agents.checker.config.MAX_PER_CALL_RESERVE_EUR_MICROS)
+    # so the first judgment call drains the run's entire budget.
+    coordinator = RunBudgetCoordinator(fx_rate=rate, total_eur_micros=100_000)
+
+    repo = make_repo_surface(
+        "acme",
+        {
+            "README.md": "## Problem\np\n## Solution\ns\n## System\nsy\n## Outcome\no\n## Version Log\nv\n",
+            "EVAL_RESULTS.md": "no figures here\n",
+            "STATE.md": "current state text\n",
+            ".githooks/pre-push": "#!/bin/sh\n",
+        },
+        required_paths=(".githooks/pre-push",),
+    )
+    provider = ListSurfaceProvider([repo])
+    config = make_config(tmp_path, run_kind="dev", source="fixtures", run_id="r-cost-cap")
+
+    stub_conn = ledger.open_ledger(config.db_path)
+    # This FI test exercises the shared-budget/dead-letter behavior in
+    # isolation, not authentication — the auth-override check is
+    # exercised directly by its own tests in tests/test_bounds.py.
+    with patch("agents.checker.harness.auth.assert_no_auth_override_risk", return_value=None):
+        judgment = CagedCheckerStub(
+            run_id="r-cost-cap", conn=stub_conn, coordinator=coordinator, clock=lambda: T0, query_fn=tiny_query_fn
+        )
+        deps = make_deps(clock=fixed_clock(T0, T1, T2), surface_provider=provider, judgment=judgment)
+        outcome = execute_run(config, deps)
+
+    assert outcome.status == "FAILED"
+    assert len(calls_made) == 1  # every subsequent judgment task was refused before any call
+
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        dead_lettered = ledger.list_tasks(conn, "r-cost-cap", statuses=["DEAD_LETTER"])
+        judgment_classes = {"stale-STATE-marker", "missing-synthetic-label"}
+        judgment_dead_lettered = [t for t in dead_lettered if t.check_class in judgment_classes]
+        assert len(judgment_dead_lettered) >= 1
+
+        done = ledger.list_tasks(conn, "r-cost-cap", statuses=["DONE"])
+        deterministic_classes = {"broken-link", "number-mismatch", "readme-structure", "missing-required-file"}
+        deterministic_done = [t for t in done if t.check_class in deterministic_classes]
+        assert len(deterministic_done) > 0  # deterministic tasks were not affected by the exhausted budget
+
+        open_findings = ledger.list_open_findings(conn)
+        judgment_findings = [f for f in open_findings if f.finding.check_class in judgment_classes]
+        assert judgment_findings == []  # no partial finding survives for any dead-lettered scope
+
+        row = costs.build_agent_cost_row(conn, run_id="r-cost-cap", run_kind="dev", recorded_at_utc=T2)
+        assert row.cost_eur_micros <= 100_000
+    finally:
+        conn.close()
+        stub_conn.close()
 
 
 # --- Phase 4: breakers and bounded loop -------------------------------------

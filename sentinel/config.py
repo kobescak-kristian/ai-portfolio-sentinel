@@ -104,3 +104,9 @@ class RunConfig:
     fail_run_on_task_failure: bool = True
     log_level: str = "INFO"
     run_id: str | None = None  # explicit override for reproducible verification runs
+    # Phase 3 (dispatch q77-p3-a): "stub" (default) preserves Phase 2's
+    # NullJudgmentStub behavior and zero-cost rows unchanged; "agent"
+    # selects the real caged checker for the two judgment classes.
+    # SentinelDailyRun's resolved command carries no judgment-mode
+    # flag, so it stays "stub" by construction, unedited.
+    judgment_mode: str = "stub"

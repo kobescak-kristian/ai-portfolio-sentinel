@@ -1,17 +1,22 @@
-<!-- Describes the system as landed at Phase 2 (BLUEPRINT §6 P2, §11(d);
-ADR 0003). Status: in development toward production-ready. No production
-claim is made in this document. -->
+<!-- Describes the system as landed through Phase 3 (BLUEPRINT §6 P2/P3,
+§11(d); ADR 0003; dispatch q77-p3-a). Status: in development toward
+production-ready. No production claim is made in this document. -->
 
 # DATA_CONTRACT — ai-portfolio-sentinel
 
 ## 1. Scope and status
 
 This document describes the deterministic control plane landed at
-Phase 2: live inventory, task creation, four real deterministic
-checkers, two injectable judgment-stub classes, SQLite ledger
-persistence, dedup/lifecycle, `FINDINGS.md` reporting, structured
-logging, and zero-cost telemetry. **Zero LLM/model calls occur
-anywhere in this phase.**
+Phase 2 (live inventory, task creation, four real deterministic
+checkers, SQLite ledger persistence, dedup/lifecycle, `FINDINGS.md`
+reporting, structured logging) plus the Phase-3 addition: a real,
+caged checker agent for the two judgment classes, selected explicitly
+via `--judgment-mode agent` (default remains `stub`, unchanged Phase-2
+behavior — see §5b). **Zero LLM/model calls occur in stub mode**, the
+default and what the standing `SentinelDailyRun` scheduled task
+invokes, unedited. Agent mode makes real, budget-capped model calls
+only for the two judgment classes; every other check class stays fully
+deterministic in both modes.
 
 Synthetic/live labeling is never blurred: the frozen Phase 1 eval
 gate (`fixtures/`, `evals/`) is **SYNTHETIC** data with a frozen
@@ -95,13 +100,56 @@ The six frozen classes: `broken-link`, `number-mismatch`,
   five-header exact sequence; live mode enforces presence-only of
   that repository's own declared header list — see §5a.
 
-**Stubbed at Phase 2 (2 classes)** — `checks/judgment/`:
-`stale-STATE-marker`, `missing-synthetic-label` route through an
-injectable `JudgmentStub` (`checks/judgment/stubs.py`).
-`NullJudgmentStub` is the production implementation: it performs no
-I/O, no model call, and returns nothing — the tasks still reach
-`DONE` with zero findings. The caged checker agent replaces only this
-one seam at Phase 3.
+**Judgment classes (2)** — `checks/judgment/`: `stale-STATE-marker`,
+`missing-synthetic-label` route through an injectable `JudgmentStub`
+(`checks/judgment/stubs.py`). `NullJudgmentStub` performs no I/O, no
+model call, and returns nothing — the tasks still reach `DONE` with
+zero findings; this is stub mode's production implementation and the
+default. `CagedCheckerStub` (`agents/checker/harness.py`, landed at
+Phase 3) is the real implementation, selected only via
+`--judgment-mode agent` — see §5b. Neither adapter
+(`checks/judgment/stale_state.py`, `synthetic_label.py`) changed to
+support this: both call `ctx.judgment.judge(request)` exactly as
+before, unaware of which implementation is behind the seam.
+
+### 5b. Phase-3 real judgment: the caged checker agent
+
+`agents/checker/` (new, first-party, outside `sentinel/`/`checks/`) is
+the only place the Claude Agent SDK is imported anywhere in this
+repository — `tests/test_read_only_boundary.py` bans it from
+`sentinel/`/`checks/`; `tests/test_dependency_surface.py` bans it from
+every other first-party root. Full architecture, cage, evidence
+contract, and threat coverage: `THREAT_MODEL.md`, `MODEL_CARD.md`.
+Summary of what's new to this contract:
+
+- **Trust boundary**: the agent receives only `JudgmentRequest.text` —
+  already fetched deterministically, exactly as the stub adapters
+  always did. It has no fetch tool and cannot reach any surface beyond
+  the one document it's given.
+- **Evidence, not findings**: the model proposes a closed reason code
+  plus verbatim line/excerpt citations through one tool
+  (`emit_finding`); `agents/checker/evidence.py` independently
+  validates every citation against `JudgmentRequest.text` and
+  deterministically constructs the actual `ObservedFinding` — no
+  free-form model text ever reaches `location`, `normalized_content`,
+  or `detail`.
+- **Cost**: a run-scoped EUR budget (not per-request), derived into a
+  conservative per-call USD ceiling via a freshly-resolved ECB
+  reference rate (`agents/checker/fx.py`) — never a hardcoded or
+  cached rate. `cost_eur_micros` under subscription auth is estimated
+  model-equivalent consumption for this system's own cap, never
+  described as authoritative billing (`MODEL_CARD.md` §5).
+- **Authentication**: fails closed before any model call if a
+  documented override-capable environment variable (API key, auth
+  token, base-URL override, cloud-provider routing flag) is present
+  (`agents/checker/auth.py`) — the intended auth is the operator's
+  local Claude subscription OAuth only.
+- **Activation**: `--judgment-mode stub|agent`, default `stub`. The
+  standing `SentinelDailyRun` scheduled task's resolved command carries
+  no `--judgment-mode` flag and is unedited by this phase — it stays
+  stub-mode by construction, unchanged Phase-2 behavior. Scheduled
+  live-agent activation is a separate, later decision, not part of
+  this phase's closure.
 
 ### 5a. Live applicability is policy-derived per repository, per run
 
@@ -173,6 +221,20 @@ makes a duplicate OPEN finding unrepresentable. Cost telemetry stays
 in the separate, frozen Phase-0 JSONL ledger (`telemetry/cost_ledger.py`)
 by design — unifying it with SQLite would alter a frozen contract and
 needs its own ADR.
+
+**Phase-3 addition**: `agent_calls` (surrogate `id` PK, FK `run_id` →
+`runs`) is the caged checker agent's main-ledger audit trail — one row
+per attempted judgment call, `RESERVED` before the SDK is invoked and
+finalized to a terminal state (`COMPLETED`/`FAILED`/`REJECTED`/
+`EXHAUSTED`) after (§5b; `THREAT_MODEL.md` §9). Purely additive: no
+existing table's definition changed, and every statement in the DDL
+file is `IF NOT EXISTS` so it applies safely to a pre-Phase-3 database
+on its next open (`sentinel/ledger.py::initialize_schema`). Empty (no
+rows) for every stub-mode run — `sentinel/costs.py::has_agent_calls_for_run`
+is how the pipeline distinguishes a stub-mode run (zero-cost CostRow,
+unchanged Phase-2 behavior) from an agent-mode run (real aggregated
+CostRow) when writing `FINDINGS.md`/cost-ledger output, including after
+crash recovery.
 
 ## 8. State transitions
 
