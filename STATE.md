@@ -166,6 +166,38 @@ merges every change."
   `artifacts/phase3_gate_diagnosis.json`. **Phase 3 remains OPEN. Q-77
   remains OPEN.** Remediation ADR remains the next decision point and
   was not designed in this record.
+- 2026-08-05 — Phase 3 gate diagnosis CORRECTION (dispatch
+  q77-p3-diagnose-fix-a): the diagnosis above incorrectly described two
+  separate budget pools. Corrected architecture, confirmed against
+  `agents/checker/budget.py` and `agents/checker/harness.py`: there is
+  ONE shared run-budget architecture (`RunBudgetCoordinator` owns the
+  entire run's EUR budget; every call reserves a bounded slice of that
+  same shared pool, and the SDK-facing `max_budget_usd` ceiling is
+  derived from that call's own reservation), expressed through two
+  distinct failure modes, not two pools. The four budget-related misses
+  are unchanged: inj-004/inj-005 — call failed at the reservation-derived
+  SDK ceiling; inj-059/inj-060 — no model call after the shared budget
+  reached zero. The earlier claim of "2 rejected tool emissions" was
+  unsupported and is corrected: two failed calls (agent_calls id=1,
+  id=17) each had one tool attempt and no persisted finding, but
+  `accepted=False` on an SDK-exception path is a call-level finalization
+  value, not a per-attempt outcome record — per-attempt acceptance or
+  rejection for those two calls is `UNAVAILABLE_FROM_PERSISTED_EVIDENCE`,
+  and so is the rejected-tool-emissions total. Host-validation rejection
+  of a substantively correct answer remains `NOT DETERMINABLE FROM
+  RETAINED METADATA`. The stale-STATE-marker wrong-anchor pattern is
+  corrected to apply only to synthetic-01, synthetic-02, and
+  synthetic-03 — synthetic-05 matched both of its frozen positives and
+  was never part of that pattern. No gate metric, disposition, TP, FP,
+  miss, or cost count changed (TP 47, FP 9, misses 13, judgment matched
+  7/20, missing-synthetic-label 5/10, stale-STATE-marker 2/10, clean
+  flagged 1/166, run-1 15 COMPLETED/2 FAILED/7 EXHAUSTED, run-1 real
+  calls 17, run-2 24 EXHAUSTED/zero real calls — all unchanged). No
+  model call or gate rerun occurred; no implementation, prompt, scorer,
+  fixture, threshold, model, or gate contract changed. The
+  diagnostic-recording substep is now corrected and complete. **Phase 3
+  remains OPEN. Q-77 remains OPEN.** The separately approved remediation
+  ADR remains the next decision point and is not designed here.
 - 2026-08-05 — Phase 3 IMPLEMENTATION (dispatch q77-p3-a; commit SHA
   recorded in the kristian-os Q-77 annotation, not embedded here — a
   commit cannot truthfully cite its own hash). Landed: `agents/checker/`

@@ -183,11 +183,20 @@ By class: missing-synthetic-label 3 FPs, stale-STATE-marker 6 FPs.
   the other 8 accepted=1 calls (all `missing-synthetic-label`) each
   produced exactly 1. 4×2 + 8×1 = 16, matching the `findings` table
   exactly.
-- Rejected tool emissions (`tool_attempts>=1 AND accepted=0`): 2 total —
-  agent_calls id=1 (`"Reached maximum budget ($0.0808)"`) and id=17
-  (`"Reached maximum budget ($0.0241)"`). Both are SDK/budget exceptions,
-  not a host-side content-validation rejection of an already-emitted
-  finding.
+- Failed calls with at least one tool attempt and no persisted finding:
+  2 — agent_calls id=1 and id=17. Both failed at the **call level** with
+  an SDK maximum-budget exception (`"Reached maximum budget ($0.0808)"`
+  and `"Reached maximum budget ($0.0241)"` respectively). Per
+  `agents/checker/harness.py`, on any SDK/transport exception the call
+  is finalized with `accepted=False` unconditionally — this is a
+  call-level finalization field, not a record of whether the individual
+  tool attempt itself was host-accepted, host-rejected,
+  duplicate-suppressed, or never reached validation at all; no per-attempt
+  outcome is persisted anywhere for these two calls. **Rejected tool
+  emissions total: UNAVAILABLE_FROM_PERSISTED_EVIDENCE.** Per-attempt
+  acceptance or rejection for these two failed calls:
+  **UNAVAILABLE_FROM_PERSISTED_EVIDENCE.** No evidence proves either
+  tool attempt was rejected by host content validation.
 - Tool-call circuit-breaker events: **0**, confirmed — `gate.jsonl` (328
   lines) contains only event types `cost.row_appended`,
   `report.appended`, `run.failed`, `run.started`, `task.claimed`,
@@ -224,25 +233,41 @@ The 13 total misses split into three separately-proven categories:
 | MISSED_CALL_FAILED | 2 | inj-004, inj-005 |
 | MISSED_AFTER_COMPLETED_CALL (not budget-related) | 9 | inj-011, inj-012, inj-023, inj-024, inj-030, inj-035, inj-036, inj-041, inj-057 |
 
-**4 misses are budget-related in total, but by two distinct,
-separately-proven mechanisms — do not merge them:**
-1. **Run-level shared coordinator exhaustion** (2 misses, inj-059/060):
-   the 500,000-µEUR pool shared across both designated run IDs was fully
-   spent; proven by the literal rejection text on agent_calls id=18.
-2. **Per-call maximum-budget guard** (2 misses, inj-004/005): a smaller,
-   distinct per-call cost cap terminated an in-progress call mid-turn;
-   proven by the literal rejection text on agent_calls id=1
-   (`"Reached maximum budget ($0.0808)"` — a dollar figure far below the
-   run's total pool, and this call's own reserved/charged amount,
-   100,000 µEUR, was well under the run total at that point).
+**4 misses are budget-related in total. There is one shared run-budget
+architecture** (`agents/checker/budget.py`'s `RunBudgetCoordinator`: one
+coordinator owns the entire run's EUR budget; each call reserves a
+bounded slice of that same shared pool via `reserve()`, capped at
+`MAX_PER_CALL_RESERVE_EUR_MICROS`; the SDK-facing `max_budget_usd`
+ceiling passed to `ClaudeAgentOptions` is derived from that call's
+reservation and the resolved FX rate; an unresolved/SDK-failed call is
+charged its full reservation via `commit_unresolved`) **with two
+distinct failure modes within it — do not describe them as separate
+budget pools:**
+1. **Reservation-derived SDK-ceiling failure** (2 misses, inj-004/005):
+   agent_calls id=1's real model call reached the SDK `max_budget_usd`
+   ceiling that was itself derived from that call's reservation out of
+   the shared pool, and failed before completing; proven by the literal
+   rejection text `"Reached maximum budget ($0.0808)"`.
+2. **Shared-budget-zero no-call miss** (2 misses, inj-059/060): by the
+   time agent_calls id=18 was reached, the shared coordinator's
+   remaining balance was zero, so the task was rejected before any
+   model call; proven by the literal rejection text on agent_calls
+   id=18 (`"run budget exhausted: 500000 EUR-micros total, 500000
+   charged, 0 reserved"`).
+
+Permitted framing: two distinct failure modes within one shared
+run-budget architecture — not separate pools, not unrelated budgets.
 
 The other 9 misses occurred after a call **completed successfully** and
-are not budget-related at all — a model recall/extraction gap (the
-pattern observed: every completed `EVAL_RESULTS.md` fixture with two
-injected positives emitted only the first; every completed `STATE.md`
-positive-fixture emitted the correct *pair count* but anchored the wrong
-line, matching the wrong-anchor false positives above instead of the
-answer key's expected lines).
+are not budget-related at all — a model recall/extraction gap. The
+observed pattern: every completed `EVAL_RESULTS.md` fixture with two
+injected positives emitted only the first. Separately, in each of the
+three completed `stale-STATE-marker` fixtures that missed its frozen
+positives — synthetic-01, synthetic-02, and synthetic-03 — the model
+emitted two findings at STATE.md:6 and STATE.md:7 rather than matching
+the frozen positives at STATE.md:15 and STATE.md:16. This wrong-anchor
+pattern does **not** apply to synthetic-05, whose completed call matched
+both of its frozen positives (inj-051, inj-052) correctly.
 
 **Budget boundary, precisely:** agent_calls id=17
 (`synthetic-06/README.md::missing-synthetic-label`) is both the last
@@ -313,14 +338,21 @@ not block any mandated reconciliation from closing.
   key's location convention requires) — this produced 6 of the 9 total
   false positives as a direct side effect.
 - 2 of 20 frozen positives (inj-059, inj-060) never received a model
-  call because the run-level shared budget coordinator was fully spent
-  by that point in dispatch order.
+  call because the shared run-budget coordinator's remaining balance was
+  zero by that point in dispatch order.
 - 2 of 20 frozen positives (inj-004, inj-005) never received a completed
-  call because a smaller, distinct per-call budget guard terminated the
-  call mid-turn — this is a separate mechanism from the run-level
-  coordinator exhaustion above.
-- Both budget mechanisms are proven by exact persisted rejection text;
+  call because their call reached the SDK maximum-budget ceiling, which
+  is itself derived from that call's reservation out of the same shared
+  coordinator — one shared run-budget architecture, two distinct failure
+  modes within it, not two separate pools.
+- Both failure modes are proven by exact persisted rejection text;
   neither is inferred.
+- The two failed calls (id=1, id=17) each had one tool attempt and no
+  persisted finding, but the individual tool-attempt acceptance/rejection
+  outcome is unavailable from persisted evidence — `accepted=False` on
+  these rows is a call-level finalization value set unconditionally on
+  any SDK exception, not a record of what happened to that specific
+  attempt.
 - 1 of 9 false positives (synthetic-04/README.md:39) matches a
   registered frozen clean unit (clean-162); the other 8 are off-manifest
   and their substantive correctness is not determinable from this

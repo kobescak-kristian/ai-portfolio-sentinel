@@ -1393,7 +1393,8 @@
       "count": 2,
       "mechanism": "run-level shared EUR-micros coordinator (500000-micro-EUR pool) fully consumed",
       "supporting_evidence": "agent_calls id=18, rejection_reason='run budget exhausted: 500000 EUR-micros total, 500000 charged, 0 reserved'",
-      "proven": true
+      "proven": true,
+      "failure_mode": "SHARED_BUDGET_ZERO_BEFORE_RESERVATION"
     },
     "MISSED_CALL_FAILED": {
       "positive_ids": [
@@ -1401,10 +1402,11 @@
         "inj-005"
       ],
       "count": 2,
-      "mechanism": "per-call maximum-budget guard, DISTINCT from the run-level coordinator (dollar figure in the rejection text, e.g. $0.0808, is far smaller than the run's 500000-micro-EUR total pool, and this call's own reserved/charged amount was 100000 micro-EUR, well under the run total at that point)",
+      "mechanism": "reservation-derived SDK maximum-budget ceiling exceeded mid-call -- the SDK-facing max_budget_usd for this call was itself derived from this call's reservation out of the SAME shared RunBudgetCoordinator pool that also governs the run-level exhaustion below. This is a distinct FAILURE MODE within one shared architecture, not a separate budget pool.",
       "supporting_evidence": "agent_calls id=1, rejection_reason=\"Exception: Claude Code returned an error result: Reached maximum budget ($0.0808)\"",
       "proven_budget_related": true,
-      "proven_same_mechanism_as_run_level_exhaustion": false
+      "shared_architecture_with_run_level_exhaustion": true,
+      "failure_mode": "RESERVATION_DERIVED_SDK_CEILING_EXCEEDED"
     },
     "MISSED_AFTER_COMPLETED_CALL": {
       "positive_ids": [
@@ -1424,8 +1426,9 @@
     },
     "total_misses": 13,
     "total_exhaustion_or_budget_attributable_misses": 4,
-    "budget_attribution_mechanism_note": "The 4 budget-related misses split across two DISTINCT, separately-proven mechanisms: 2 from the run-level shared coordinator being fully spent before the task could start (EXHAUSTED), and 2 from a per-call maximum-budget guard terminating an in-progress call (FAILED). Both are proven by exact persisted rejection_reason text. They are not the same budget pool and must not be reported as a single undifferentiated 'budget exhaustion' cause.",
-    "misses_not_attributable_to_any_budget_mechanism": 9
+    "budget_attribution_mechanism_note": "The 4 budget-related misses come from ONE shared run-budget architecture (RunBudgetCoordinator owns the entire run's EUR pool; every call's reservation, and the SDK ceiling derived from it, is a slice of that same pool), expressed through two distinct, separately-proven failure modes: (1) RESERVATION_DERIVED_SDK_CEILING_EXCEEDED -- a call's own SDK max_budget_usd (derived from its reservation) was reached mid-call (inj-004/inj-005); (2) SHARED_BUDGET_ZERO_BEFORE_RESERVATION -- the coordinator's remaining balance was zero before the task's reservation could even be attempted (inj-059/inj-060). Both are proven by exact persisted rejection text. Do not describe these as separate budget pools, different pools, unrelated budgets, or a per-call budget independent of the run budget -- permitted wording: 'two distinct failure modes within one shared run-budget architecture.'",
+    "misses_not_attributable_to_any_budget_mechanism": 9,
+    "budget_architecture": "ONE shared run-budget architecture (agents/checker/budget.py RunBudgetCoordinator): one coordinator owns the entire run EUR budget; each call reserves a bounded slice of that same shared pool via reserve(), capped at MAX_PER_CALL_RESERVE_EUR_MICROS; the SDK-facing max_budget_usd ceiling passed to ClaudeAgentOptions is derived from that call's reservation and the resolved FX rate; an unresolved/SDK-failed call is charged its full reservation via commit_unresolved. There are two distinct failure modes within this one architecture, not two separate budget pools."
   },
   "question_f_budget_sufficiency": {
     "run1_budget_sufficient_for_all_judgment_tasks": "NO",
@@ -1460,12 +1463,8 @@
     "accepted_call_level_flag_true_count": 12,
     "accepted_finding_count_from_findings_table": 16,
     "note_on_accepted_field": "agent_calls.accepted is a call-level 0/1 flag, not a per-finding count. Cross-checked against the findings table: 4 of the 12 accepted=1 calls (ids 3, 6, 9, 15 -- all stale-STATE-marker) each produced 2 findings under a single accepted flag, and the remaining 8 accepted=1 calls (all missing-synthetic-label) each produced exactly 1 finding: 4*2 + 8*1 = 16, matching the findings table exactly. Do not read agent_calls.accepted as a finding count.",
-    "rejected_tool_emissions_grouped_by_exact_reason": {
-      "\"Exception: Claude Code returned an error result: Reached maximum budget ($0.0808)\"": 1,
-      "\"Exception: Claude Code returned an error result: Reached maximum budget ($0.0241)\"": 1
-    },
-    "rejected_tool_emissions_total": 2,
-    "rejected_tool_emissions_note": "Both are agent_calls rows with tool_attempts>=1 and accepted=0 (ids 1 and 17). Both rejections are SDK/budget exceptions raised before or during the call, not a host-side content-validation rejection of an already-emitted finding.",
+    "rejected_tool_emissions_total": "UNAVAILABLE_FROM_PERSISTED_EVIDENCE",
+    "rejected_tool_emissions_note": "Per agents/checker/harness.py: on any SDK/transport exception the call is finalized with accepted=False unconditionally (CagedCheckerStub.judge, except-Exception branch), regardless of what the in-memory CheckerToolState.findings/tool_attempts held at that moment. accepted is a call-level finalization field, not a per-attempt outcome record. No table or log persists whether the one tool attempt on agent_calls id=1 or id=17 was itself host-accepted, host-rejected, duplicate-suppressed, or never reached validation before the exception. Do not report a 'rejected tool emissions' count for these two rows; do not group their SDK maximum-budget exceptions under a validator-rejection-reason grouping -- group them under failed-call reasons / SDK maximum-budget exceptions only.",
     "tool_call_circuit_breaker_events": 0,
     "tool_call_circuit_breaker_events_note": "gate.jsonl contains 328 lines across event types {cost.row_appended, report.appended, run.failed, run.started, task.claimed, task.dead_letter, task.done}; no circuit-breaker event type or string match ('circuit'/'breaker') exists anywhere in the file. This is a confirmed zero, not an unknown.",
     "completed_calls_with_no_accepted_finding": 3,
@@ -1482,18 +1481,25 @@
       "rows_with_tool_attempts_1_or_more_and_accepted_0": [
         {
           "agent_call_id": 1,
-          "reason": "budget-cap exception (SDK-level), not a content-validation rejection"
+          "reason": "SDK maximum-budget exception (call-level failure); individual tool-attempt outcome UNAVAILABLE_FROM_PERSISTED_EVIDENCE"
         },
         {
           "agent_call_id": 17,
-          "reason": "budget-cap exception (SDK-level), not a content-validation rejection"
+          "reason": "SDK maximum-budget exception (call-level failure); individual tool-attempt outcome UNAVAILABLE_FROM_PERSISTED_EVIDENCE"
         }
       ],
       "rows_matching_a_true_host_validation_rejection_pattern": 0,
       "raw_model_text_or_reasoning_persisted": false,
       "conclusion": "NOT DETERMINABLE FROM RETAINED METADATA",
-      "conclusion_basis": "No agent_calls row shows tool_attempts>=1 with accepted=0 for any reason other than a budget-cap exception. No table (runs, tasks, findings, agent_calls) or log (gate.jsonl, cost_ledger.jsonl, FINDINGS.md) persists the model's raw free-text output, reasoning, or attempted tool-call payload -- there is no message/transcript/answer column anywhere in the schema. It is therefore impossible to determine, from retained evidence, whether host-side validation ever rejected a substantively correct answer."
-    }
+      "conclusion_basis": "Both agent_calls rows with tool_attempts>=1 and accepted=0 (ids 1, 17) failed at the call level with an SDK maximum-budget exception; accepted=False is hardcoded on this exception path regardless of the individual tool attempt's outcome, so these two rows cannot be classified as validator rejections and are grouped instead under failed-call reasons / SDK maximum-budget exceptions. No agent_calls row, table, or log persists the model's raw free-text output, reasoning, or attempted tool-call payload -- there is no message/transcript/answer column anywhere in the schema. It is therefore impossible to determine, from retained evidence, whether host-side validation ever rejected a substantively correct answer."
+    },
+    "failed_calls_with_tool_attempt_and_no_persisted_finding": 2,
+    "failed_calls_with_tool_attempt_and_no_persisted_finding_ids": [
+      1,
+      17
+    ],
+    "failed_call_reason_group": "SDK_MAXIMUM_BUDGET_EXCEPTION",
+    "individual_failed_call_tool_attempt_outcome": "UNAVAILABLE_FROM_PERSISTED_EVIDENCE"
   },
   "run2_qualification": {
     "coordinator_intentionally_shared_across_both_run_ids_by_landed_gate_runner": true,
@@ -1545,5 +1551,22 @@
   ],
   "diagnosis_result": "COMPLETE",
   "diagnosis_result_note": "Every required diagnostic question (A-G) is either answered directly from persisted evidence with exact supporting rows, or explicitly represented with an UNAVAILABLE_FROM_PERSISTED_EVIDENCE / NOT_DETERMINABLE_FROM_RETAINED_METADATA marker, and every mandated reconciliation (positive/miss/FP counts, per-class recall, token and cost totals) closes exactly against artifacts/phase3_dev_gate.json and EVAL_RESULTS.md with zero unexplained discrepancy. No field was left silently omitted. This satisfies COMPLETE; the presence of the 4 explicit unknowns above does not by itself downgrade this to INCOMPLETE_EVIDENCE, since none of them blocks a mandated reconciliation from closing.",
-  "generated_at_utc": "2026-08-05T22:10:04+00:00"
+  "generated_at_utc": "2026-08-05T22:10:04+00:00",
+  "stale_state_wrong_anchor_pattern_scope": {
+    "applies_to_fixtures": [
+      "synthetic-01",
+      "synthetic-02",
+      "synthetic-03"
+    ],
+    "does_not_apply_to": [
+      "synthetic-05"
+    ],
+    "note": "In each of the three completed stale-STATE-marker fixtures that missed its frozen positives -- synthetic-01, synthetic-02, and synthetic-03 -- the model emitted two findings at STATE.md:6 and STATE.md:7 rather than matching the frozen positives at STATE.md:15 and STATE.md:16. synthetic-05's completed call matched both frozen positives (inj-051, inj-052) correctly and is not part of this pattern."
+  },
+  "correction_dispatch_id": "q77-p3-diagnose-fix-a",
+  "corrections_applied": [
+    "A: replaced separate-budget-pool framing with one shared run-budget architecture, two distinct failure modes",
+    "B: rejected_tool_emissions_total changed from 2 to UNAVAILABLE_FROM_PERSISTED_EVIDENCE; added failed-call/tool-attempt fields",
+    "C: narrowed stale-STATE-marker wrong-anchor pattern to synthetic-01/02/03, excluding synthetic-05"
+  ]
 }
