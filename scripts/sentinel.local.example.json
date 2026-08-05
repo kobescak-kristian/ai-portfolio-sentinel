@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy this file to sentinel.local.json (gitignored) and fill in real values. Never commit sentinel.local.json.",
+  "github_user": "your-github-username",
+  "python_exe": ""
+}

@@ -1,3 +1,18 @@
 .env
 __pycache__/
 *.pyc
+
+# Phase 2 runtime-local (never committed — DATA_RETENTION_POLICY.md §11)
+/var/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+scripts/sentinel.local.json
+
+# coverage — root-anchored so this never shadows the tracked
+# .githooks/.coverage-canary publish-gate decoy
+/.coverage
+/.coverage.*
+/coverage.xml
+/htmlcov/
+/.pytest_cache/

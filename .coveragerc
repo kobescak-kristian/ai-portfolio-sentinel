@@ -1,0 +1,9 @@
+[run]
+branch = true
+parallel = false
+source = contracts, telemetry, sentinel, checks
+
+[report]
+show_missing = true
+precision = 1
+skip_empty = true

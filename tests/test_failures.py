@@ -1,56 +1,525 @@
-"""Failure-injection suite skeletons (BLUEPRINT §3, §5, §6; ADR 0002).
+"""Failure-injection suite (BLUEPRINT §3, §5, §6; ADR 0002).
 
-Named stubs only at Phase 1 — each activates with the phase that
-builds the capability it gates, and stays visibly skipped in CI until
-then. Cage and no-write-access tests are NOT stubbed here: they belong
-to tests/test_bounds.py, which lands at Phase 3 with the caged checker.
+Phase 2 activates the 8 deterministic-control-plane stubs below with
+real bodies, plus 2 crash-consistency legs (C4) and a self-guard that
+the remaining Phase-3/4 stubs stay skipped. Cage and no-write-access
+tests are NOT stubbed here: the full cage suite lands in
+tests/test_bounds.py at Phase 3. Phase 2's own narrower boundary
+tests (zero-model-call invariant, no-write-access-by-construction)
+live in tests/test_read_only_boundary.py — a deliberately different,
+narrower file, not a re-run of the Phase-3 gate.
 """
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
+
+from checks.judgment.stubs import ScriptedJudgmentStub
+from sentinel import ledger, lifecycle
+from sentinel.pipeline import Deps, execute_run
+
+from tests.conftest import (
+    ListSurfaceProvider,
+    SimulatedCrash,
+    T0,
+    T1,
+    T2,
+    crash_at,
+    make_repo_surface,
+)
 
 # --- Phase 2: deterministic control plane (state machine, dedup, ledger) ---
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 2: task state machine")
-def test_every_task_reaches_terminal_state():
-    raise NotImplementedError
+def test_every_task_reaches_terminal_state(tmp_path, make_config, make_deps, fixed_clock):
+    """Invariant: every_task_terminal. A checker that always raises
+    exhausts to DEAD_LETTER; the run still reaches a coherent terminal
+    state with no PENDING/IN_PROGRESS rows left anywhere."""
+
+    class PoisonedJudgment:
+        def judge(self, request):
+            raise RuntimeError("seeded permanent fault")
+
+    repo = make_repo_surface(
+        "acme",
+        {
+            "README.md": "## Problem\np\n## Solution\ns\n## System\nsy\n## Outcome\no\n## Version Log\nv\n",
+            "EVAL_RESULTS.md": "no figures here\n",
+        },
+        required_paths=(".githooks/pre-push",),
+    )
+    provider = ListSurfaceProvider([repo])
+    config = make_config(tmp_path, run_kind="dev", source="fixtures", fail_run_on_task_failure=False)
+    deps = make_deps(clock=fixed_clock(T0, T1), surface_provider=provider, judgment=PoisonedJudgment())
+
+    outcome = execute_run(config, deps)
+
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        statuses = {
+            row["status"]
+            for row in conn.execute(
+                "SELECT status FROM tasks WHERE run_id = ?", (outcome.run_id,)
+            ).fetchall()
+        }
+        assert statuses <= {"DONE", "FAILED", "DEAD_LETTER"}
+        assert "DEAD_LETTER" in statuses  # non-vacuity: the poisoned checker must have fired
+        assert 0 == conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE run_id = ? AND status IN ('PENDING','IN_PROGRESS')",
+            (outcome.run_id,),
+        ).fetchone()[0]
+        run_row = conn.execute(
+            "SELECT tasks_created, tasks_terminal FROM runs WHERE run_id = ?", (outcome.run_id,)
+        ).fetchone()
+        assert run_row["tasks_created"] == run_row["tasks_terminal"]
+        assert outcome.tasks_created == outcome.tasks_terminal
+        assert outcome.tasks_created > 0
+    finally:
+        conn.close()
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 2: task queue accounting")
-def test_no_task_lost_across_a_run():
-    raise NotImplementedError
+def test_no_task_lost_across_a_run(tmp_path, make_config, make_deps, fixed_clock):
+    """Invariant: zero_lost_tasks. The set of (surface, check_class)
+    tasks created equals what's recorded in the ledger — nothing
+    created is ever silently dropped."""
+    repo = make_repo_surface(
+        "acme",
+        {"README.md": "## Problem\n## Solution\n## System\n## Outcome\n## Version Log\n"},
+    )
+    provider = ListSurfaceProvider([repo])
+    config = make_config(tmp_path)
+    deps = make_deps(clock=fixed_clock(T0, T1), surface_provider=provider)
+
+    outcome = execute_run(config, deps)
+
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        tasks = ledger.list_tasks(conn, outcome.run_id)
+        pairs = {(t.surface, t.check_class) for t in tasks}
+        assert len(pairs) == len(tasks)  # no duplicate (surface, check_class) pair
+        assert len(tasks) == outcome.tasks_created == outcome.tasks_terminal
+        assert outcome.tasks_created > 0
+    finally:
+        conn.close()
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 2: dead-letter routing")
-def test_failed_task_routes_to_dead_letter_atomically():
-    raise NotImplementedError
+def test_failed_task_routes_to_dead_letter_atomically(tmp_path, make_config, make_deps, fixed_clock):
+    """A checker that raises mid-way must not leave a partially
+    committed finding: DEAD_LETTER routing and the absence of any
+    finding for that task are the same atomic transaction."""
+
+    class PoisonedJudgment:
+        def judge(self, request):
+            raise RuntimeError("seeded permanent fault")
+
+    repo = make_repo_surface(
+        "acme",
+        {"README.md": "## Problem\n## Solution\n## System\n## Outcome\n## Version Log\n"},
+    )
+    provider = ListSurfaceProvider([repo])
+    config = make_config(tmp_path, fail_run_on_task_failure=False)
+    deps = make_deps(
+        clock=fixed_clock(T0, T1),
+        surface_provider=provider,
+        judgment=PoisonedJudgment(),
+    )
+
+    outcome = execute_run(config, deps)
+
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        dead_letter_tasks = ledger.list_tasks(conn, outcome.run_id, statuses=["DEAD_LETTER"])
+        assert len(dead_letter_tasks) >= 1
+        for task in dead_letter_tasks:
+            assert task.check_class in ("stale-STATE-marker", "missing-synthetic-label")
+        assert 0 == conn.execute(
+            "SELECT COUNT(*) FROM findings WHERE check_class IN ('stale-STATE-marker','missing-synthetic-label')"
+        ).fetchone()[0]
+        assert 0 == conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE run_id = ? AND status = 'IN_PROGRESS'",
+            (outcome.run_id,),
+        ).fetchone()[0]
+    finally:
+        conn.close()
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 2: crash-consistent ledger")
-def test_crash_mid_run_leaves_ledger_consistent_on_rerun():
-    raise NotImplementedError
+def test_crash_mid_run_leaves_ledger_consistent_on_rerun(
+    tmp_path, make_config, make_deps, fixed_clock, seeded_ids
+):
+    """A crash before any task executes must leave a RUNNING row that
+    a later invocation recovers to a coherent FAILED state — never a
+    silent COMPLETED, and never lost/duplicated findings on rerun."""
+    repo = make_repo_surface(
+        "acme",
+        {"README.md": "## Problem\n## Solution\n## System\n## Outcome\n## Version Log\n"},
+    )
+    provider = ListSurfaceProvider([repo])
+    config = make_config(tmp_path)
+
+    crash_deps = make_deps(
+        clock=fixed_clock(T0),
+        ids=seeded_ids(["run-crash"]),
+        surface_provider=provider,
+        hooks=crash_at("after_tasks_created"),
+    )
+    with pytest.raises(SimulatedCrash):
+        execute_run(config, crash_deps)
+
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        crashed_runs = ledger.list_runs(conn, status="RUNNING")
+        assert len(crashed_runs) == 1
+        crashed_run_id = crashed_runs[0].run_id
+    finally:
+        conn.close()
+
+    rerun_deps = make_deps(
+        clock=fixed_clock(T1, T2), ids=seeded_ids(["run-rerun"]), surface_provider=provider
+    )
+    outcome2 = execute_run(config, rerun_deps)
+
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        recovered = ledger.get_run(conn, crashed_run_id)
+        assert recovered.status == "FAILED"
+        assert recovered.finished_at_utc is not None
+        assert 0 == conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE status = 'RUNNING'"
+        ).fetchone()[0]
+        assert 0 == conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status IN ('PENDING','IN_PROGRESS')"
+        ).fetchone()[0]
+        assert outcome2.status == "COMPLETED"
+        dupes = conn.execute(
+            "SELECT fingerprint FROM findings WHERE status='OPEN' GROUP BY fingerprint HAVING COUNT(*) > 1"
+        ).fetchall()
+        assert dupes == []
+    finally:
+        conn.close()
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 2: idempotent re-run")
-def test_idempotent_rerun_produces_no_new_findings():
-    raise NotImplementedError
+def test_idempotent_rerun_produces_no_new_findings(
+    tmp_path, make_config, make_deps, fixed_clock, seeded_ids
+):
+    """Invariant: idempotent_rerun. Same inputs, second run: zero new
+    findings, zero resolved, and FINDINGS.md gains exactly one more
+    section reporting zero new findings."""
+    repo = make_repo_surface(
+        "acme",
+        {"README.md": "## Solution\n## Outcome\n"},  # missing Problem/System/Version Log
+    )
+    provider = ListSurfaceProvider([repo])
+    config = make_config(tmp_path)
+
+    outcome1 = execute_run(
+        config, make_deps(clock=fixed_clock(T0), ids=seeded_ids(["run-1"]), surface_provider=provider)
+    )
+    assert outcome1.findings_new > 0
+
+    outcome2 = execute_run(
+        config, make_deps(clock=fixed_clock(T1), ids=seeded_ids(["run-2"]), surface_provider=provider)
+    )
+    assert outcome2.findings_new == 0
+    assert outcome2.findings_resolved == 0
+    assert outcome2.findings_still_open == outcome1.findings_new
+
+    text = config.findings_path.read_text(encoding="utf-8")
+    assert text.count("sentinel:run") == 4  # 2 runs x (open + close) markers
+    assert f"Run {outcome2.run_id}" in text
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 2: dedup on doubled fixtures")
-def test_dedup_correct_on_doubled_fixture_run():
-    raise NotImplementedError
+def test_dedup_correct_on_doubled_fixture_run(tmp_path, make_config, make_deps, fixed_clock):
+    """Invariant: dedup_correct_on_doubled_fixture_run — both halves.
+    (a) The same surface appearing twice in one run's inventory never
+    doubles the OPEN-finding count. (b) Identical content on two
+    distinct surfaces produces distinct fingerprints (dedup must not
+    over-merge across surfaces)."""
+    files = {"README.md": "## Solution\n"}
+    repo = make_repo_surface("acme", files)
+    provider = ListSurfaceProvider([repo, repo])  # (a) doubled inventory entry
+    config = make_config(tmp_path)
+
+    execute_run(config, make_deps(clock=fixed_clock(T0), surface_provider=provider))
+
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        dupes = conn.execute(
+            "SELECT fingerprint, COUNT(*) c FROM findings WHERE status='OPEN' "
+            "GROUP BY fingerprint HAVING c > 1"
+        ).fetchall()
+        assert dupes == []
+        task_count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        distinct_units = conn.execute(
+            "SELECT COUNT(DISTINCT surface || '|' || check_class) FROM tasks"
+        ).fetchone()[0]
+        assert task_count == distinct_units  # the duplicate collapsed before task creation
+    finally:
+        conn.close()
+
+    # (b) doubled corpus content on two distinct surfaces
+    repo_a = make_repo_surface("acme-a", files)
+    repo_b = make_repo_surface("acme-b", files)
+    provider2 = ListSurfaceProvider([repo_a, repo_b])
+    config2 = make_config(tmp_path, db_path=tmp_path / "sentinel2.sqlite3", findings_path=tmp_path / "F2.md")
+    execute_run(config2, make_deps(clock=fixed_clock(T0), surface_provider=provider2))
+    conn2 = ledger.open_ledger(config2.db_path, create=False)
+    try:
+        fps = [row["fingerprint"] for row in conn2.execute("SELECT fingerprint FROM findings").fetchall()]
+        assert len(fps) == len(set(fps))
+        assert len(fps) >= 2  # readme-structure fires identically on both surfaces
+    finally:
+        conn2.close()
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 2: finding lifecycle")
-def test_open_finding_advances_last_seen_without_duplicate_row():
-    raise NotImplementedError
+def test_open_finding_advances_last_seen_without_duplicate_row(
+    tmp_path, make_config, make_deps, fixed_clock, seeded_ids
+):
+    """A defect present in two consecutive runs: exactly one OPEN
+    row, whose only changed columns across the two runs are
+    last_seen_utc and last_seen_run_id."""
+    from sentinel.net.links import StaticLinkResolver
+
+    dead_url = "https://dead-example.example.invalid/x"
+    repo = make_repo_surface(
+        "acme",
+        {
+            "README.md": (
+                "## Problem\n## Solution\n## System\n## Outcome\n## Version Log\n\n"
+                f"[bad link]({dead_url})\n"
+            )
+        },
+        link_scanned_paths=("README.md",),
+    )
+    provider = ListSurfaceProvider([repo])
+    config = make_config(tmp_path)
+    link_resolver = StaticLinkResolver(mapping={dead_url: "dead"})
+
+    outcome1 = execute_run(
+        config,
+        make_deps(
+            clock=fixed_clock(T0),
+            ids=seeded_ids(["run-1"]),
+            surface_provider=provider,
+            link_resolver=link_resolver,
+        ),
+    )
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        before = dict(conn.execute("SELECT * FROM findings").fetchone())
+    finally:
+        conn.close()
+
+    outcome2 = execute_run(
+        config,
+        make_deps(
+            clock=fixed_clock(T1),
+            ids=seeded_ids(["run-2"]),
+            surface_provider=provider,
+            link_resolver=link_resolver,
+        ),
+    )
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        rows = conn.execute("SELECT * FROM findings").fetchall()
+        assert len(rows) == 1
+        after = dict(rows[0])
+        assert after["id"] == before["id"]
+        assert after["status"] == "OPEN"
+        assert after["resolved_at_utc"] is None
+        differing = {k for k in before if before[k] != after[k]}
+        assert differing == {"last_seen_utc", "last_seen_run_id"}
+        assert after["last_seen_run_id"] == outcome2.run_id
+        assert before["first_seen_run_id"] == outcome1.run_id == after["first_seen_run_id"]
+    finally:
+        conn.close()
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 2: finding auto-resolve")
-def test_absent_finding_auto_resolves_with_dated_row():
-    raise NotImplementedError
+def test_absent_finding_auto_resolves_with_dated_row(
+    tmp_path, make_config, make_deps, fixed_clock, seeded_ids
+):
+    """A defect present in run 1, then genuinely fixed for run 2: the
+    same row resolves, stamped with run 2's timestamp and run_id,
+    last_seen_utc unchanged (the defect was never re-observed)."""
+    broken = make_repo_surface("acme", {"README.md": "## Solution\n"})
+    fixed = make_repo_surface(
+        "acme", {"README.md": "## Problem\n## Solution\n## System\n## Outcome\n## Version Log\n"}
+    )
+
+    config = make_config(tmp_path)
+    outcome1 = execute_run(
+        config,
+        make_deps(
+            clock=fixed_clock(T0), ids=seeded_ids(["run-1"]), surface_provider=ListSurfaceProvider([broken])
+        ),
+    )
+    assert outcome1.findings_new > 0
+
+    outcome2 = execute_run(
+        config,
+        make_deps(
+            clock=fixed_clock(T1), ids=seeded_ids(["run-2"]), surface_provider=ListSurfaceProvider([fixed])
+        ),
+    )
+    assert outcome2.findings_resolved == outcome1.findings_new
+    assert outcome2.findings_new == 0
+
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        rows = conn.execute("SELECT * FROM findings").fetchall()
+        assert len(rows) == outcome1.findings_new  # never deleted, still present
+        for row in rows:
+            assert row["status"] == "RESOLVED"
+            assert row["resolved_run_id"] == outcome2.run_id
+            assert row["last_seen_utc"] == row["first_seen_utc"]  # never re-observed
+            assert row["resolved_at_utc"] >= row["last_seen_utc"]
+    finally:
+        conn.close()
+
+    text = config.findings_path.read_text(encoding="utf-8")
+    assert "Resolved this run" in text
+
+
+# --- Phase 2: crash-consistent finalization (C4) ---------------------------
+
+
+def test_crash_before_terminal_close_recovers_without_premature_report(
+    tmp_path, make_config, make_deps, fixed_clock, seeded_ids
+):
+    """A crash before the run's terminal DB transaction commits must
+    leave no output at all *until* recovery gives it a coherent
+    terminal state — no report is ever written for a still-RUNNING
+    row. Once the next invocation's recovery pass closes it FAILED,
+    reconciliation backfills its report honestly (FAILED, partial)."""
+    repo = make_repo_surface("acme", {"README.md": "## Solution\n"})
+    provider = ListSurfaceProvider([repo])
+    config = make_config(tmp_path)
+
+    with pytest.raises(SimulatedCrash):
+        execute_run(
+            config,
+            make_deps(
+                clock=fixed_clock(T0),
+                ids=seeded_ids(["run-crash"]),
+                surface_provider=provider,
+                hooks=crash_at("before_run_close"),
+            ),
+        )
+
+    assert not config.findings_path.exists()
+    assert not config.cost_ledger_path.exists()
+
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        # Immediately after the crash — before any recovery has run —
+        # the row is still RUNNING: close_run() never committed.
+        running = ledger.list_runs(conn, status="RUNNING")
+        assert len(running) == 1
+        crashed_run_id = running[0].run_id
+    finally:
+        conn.close()
+
+    execute_run(
+        config, make_deps(clock=fixed_clock(T1), ids=seeded_ids(["run-2"]), surface_provider=provider)
+    )
+    # The next invocation's own recovery pass closes the crashed run to
+    # a coherent FAILED state *before* that new run starts; reconciliation
+    # then (correctly, per plan §5) backfills a report for it too — every
+    # terminal run gets a durable, visible record, and a recovered run's
+    # section states its FAILED/partial status honestly rather than
+    # being silently omitted.
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        recovered = ledger.get_run(conn, crashed_run_id)
+        assert recovered.status == "FAILED"
+    finally:
+        conn.close()
+    text = config.findings_path.read_text(encoding="utf-8")
+    assert f"sentinel:run {crashed_run_id}" in text
+    assert "FAILED (partial" in text
+
+
+def test_crash_after_close_repaired_by_next_invocation(
+    tmp_path, make_config, make_deps, fixed_clock, seeded_ids
+):
+    """A crash after the run closes to a terminal DB status but
+    before FINDINGS.md/CostRow are written is repaired by the very
+    next invocation — reconciliation backfills exactly the missing
+    output, never duplicating an existing marker or CostRow."""
+    repo = make_repo_surface("acme", {"README.md": "## Solution\n"})
+    provider = ListSurfaceProvider([repo])
+    config = make_config(tmp_path)
+
+    with pytest.raises(SimulatedCrash):
+        execute_run(
+            config,
+            make_deps(
+                clock=fixed_clock(T0),
+                ids=seeded_ids(["run-crash"]),
+                surface_provider=provider,
+                hooks=crash_at("before_report_append"),
+            ),
+        )
+    crashed_run_id_holder = []
+    conn = ledger.open_ledger(config.db_path, create=False)
+    try:
+        completed = ledger.list_runs(conn, status="COMPLETED")
+        assert len(completed) == 1
+        crashed_run_id_holder.append(completed[0].run_id)
+    finally:
+        conn.close()
+    crashed_run_id = crashed_run_id_holder[0]
+    assert not config.findings_path.exists()
+    assert not config.cost_ledger_path.exists()
+
+    execute_run(
+        config, make_deps(clock=fixed_clock(T1), ids=seeded_ids(["run-2"]), surface_provider=provider)
+    )
+
+    text = config.findings_path.read_text(encoding="utf-8")
+    assert text.count(f"sentinel:run {crashed_run_id}") == 2  # open + close, exactly once each
+    from telemetry.cost_ledger import read_cost_rows
+
+    rows = read_cost_rows(config.cost_ledger_path)
+    run_ids = [r.run_id for r in rows]
+    assert run_ids.count(crashed_run_id) == 1
+
+
+# --- self-guard: only later-phase stubs remain skipped ----------------------
+
+
+def test_only_phase_3_and_4_stubs_remain_skipped():
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    skipped = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for deco in node.decorator_list:
+            call = deco if isinstance(deco, ast.Call) else None
+            if call is None:
+                continue
+            func = call.func
+            is_skip = (isinstance(func, ast.Attribute) and func.attr == "skip") or (
+                isinstance(func, ast.Name) and func.id == "skip"
+            )
+            if not is_skip:
+                continue
+            reason = None
+            for kw in call.keywords:
+                if kw.arg == "reason" and isinstance(kw.value, ast.Constant):
+                    reason = kw.value.value
+            skipped[node.name] = reason
+
+    assert set(skipped) == {
+        "test_per_run_cost_cap_halts_checker",
+        "test_cost_breaker_trips_on_seeded_overspend",
+        "test_consecutive_failure_breaker_trips_on_seeded_failures",
+        "test_seeded_breaker_trip_produces_failure_alert",
+    }
+    for name, reason in skipped.items():
+        assert reason is not None and ("Phase 3" in reason or "Phase 4" in reason), (name, reason)
 
 
 # --- Phase 3: caged checker agent ------------------------------------------
