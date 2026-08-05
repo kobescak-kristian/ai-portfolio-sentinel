@@ -12,17 +12,26 @@ pre-registered, BLUEPRINT §0).
 **Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
 2026-07-15, canonical record in the private operations OS (same
 date). Public-while-dormant is intended; do not flag.
-**Phase status:** Phase 3 IMPLEMENTATION COMPLETE, gate PENDING — the
-caged checker agent (`agents/checker/`), run-scoped EUR budget, main-
-ledger audit (`agent_calls`), `--judgment-mode stub|agent` activation,
-`tests/test_bounds.py` cage suite, the activated
-`test_per_run_cost_cap_halts_checker` FI stub, `scripts/run_phase3_dev_gate.py`,
-`THREAT_MODEL.md`, and `MODEL_CARD.md` (draft) are implemented and
-committed at this commit; the designated real Haiku dev-gate run
-(BLUEPRINT §6 P3: "Dev gate leg green on fixtures") has not yet run.
-Phase 3 does not close until that gate runs and either passes every
-frozen threshold/invariant or is recorded as an honest FAIL. See the
-2026-08-05 (Phase 3 implementation) change-log entry. Phase 2 CLOSED
+**Phase status:** Phase 3 remains **OPEN** — designated Haiku dev
+gate run 2026-08-05 and recorded an honest **FAIL** (BLUEPRINT §6 P3:
+"Dev gate leg green on fixtures" was not met). Pooled precision
+47/56 = 0.8393 (< 0.90), pooled recall 47/60 = 0.7833 (< 0.85);
+per-class recall FAIL on `stale-STATE-marker` (2/10) and
+`missing-synthetic-label` (5/10); the four deterministic classes and
+the clean-false-flag rate all PASS. Full figures, run IDs
+(`r-8f646359aef946178f2863acd75887c4`, `r-06dc9ec88f6c4cdc9057dacec88a1a0a`),
+and cost evidence: `EVAL_RESULTS.md`. Source commit
+`cf713649bc1aaf31f1494112921d7741493533b0`. No fixture, label,
+answer-key, scoring, threshold, model, or prompt change was made
+after seeing this result — per the binding gate discipline, any
+subsequent remediation requires a separately approved ADR (not
+designed in this record). Implementation itself (the caged checker
+agent, run-scoped EUR budget, main-ledger audit, `--judgment-mode
+stub|agent` activation, the cage-suite tests, `THREAT_MODEL.md`,
+`MODEL_CARD.md`) landed complete and CI-green at commit
+`cf71364` before this gate ran; see the 2026-08-05 (Phase 3
+implementation) change-log entry for that evidence and the 2026-08-05
+(Phase 3 gate FAIL) entry below for the gate result itself. Phase 2 CLOSED
 2026-08-05 — deterministic control plane end to end, scheduler-gate
 proven; see that change-log entry for full evidence. Phase 1 CLOSED
 2026-08-04 — eval gate frozen by this commit (fixture corpus, answer
@@ -40,10 +49,12 @@ amended 2026-08-03.
 owner ruling 2026-08-03); LICENSE file committed 2026-08-03 at
 2283b4f via the repo-exclusive rollout step. No remaining
 license-related program-closure dependency.
-**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: run the designated
-Phase-3 Haiku dev gate (implementation landed this commit; activating
-the standing scheduled task in agent mode is a separate, later
-decision — SentinelDailyRun stays stub-mode, unedited).
+**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: a separately
+approved ADR to diagnose and remediate the two judgment classes'
+recall shortfall (not designed in this record) before any re-gate.
+Activating the standing scheduled task in agent mode remains a
+separate, later decision either way — SentinelDailyRun stays
+stub-mode, unedited.
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
 name kept). Internal path reference removed from the Visibility line
 2026-08-03 (this repo's own public-live rule; content unchanged
@@ -100,6 +111,32 @@ runs) AND the fix workload proves annoying by experience, not by
 anticipation. Claims line when built: "proposes fixes; a human
 merges every change."
 **Change log:**
+- 2026-08-05 — Phase 3 designated Haiku dev gate: honest FAIL (dispatch
+  q77-p3-a). Source commit `cf713649bc1aaf31f1494112921d7741493533b0`.
+  Model `claude-haiku-4-5-20251001`, auth mode
+  `operator-subscription-oauth-assumed` (subscription OAuth, not
+  API-key billing). Run 1 (primary/scoring) `r-8f646359aef946178f2863acd75887c4`,
+  run 2 (doubled-fixture) `r-06dc9ec88f6c4cdc9057dacec88a1a0a`. Results:
+  56 emitted, 47 true positives, 9 false positives, 13 misses against
+  60 frozen positives; pooled precision 0.8393 (< 0.90 FAIL); pooled
+  recall 0.7833 (< 0.85 FAIL); per-class recall PASS on broken-link,
+  missing-required-file, number-mismatch, readme-structure (10/10
+  each), FAIL on missing-synthetic-label (5/10) and stale-STATE-marker
+  (2/10); clean false-flag 1/166 (PASS, ≤16 allowed). Invariants:
+  every_task_terminal, zero_lost_tasks PASS; idempotent_rerun and
+  dedup_correct_on_doubled_fixture_run PASS but **qualified** — run 1
+  consumed the entire shared 500,000-micro-EUR run budget, so run 2
+  made zero real model calls (`cost_row2_micros: 0`) and its judgment
+  tasks correctly dead-lettered on exhaustion rather than silently
+  passing; this proves budget-exhaustion safety, not real-agent-rerun
+  idempotency — full qualification in `EVAL_RESULTS.md`. Total charged
+  500,000 micro-EUR (= the 500,000 cap, PASS). Full record:
+  `EVAL_RESULTS.md`, `artifacts/phase3_dev_gate.json`. Per the binding
+  gate discipline: no fixture, label, answer-key, scoring, threshold,
+  model, or prompt change was made after seeing this result; no rerun
+  in this session. **Phase 3 remains OPEN.** Q-77 remains open.
+  `SentinelDailyRun` unchanged, stub-mode. Subsequent remediation
+  requires a separately approved ADR — not designed in this record.
 - 2026-08-05 — Phase 3 IMPLEMENTATION (dispatch q77-p3-a; commit SHA
   recorded in the kristian-os Q-77 annotation, not embedded here — a
   commit cannot truthfully cite its own hash). Landed: `agents/checker/`
