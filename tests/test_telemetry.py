@@ -164,8 +164,17 @@ def _git_visible_files() -> set[str]:
 
 
 def test_dry_run_leaves_git_visible_state_unchanged(monkeypatch):
+    """Does not assume telemetry/cost_ledger.jsonl is absent -- once
+    Phase 2 has run a real dev/live run, it legitimately exists with
+    real, committed content. The invariant this test actually proves
+    is narrower and just as strict: the dry run writes to a tempdir
+    and reads it back from there, so it must never create *or mutate*
+    the repo's real ledger, whatever state that ledger was already in."""
     monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")
-    before = _git_visible_files()
+    ledger_path = REPO_ROOT / "telemetry" / "cost_ledger.jsonl"
+    before_files = _git_visible_files()
+    before_ledger_bytes = ledger_path.read_bytes() if ledger_path.exists() else None
+
     result = subprocess.run(
         [sys.executable, "-m", "telemetry.dry_run"],
         cwd=REPO_ROOT,
@@ -176,6 +185,12 @@ def test_dry_run_leaves_git_visible_state_unchanged(monkeypatch):
     printed = json.loads(result.stdout.strip())
     assert printed["run_kind"] == "dev"
     assert printed["cost_eur_micros"] == 0
-    after = _git_visible_files()
-    assert before == after
-    assert not (REPO_ROOT / "telemetry" / "cost_ledger.jsonl").exists()
+
+    after_files = _git_visible_files()
+    assert before_files == after_files
+
+    after_ledger_bytes = ledger_path.read_bytes() if ledger_path.exists() else None
+    assert before_ledger_bytes == after_ledger_bytes, (
+        "the dry run must never create or mutate the repo's real, committed "
+        "cost ledger -- it writes to a tempdir and reads it back from there"
+    )

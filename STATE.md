@@ -12,17 +12,18 @@ pre-registered, BLUEPRINT §0).
 **Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
 2026-07-15, canonical record in the private operations OS (same
 date). Public-while-dormant is intended; do not flag.
-**Phase status:** Phase 1 CLOSED 2026-08-04 — eval gate frozen by
+**Phase status:** Phase 2 CLOSED 2026-08-05 — deterministic control
+plane end to end, scheduler-gate proven; see the 2026-08-05 change-log
+entry for full evidence. Phase 1 CLOSED 2026-08-04 — eval gate frozen by
 this commit (fixture corpus, answer key, clean inventory, scoring
 contract, quantized thresholds and review evidence committed; see
 the 2026-08-04 change-log entry and evals/). Phase 0 CLOSED
 2026-08-03 — evidence: foundation and canary commits public on main;
 repository publish gate OVERALL PASS from the closing HEAD; CI green
 on push (Actions run 30852395018, conclusion success; 36/36 tests,
-ubuntu-latest, Python 3.12). Next action: Phase 2 per BLUEPRINT §6
-(deterministic control plane; P2 closure artifacts additionally wait
-on the queued canonical hook-maintenance batch in the private
-operations OS, per the plan's recorded dependency).
+ubuntu-latest, Python 3.12). Next action: Phase 3 per BLUEPRINT §6
+(caged checker agent replacing the two Phase-2 judgment stubs; bounds
+tests incl. no-write-access-by-construction).
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -30,8 +31,9 @@ amended 2026-08-03.
 owner ruling 2026-08-03); LICENSE file committed 2026-08-03 at
 2283b4f via the repo-exclusive rollout step. No remaining
 license-related program-closure dependency.
-**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: Phase 2 build
-dispatch (deterministic control plane on the frozen fixture bed).
+**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: Phase 3 build
+dispatch (caged checker agent; bounds tests incl.
+no-write-access-by-construction).
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
 name kept). Internal path reference removed from the Visibility line
 2026-08-03 (this repo's own public-live rule; content unchanged
@@ -121,3 +123,49 @@ merges every change."
   control-ineligible) — counting defect record in
   evals/adjudication.md. Owner approved the corrected package and
   ratified the recorded deviations, 2026-08-04.
+- 2026-08-05 — Phase 2 CLOSED: deterministic control plane end to end.
+  Implementation commit `bfa56d680c6a0980cef8b9494b3a307defd4318e`
+  (q77-p2-c; CI green, ubuntu-latest/Python 3.12). Closure commit is
+  this one — its own exact SHA and CI run are recorded in the
+  kristian-os Q-77 annotation (`q77-p2-record-a`), not embedded here (a
+  commit cannot truthfully cite its own hash). Landed: live inventory
+  (unauthenticated GitHub API, zero hand-maintained list), one
+  CheckTask per surface × check class, four real deterministic
+  checkers (broken-link, number-mismatch, missing-required-file,
+  readme-structure), two Phase-3-stubbed judgment classes
+  (stale-STATE-marker, missing-synthetic-label), fingerprint dedup +
+  OPEN/RESOLVED finding lifecycle on the frozen SQLite ledger,
+  crash-consistent finalization, FINDINGS.md writer, structured JSONL
+  logging, zero-cost CostRow telemetry. Live required-file/
+  readme-structure applicability is derived per repository, per run,
+  from that repository's own public `.githooks/pre-push` and gate-file
+  content — never a static list or private record. Test evidence: 482
+  tests passing, exactly 4 skips (Phase 3/4 stubs only), 89.9% line
+  coverage (`contracts, telemetry, sentinel, checks`). Phase-1 freeze
+  guard PASS at close (fixtures/evals byte-identical to freeze commit
+  `4d46c1d4fc3c4f485a83f44fa54afa6b04b1f541`). Scheduler-gate evidence
+  (LIVE — real data, own public repos): one manual measurement run
+  (`r-423e958baa004acfa0a5c6a8511efdb9`, 2026-08-05T08:51:45Z–08:52:53Z,
+  190/190 tasks terminal, 4 findings) fixed 20-minute burst spacing
+  (measured ~11 api.github.com calls/run, well under the 25-request
+  threshold). Two consecutive Windows-Task-Scheduler-triggered runs
+  followed with zero manual invocation between them:
+  `r-91ec8071505a4ba7905fe6f9ef4c53f4` (started 2026-08-05T09:01:39Z)
+  and `r-5ac95d4bc6fd4c55a7f739547090098f` (started
+  2026-08-05T09:21:40Z) — both COMPLETED, 190/190 tasks terminal, all
+  DONE, `LastTaskResult=0` on both, dedup/lifecycle exact on the second
+  (0 new, 4 still-open, 0 resolved). Every CostRow across all three
+  runs shows `model="none-deterministic"`, 0 input tokens, 0 output
+  tokens, 0 micro-euros. Scheduler disposition: temporary
+  `SentinelGateBurst` task removed and verified absent; standing
+  `SentinelDailyRun` task installed, daily at 07:15 local, Interactive
+  logon, RunLevel Limited, no password or credential stored.
+  `DATA_CONTRACT.md`/`DATA_RETENTION_POLICY.md` landed at Commit A.
+  Two real PowerShell-5.1 runtime defects were found and fixed while
+  exercising the scheduler tooling live (non-ASCII string-literal
+  encoding; `$PSScriptRoot` unreliable inside a `param()` default) —
+  disclosed in the Phase 2 gate post. **No production or
+  production-ready claim is made or implied — status stays "in
+  development toward production-ready." Q-77 remains OPEN through the
+  remaining production-readiness phases.** Next action: Phase 3 (caged
+  checker agent), named only, not designed here.

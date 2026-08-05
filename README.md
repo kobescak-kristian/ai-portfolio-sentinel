@@ -82,9 +82,43 @@ Full design, phase gates, and eval thresholds: [BLUEPRINT.md](BLUEPRINT.md).
 
 ## Outcome
 
-Phase 0 (scaffold) in progress. No runs, no eval results, and no outcome
-to report yet — this section updates only when a phase gate closes with
-evidence (BLUEPRINT.md §6).
+Phase 2 closed 2026-08-05. The deterministic control plane runs end to
+end and is triggered by a schedule, not by hand.
+
+- **Checkers.** Four real deterministic checkers landed: broken-link,
+  number-mismatch, missing-required-file, readme-structure. Two
+  judgment classes (stale-STATE-marker, missing-synthetic-label) are
+  stubbed — the caged checker agent replacing them is Phase 3 work.
+- **Tests and coverage.** 482 tests passing, 4 skipped (the Phase-3/4
+  breaker/cost-cap stubs only). Line coverage 89.9% (branch coverage
+  also measured) over `contracts, telemetry, sentinel, checks`
+  (`python -m coverage run -m pytest && python -m coverage report -m`).
+- **Scheduled runs (LIVE — real data).** Two consecutive runs triggered
+  by Windows Task Scheduler with no manual invocation between them:
+  `r-91ec8071505a4ba7905fe6f9ef4c53f4` (started 2026-08-05T09:01:39Z)
+  and `r-5ac95d4bc6fd4c55a7f739547090098f` (started
+  2026-08-05T09:21:40Z) — both COMPLETED, 190/190 tasks terminal (all
+  DONE), `LastTaskResult=0` on both. The second run's dedup/lifecycle
+  behavior was exact: 0 new findings, 4 still open, 0 resolved.
+  Standing schedule: `SentinelDailyRun`, daily at 07:15 local.
+- **Cost.** Every CostRow this phase — including the manual
+  measurement run that preceded the gate — shows 0 input tokens, 0
+  output tokens, 0 micro-euros (`model="none-deterministic"`): zero
+  model calls, a true measurement.
+- **A real runtime defect, found and fixed by actually running the
+  scheduler tooling.** The PowerShell script initially failed to parse
+  under real Windows PowerShell 5.1: non-ASCII characters without a
+  BOM broke string-literal tokenization, and `$PSScriptRoot` is not
+  reliably populated inside a `param()` default-value expression on
+  this PowerShell version. Both are fixed; see the Phase 2 gate post.
+
+The eval gate runs on **synthetic** fixtures with a frozen answer key
+(unchanged since `4d46c1d4fc3c4f485a83f44fa54afa6b04b1f541`); scheduled
+runs are **live** — real data against the operator's own public
+repositories. The two are labeled everywhere and neither borrows the
+other's credibility. Status: in development toward production-ready.
+No production claim is made. **Q-77 remains open — Phase 2 is closed,
+Phase 3 (the caged checker agent) is next.**
 
 ## Version Log
 
@@ -92,3 +126,4 @@ evidence (BLUEPRINT.md §6).
 |---|---|---|
 | v0.1 | 2026-07-13 | Tier 0 scaffold: BLUEPRINT.md, CLAUDE.md, decisions/0001, STATE.md committed. Phase 0 in progress. |
 | v0.2 | 2026-08-03 | Phase 0 closed: SPEC.md, claims-ladder amendments, program ADR, cost telemetry (CostRow + JSONL ledger + dry run + 36 tests), CI on push, publish-gate canary. Production-readiness program opened (owner ruling 2026-08-03). |
+| v0.3 | 2026-08-05 | Phase 2 closed: deterministic control plane end to end (4 real checkers + 2 Phase-3-stubbed judgment classes), SQLite ledger with fingerprint dedup and OPEN/RESOLVED finding lifecycle, FINDINGS.md writer, structured JSONL logging, zero-cost CostRow telemetry, Windows Task Scheduler tooling with a standing `SentinelDailyRun` task (daily, 07:15 local). 482 tests passing, exactly 4 skips (Phase 3/4 stubs only), 89.9% line coverage. Implementation commit `bfa56d680c6a0980cef8b9494b3a307defd4318e`; this Version Log entry's own closure commit's exact SHA and CI run are recorded in the kristian-os Q-77 annotation (`q77-p2-record-a`), not embedded here (a commit cannot truthfully cite its own hash). Scheduler gate: two consecutive Task-Scheduler-triggered live runs (`r-91ec8071505a4ba7905fe6f9ef4c53f4`, `r-5ac95d4bc6fd4c55a7f739547090098f`), 190/190 tasks terminal on each, `LastTaskResult=0` on each, zero-cost CostRows, zero manual invocation between fires. Q-77 remains open; Phase 3 (caged checker agent) is next. |

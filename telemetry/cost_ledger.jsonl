@@ -1,0 +1,3 @@
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-05T08:52:53+00:00","run_id":"r-423e958baa004acfa0a5c6a8511efdb9","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-05T09:02:44+00:00","run_id":"r-91ec8071505a4ba7905fe6f9ef4c53f4","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-05T09:22:56+00:00","run_id":"r-5ac95d4bc6fd4c55a7f739547090098f","run_kind":"live","schema_version":1}

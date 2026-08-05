@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Install/inspect/remove the local, current-user Windows Task Scheduler
     entry that runs Sentinel's live pipeline (BLUEPRINT §6 P2).
@@ -7,17 +7,17 @@
     Narrow, single-purpose scheduler tooling. No admin privileges required
     (registers under the current user, no elevation). Stores no password,
     token or secret: the task runs with -User $env:USERNAME and no
-    -Password, producing an interactive-token task — it fires only while
+    -Password, producing an interactive-token task  -  it fires only while
     the operator is logged in, and Windows stores nothing on its behalf.
 
     The repository path is derived at install time from this script's own
-    location ($PSScriptRoot/..) — never hardcoded into a tracked file.
+    location ($PSScriptRoot/..)  -  never hardcoded into a tracked file.
     Runtime config (github_user, an optional python.exe override) comes
     from scripts/sentinel.local.json (gitignored; copy
     scripts/sentinel.local.example.json to create it).
 
     The exact argv this script constructs mirrors
-    sentinel/scheduling.py::build_run_argv — that Python module is what
+    sentinel/scheduling.py::build_run_argv  -  that Python module is what
     pytest and CI actually exercise (no live Task Scheduler in CI); keep
     the two in sync by comment cross-reference, not by generation.
 
@@ -27,7 +27,7 @@
       Remove    - unregister the named task (idempotent)
       Evidence  - print Get-ScheduledTaskInfo + recent Task Scheduler
                   operational-log entries for the named task (advisory
-                  diagnostics only per C5 — never a closure proof)
+                  diagnostics only per C5  -  never a closure proof)
 
 .PARAMETER WhatIfOnly
     Print the fully-resolved action/trigger/settings and exit without
@@ -35,7 +35,7 @@
 
 .NOTES
     Authored and unit-tested (via sentinel/scheduling.py) only in this
-    dispatch (q77-p2-c) — no task is registered, no gate-run evidence is
+    dispatch (q77-p2-c)  -  no task is registered, no gate-run evidence is
     gathered here. That is explicitly out of scope; see the plan §6/§12.
 #>
 
@@ -53,7 +53,7 @@ param(
     [int]    $DaysInterval = 1,
     [string] $WeeklyDay = 'Monday',
 
-    # GateBurst only — a bounded temporary recurrence for the two-run
+    # GateBurst only  -  a bounded temporary recurrence for the two-run
     # scheduler gate. Spacing must be chosen from the measured per-run
     # GitHub request count (60 req/hr unauthenticated): <=25 req/run keeps
     # 20-minute spacing safe; otherwise use ~65-minute spacing so the two
@@ -63,7 +63,7 @@ param(
     [int] $BurstStartDelayMinutes = 3,
 
     [string] $PythonExe,
-    [string] $ConfigPath = (Join-Path $PSScriptRoot 'sentinel.local.json'),
+    [string] $ConfigPath,
     [string] $RunKind = 'live',
 
     [switch] $WhatIfOnly
@@ -71,10 +71,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# $PSScriptRoot is not reliably populated inside a param() default-value
+# expression in Windows PowerShell 5.1 (it's a top-level-scope automatic
+# variable) -- resolved here in the script body instead, where it always is.
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+if (-not $ConfigPath) {
+    $ConfigPath = Join-Path $PSScriptRoot 'sentinel.local.json'
+}
 
 if (-not (Test-Path $ConfigPath)) {
-    throw "Missing $ConfigPath — copy scripts/sentinel.local.example.json to sentinel.local.json and fill in github_user."
+    throw "Missing $ConfigPath  -  copy scripts/sentinel.local.example.json to sentinel.local.json and fill in github_user."
 }
 $LocalConfig = Get-Content $ConfigPath -Raw | ConvertFrom-Json
 if (-not $LocalConfig.github_user) {
@@ -90,11 +96,11 @@ if (-not $PythonExe) {
 
 $DbPath = Join-Path $RepoRoot 'var\sentinel.sqlite3'
 $FindingsPath = Join-Path $RepoRoot 'FINDINGS.md'
-$LogPath = if ($TaskName -eq 'SentinelGateBurst') {
-    Join-Path $RepoRoot 'var\logs\sentinel-scheduled-gate.jsonl'
-} else {
-    Join-Path $RepoRoot 'var\logs\sentinel-scheduled.jsonl'
-}
+# Every scheduled task (GateBurst and the standing schedule alike) uses
+# this one path -- it is what separates scheduled-run provenance from a
+# manual/measurement run's sentinel-manual.jsonl, per the gate's
+# provenance chain design. Never a burst-specific variant.
+$LogPath = Join-Path $RepoRoot 'var\logs\sentinel-scheduled.jsonl'
 $CostLedgerPath = Join-Path $RepoRoot 'telemetry\cost_ledger.jsonl'
 
 # Mirrors sentinel/scheduling.py::build_run_argv exactly.
@@ -180,7 +186,7 @@ switch ($Action) {
     }
 
     'Evidence' {
-        # Advisory diagnostics only (C5) — never a closure proof. Actual
+        # Advisory diagnostics only (C5)  -  never a closure proof. Actual
         # provenance is the ledger correlation chain: task identity +
         # resolved command, LastRunTime/LastTaskResult, scheduled-log
         # entries, matching ledger run_id/UTC timestamps, zero-token
@@ -192,7 +198,7 @@ switch ($Action) {
                 Where-Object { $_.Message -match [regex]::Escape($TaskName) } |
                 Select-Object TimeCreated, Id, LevelDisplayName, Message | Format-List
         } catch {
-            Write-Host "Task Scheduler operational log unavailable — relying on the ledger correlation chain instead."
+            Write-Host "Task Scheduler operational log unavailable  -  relying on the ledger correlation chain instead."
         }
     }
 }
