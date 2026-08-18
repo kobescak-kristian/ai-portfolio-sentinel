@@ -49,9 +49,10 @@ amended 2026-08-03.
 owner ruling 2026-08-03); LICENSE file committed 2026-08-03 at
 2283b4f via the repo-exclusive rollout step. No remaining
 license-related program-closure dependency.
-**Plan:** Phases 0–6 per BLUEPRINT §6. Next action: a separately
-approved ADR to diagnose and remediate the two judgment classes'
-recall shortfall (not designed in this record) before any re-gate.
+**Plan:** Phases 0–6 per BLUEPRINT §6. Remediation ADR ADOPTED
+2026-08-19 (`adr/0005-phase3-gate-remediation.md`; see the 2026-08-19
+change-log entry). Next action: a separate remediation implementation
+dispatch executing that ADR's scope, then the one permitted re-gate.
 Activating the standing scheduled task in agent mode remains a
 separate, later decision either way — SentinelDailyRun stays
 stub-mode, unedited.
@@ -311,3 +312,35 @@ merges every change."
   development toward production-ready." Q-77 remains OPEN through the
   remaining production-readiness phases.** Next action: Phase 3 (caged
   checker agent), named only, not designed here.
+- 2026-08-19 — Phase 3 remediation ADR ADOPTED (dispatch
+  q77-p3-remediation-adr-adopt-a). `adr/0005-phase3-gate-remediation.md`
+  created with Status: ADOPTED; owner approved 2026-08-19 on the
+  evidence basis of the read-only design sessions
+  (q77-p3-remediation-adr-design-a, q77-p3-remediation-adr-finalize-a).
+  Implementation is authorized but NOT performed in this session — no
+  checker, prompt, config, harness, gate-runner, test, or BLUEPRINT
+  cost-value change landed here. Final cost rulings adopted: Haiku
+  iteration/dev/live per-run cap EUR 0.75 (was 0.50); per-call
+  reservation ceiling 150,000 micro-EUR (was 100,000); SDK allowance
+  safety margin 0.70 unchanged; maximum two-run re-gate session spend
+  EUR 1.50 (two independent per-run coordinators, one per designated
+  run ID); monthly EUR 50 lane ceiling and EUR 5 Sonnet official-gate
+  cap unchanged. Approved remediation categories: ordered
+  scan-identify-emit-stop prompt contract (with stale-STATE dated-entry
+  evidence ordering and the missing-synthetic-label
+  provenance/applicability rule), deterministic no-model-call path for
+  `request.text is None`, and separate `RunBudgetCoordinator`
+  instances for gate run 1 and run 2. Model
+  `claude-haiku-4-5-20251001` and all frozen eval/scoring surfaces
+  (fixtures, labels, answer key, clean manifest, scorer, thresholds,
+  `max_regates`) unchanged. Exactly one re-gate remains; a FAIL at the
+  amended settings does not authorize another adjustment or a third
+  gate run under the current BLUEPRINT. Per-tool-attempt evidence
+  persistence remains deferred per the ADR. A separate routine
+  operational-record commit preceding this adoption recorded ten
+  scheduled live runs (2026-08-06..17, all deterministic-only, zero
+  cost) — it contains no remediation and does not count as the
+  remediation implementation commit. No model call and no gate rerun
+  occurred in the adoption session. **Phase 3 remains OPEN. Q-77
+  remains OPEN.** Next action: a separate remediation implementation
+  dispatch.
