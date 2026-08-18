@@ -40,8 +40,8 @@ review evidence committed; see the 2026-08-04 change-log entry and
 evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
-success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: run
-the designated Phase-3 Haiku dev gate.
+success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: the one
+permitted re-gate — see the Plan field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -50,11 +50,16 @@ owner ruling 2026-08-03); LICENSE file committed 2026-08-03 at
 2283b4f via the repo-exclusive rollout step. No remaining
 license-related program-closure dependency.
 **Plan:** Phases 0–6 per BLUEPRINT §6. Remediation ADR ADOPTED
-2026-08-19 (`adr/0005-phase3-gate-remediation.md`; see the 2026-08-19
-change-log entry). Next action: a separate remediation implementation
-dispatch executing that ADR's scope, then the one permitted re-gate.
-Activating the standing scheduled task in agent mode remains a
-separate, later decision either way — SentinelDailyRun stays
+2026-08-19 (`adr/0005-phase3-gate-remediation.md`) and its
+implementation LANDED 2026-08-19 in one dedicated remediation commit
+containing remediation only (dispatch q77-p3-remediation-implement-a;
+see that change-log entry). That commit's own SHA is not self-cited
+here — it is recorded, with its exact CI run, in the private
+operations OS's Q-77 annotation. Next action, once that commit's
+exact-SHA CI run is green: the one separately authorized and
+separately dispatched re-gate. Exactly one re-gate remains and none
+has been run. Activating the standing scheduled task in agent mode
+remains a separate, later decision either way — SentinelDailyRun stays
 stub-mode, unedited.
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
 name kept). Internal path reference removed from the Visibility line
@@ -344,3 +349,74 @@ merges every change."
   occurred in the adoption session. **Phase 3 remains OPEN. Q-77
   remains OPEN.** Next action: a separate remediation implementation
   dispatch.
+- 2026-08-19 — Phase 3 remediation IMPLEMENTED (dispatch
+  q77-p3-remediation-implement-a). `adr/0005-phase3-gate-remediation.md`
+  executed exactly as adopted, in one dedicated remediation
+  implementation commit containing remediation only. Categories landed:
+  **(1) Budget bounds.** `RUN_BUDGET_EUR_MICROS` 500,000 → **750,000**
+  micro-EUR (EUR 0.75, the general Haiku iteration/dev/live per-run
+  breaker, not a gate-only exception); `MAX_PER_CALL_RESERVE_EUR_MICROS`
+  100,000 → **150,000** micro-EUR; `SDK_ALLOWANCE_SAFETY_MARGIN`
+  **0.70 unchanged**; `MAX_TURNS` **10 unchanged**;
+  `MAX_TOOL_CALLS_PER_CHECK` **5 unchanged**. One run-level coordinator
+  still owns the run budget and each call still reserves a bounded
+  slice of it with the SDK allowance derived from that reservation — no
+  second budget pool was introduced. **(2) Prompt contract** rewritten
+  as an ordered scan-identify-emit-stop algorithm: scan the complete
+  document before emitting anything; identify every genuine defect;
+  only then emit one tool call per identified defect; do not stop after
+  the first; no speculative or duplicate findings; terminate without
+  unnecessary explanatory prose; no genuine defect means no tool call.
+  Conciseness now governs the termination step only, never the scan.
+  Every existing containment rule (untrusted-data framing, verbatim
+  line/excerpt citation, closed reason codes, per-class evidence count,
+  one-tool cage) is preserved and asserted in tests. **(3)
+  `stale-STATE-marker` evidence ordering changed**: evidence item 1
+  (primary) must be the dated historical entry and item 2 the
+  current-state text it contradicts, aligning the model contract with
+  the frozen positional primary-location scoring semantics. **(4)
+  `missing-synthetic-label` provenance rule changed**: a figure
+  genuinely derived from synthetic/labeled evaluation or test data
+  requires the adjacent synthetic qualifier, and a number whose
+  provenance does not invoke that convention does not. No filename
+  shortcuts, and no frozen fixture string or answer-key identifier
+  appears in any prompt. **(5) Absent-file deterministic no-call path
+  added**: `JudgmentRequest.text is None` returns the empty result
+  before any budget reservation, SDK allowance construction or model
+  call, and writes no `agent_calls` row — a legitimate `Confirmed([])`,
+  not an agent failure. **(6) Gate runner** now builds one independent
+  `RunBudgetCoordinator` per designated run ID instead of sharing one,
+  and its own deliberately-literal cost cross-check (never imported
+  from config) checks each run against 750,000 micro-EUR and the
+  two-run gate session against **1,500,000 micro-EUR (EUR 1.50)
+  aggregate**. Run 2 can therefore genuinely exercise the real agent at
+  the re-gate rather than passing its idempotent-rerun and dedup
+  invariants on exhaustion containment. Tests: `tests/test_bounds.py`
+  gained adopted-bound pins, the absent-file no-call/no-row/no-charge
+  proof (including that the skip precedes even the auth check) and the
+  prompt-contract assertions; `tests/test_failures.py`'s one-call
+  cost-cap failure-injection test resized to the 150,000-micro-EUR
+  reservation with its meaning intact (the breaker still halts further
+  checker execution); new `tests/test_phase3_gate_runner.py` covers the
+  coordinator split, non-transfer of exhaustion between runs, and both
+  cost cross-checks. Evidence: 563 tests passing, 3 skips (Phase 3/4
+  stubs only), `python -m pip check` clean, Tier 0 artifact validator
+  PASS, Phase-1 freeze guard PASS. `BLUEPRINT.md` §7 amended to EUR
+  0.75 with the worst-case month restated (30 × EUR 0.75 = EUR 22.50,
+  plus one EUR 5.00 Sonnet official gate = EUR 27.50 — below the EUR 40
+  frequency-drop trigger and inside the unchanged EUR 50 monthly hard
+  ceiling); `SPEC.md` §6 synchronized to the same figures by owner
+  authorization this date (derived spec — BLUEPRINT governs);
+  `MODEL_CARD.md`, `THREAT_MODEL.md` and `DATA_CONTRACT.md` record the
+  amended values, the absent-file no-call semantics and the EUR 1.50
+  session bound. Model `claude-haiku-4-5-20251001` unchanged; fixtures,
+  synthetic labels, answer key, clean manifest, scorer, scoring
+  thresholds and `max_regates` all unchanged; `adr/0005`,
+  `EVAL_RESULTS.md`, `PHASE3_GATE_DIAGNOSIS.md` and `artifacts/`
+  untouched. `SentinelDailyRun` unchanged and still stub-mode. **No
+  model call of any kind occurred in this implementation session and no
+  gate rerun occurred.** The remediation is implemented and
+  CI-verified; it has not been tested against Haiku, and nothing here
+  claims it works. **Phase 3 remains OPEN. Q-77 remains OPEN. Exactly
+  one re-gate remains.** Next action: the separately authorized
+  `q77-p3-remediation-regate-a` (or equivalent) gate dispatch.

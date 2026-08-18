@@ -555,9 +555,10 @@ def test_per_run_cost_cap_halts_checker(tmp_path, make_config, make_deps, fixed_
         )
 
     rate = FxRate(source="ecb-eurofxref-daily", rate_date="2026-08-05", retrieved_at_utc=T0, usd_per_eur=Decimal("1.1554"))
-    # Sized to exactly one call's worth (agents.checker.config.MAX_PER_CALL_RESERVE_EUR_MICROS)
-    # so the first judgment call drains the run's entire budget.
-    coordinator = RunBudgetCoordinator(fx_rate=rate, total_eur_micros=100_000)
+    # Sized to exactly one call's worth (agents.checker.config.MAX_PER_CALL_RESERVE_EUR_MICROS,
+    # 150_000 micro-EUR since adr/0005) so the first judgment call drains
+    # the run's entire budget.
+    coordinator = RunBudgetCoordinator(fx_rate=rate, total_eur_micros=150_000)
 
     repo = make_repo_surface(
         "acme",
@@ -603,7 +604,7 @@ def test_per_run_cost_cap_halts_checker(tmp_path, make_config, make_deps, fixed_
         assert judgment_findings == []  # no partial finding survives for any dead-lettered scope
 
         row = costs.build_agent_cost_row(conn, run_id="r-cost-cap", run_kind="dev", recorded_at_utc=T2)
-        assert row.cost_eur_micros <= 100_000
+        assert row.cost_eur_micros <= 150_000
     finally:
         conn.close()
         stub_conn.close()

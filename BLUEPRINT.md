@@ -264,10 +264,12 @@ ChatGPT: answer-key blind sample (§5); optional cross-read of the
 condensed operating spec.
 
 Per-run cost caps, enforced in code (breaker, not convention):
-iteration/dev/live run ≤ EUR 0.50 (Haiku) · official gate run ≤ EUR
-5.00 (Sonnet). Worst-case month at daily Haiku + one Sonnet gate:
-~EUR 20 — inside the EUR 20–40 estimate, margin to the EUR 50 ceiling.
-Telemetry proves it before any cadence increase.
+iteration/dev/live run ≤ EUR 0.75 (Haiku — amended from EUR 0.50 by
+adr/0005-phase3-gate-remediation.md, 2026-08-19) · official gate run ≤
+EUR 5.00 (Sonnet). Worst-case month at daily Haiku + one Sonnet gate:
+30 × EUR 0.75 = EUR 22.50, plus EUR 5.00 = EUR 27.50 — below the EUR
+40 frequency-drop trigger (§0 cost rule) and inside the EUR 50 hard
+ceiling. Telemetry proves it before any cadence increase.
 
 ## 8. Out of scope (v1 — README "later, maybe" section only)
 

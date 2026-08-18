@@ -14,13 +14,17 @@ writes there, never invents a scoring rule beyond what SCORING.md
 states. This is the required standalone scorer named by the dispatch;
 `evals/run_eval.py` is deliberately not created.
 
-Cost design: one shared ``RunBudgetCoordinator`` (one EUR-0.50
-run-scoped cap, per agents/checker/config.py) is reused across BOTH
-passes below — the primary scoring pass and the doubled-fixture
-idempotency pass — rather than granting each its own EUR 0.50. This is
-the more conservative reading of "one shared EUR 0.50-equivalent cap
-applies to the entire ... Sentinel run" and keeps this gate's total
-real spend bounded by one cap, not two.
+Cost design (adr/0005-phase3-gate-remediation.md): each designated run
+ID gets its OWN ``RunBudgetCoordinator`` — an independent EUR-0.75
+breaker per run, per agents/checker/config.py — so the maximum real
+model spend for a two-run gate session is EUR 1.50. The earlier single
+shared coordinator made run 2 vacuous: run 1 saturated the one cap,
+run 2 made zero real model calls, and its idempotent-rerun and dedup
+invariants passed on exhaustion containment rather than on real-agent
+re-execution. Run 2 must genuinely exercise the real agent for those
+invariants to count. Three distinct limits are in play and must not be
+conflated: the per-run breaker (EUR 0.75), the gate-session bound
+(EUR 1.50), and the monthly lane ceiling (EUR 50, unchanged).
 
 Passes:
   1. Primary pass — scores against the answer key / clean units.
@@ -47,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.checker import auth  # noqa: E402
 from agents.checker.budget import RunBudgetCoordinator  # noqa: E402
 from agents.checker.config import AUTH_MODE_LABEL, MODEL  # noqa: E402
-from agents.checker.fx import resolve_ecb_usd_per_eur  # noqa: E402
+from agents.checker.fx import FxRate, resolve_ecb_usd_per_eur  # noqa: E402
 from agents.checker.harness import CagedCheckerStub  # noqa: E402
 from sentinel import costs, ledger  # noqa: E402
 from sentinel.config import RunConfig  # noqa: E402
@@ -63,6 +67,15 @@ EVAL_CONFIG_PATH = EVALS_ROOT / "eval_config.yaml"
 
 JUDGMENT_CLASSES = {"stale-STATE-marker", "missing-synthetic-label"}
 DETERMINISTIC_CLASSES = {"broken-link", "number-mismatch", "missing-required-file", "readme-structure"}
+
+# This gate's OWN cost cross-check, restated as int literals here
+# deliberately and NOT imported from agents/checker/config.py: importing
+# the coordinator's own limits would make the cross-check tautological —
+# it would agree with the enforcement mechanism by construction instead
+# of independently checking it. Values per adr/0005: EUR 0.75 per
+# designated run, EUR 1.50 across the two-run gate session.
+PER_RUN_COST_CAP_EUR_MICROS = 750_000
+GATE_SESSION_COST_CAP_EUR_MICROS = 1_500_000
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -195,6 +208,52 @@ def _check_ratio_threshold(name: str, numerator: int, denominator: int, ratio_mi
     return passed, f"{name}: {numerator}/{denominator} = {actual:.4f} (>= {ratio_min} required) -> {'PASS' if passed else 'FAIL'}"
 
 
+def build_gate_coordinators(fx_rate: FxRate) -> tuple[RunBudgetCoordinator, RunBudgetCoordinator]:
+    """One independent run-budget breaker per designated run ID
+    (adr/0005). The two coordinators share only the single resolved FX
+    rate — budget state is never shared, so exhausting run 1 cannot
+    pre-exhaust run 2, and run 2 can genuinely exercise the real agent
+    under its own EUR 0.75 cap."""
+    return RunBudgetCoordinator(fx_rate=fx_rate), RunBudgetCoordinator(fx_rate=fx_rate)
+
+
+def build_run_deps(
+    *,
+    judgment_mode: str,
+    db_path: Path,
+    run_id: str,
+    coordinator: Optional[RunBudgetCoordinator],
+) -> Deps:
+    """Wire one designated run's Deps. The coordinator is passed in
+    explicitly rather than closed over, so which run got which breaker
+    is an observable property of this call."""
+    if judgment_mode != "agent":
+        return Deps()
+    conn = ledger.open_ledger(db_path)
+    return Deps(judgment=CagedCheckerStub(run_id=run_id, conn=conn, coordinator=coordinator))
+
+
+def evaluate_cost_caps(run1_eur_micros: int, run2_eur_micros: int) -> list[tuple[bool, str]]:
+    """The gate's own independent cost cross-check: each designated run
+    within its own EUR 0.75 breaker, AND the two-run gate session within
+    EUR 1.50 in aggregate. Both are checked explicitly — a per-run pass
+    is not taken as implying the session bound."""
+    checks: list[tuple[bool, str]] = []
+    for label, charged in (("run1", run1_eur_micros), ("run2", run2_eur_micros)):
+        ok = charged <= PER_RUN_COST_CAP_EUR_MICROS
+        checks.append((ok, (
+            f"{label}_cost_within_run_cap: {charged} micro-EUR "
+            f"(<= {PER_RUN_COST_CAP_EUR_MICROS}) -> {'PASS' if ok else 'FAIL'}"
+        )))
+    total = run1_eur_micros + run2_eur_micros
+    session_ok = total <= GATE_SESSION_COST_CAP_EUR_MICROS
+    checks.append((session_ok, (
+        f"gate_session_cost_within_cap: {total} micro-EUR "
+        f"(<= {GATE_SESSION_COST_CAP_EUR_MICROS}) -> {'PASS' if session_ok else 'FAIL'}"
+    )))
+    return checks
+
+
 def run_gate(*, judgment_mode: str, gate_root: Path) -> dict:
     gate_root.mkdir(parents=True, exist_ok=True)
     eval_config = _load_eval_config()
@@ -213,33 +272,34 @@ def run_gate(*, judgment_mode: str, gate_root: Path) -> dict:
     run1_id = ids.new_run_id()
     run2_id = ids.new_run_id()
 
-    coordinator: Optional[RunBudgetCoordinator] = None
+    # One independent EUR-0.75 breaker per designated run ID (adr/0005),
+    # never one shared EUR-1.50 pool: run 2 must be able to make real
+    # model calls even if run 1 saturated its own cap.
+    coordinator1: Optional[RunBudgetCoordinator] = None
+    coordinator2: Optional[RunBudgetCoordinator] = None
     if judgment_mode == "agent":
         auth.assert_no_auth_override_risk()
         now = datetime.now(timezone.utc)
         fx_rate = resolve_ecb_usd_per_eur(now=now)
-        coordinator = RunBudgetCoordinator(fx_rate=fx_rate)
-
-    def _deps(run_id: str) -> Deps:
-        if judgment_mode != "agent":
-            return Deps()
-        conn = ledger.open_ledger(db_path)
-        stub = CagedCheckerStub(run_id=run_id, conn=conn, coordinator=coordinator)
-        return Deps(judgment=stub)
+        coordinator1, coordinator2 = build_gate_coordinators(fx_rate)
 
     config1 = RunConfig(
         run_kind="dev", source="fixtures", fixtures_root=FIXTURES_ROOT,
         db_path=db_path, findings_path=findings_path, log_path=log_path,
         cost_ledger_path=cost_ledger_path, run_id=run1_id, judgment_mode=judgment_mode,
     )
-    outcome1 = execute_run(config1, _deps(run1_id))
+    outcome1 = execute_run(config1, build_run_deps(
+        judgment_mode=judgment_mode, db_path=db_path, run_id=run1_id, coordinator=coordinator1
+    ))
 
     config2 = RunConfig(
         run_kind="dev", source="fixtures", fixtures_root=FIXTURES_ROOT,
         db_path=db_path, findings_path=findings_path, log_path=log_path,
         cost_ledger_path=cost_ledger_path, run_id=run2_id, judgment_mode=judgment_mode,
     )
-    outcome2 = execute_run(config2, _deps(run2_id))
+    outcome2 = execute_run(config2, build_run_deps(
+        judgment_mode=judgment_mode, db_path=db_path, run_id=run2_id, coordinator=coordinator2
+    ))
 
     conn = ledger.open_ledger(db_path, create=False)
     try:
@@ -288,10 +348,12 @@ def run_gate(*, judgment_mode: str, gate_root: Path) -> dict:
             if costs.has_agent_calls_for_run(conn, run2_id):
                 cost_row2 = costs.build_agent_cost_row(conn, run_id=run2_id, run_kind="dev", recorded_at_utc=datetime.now(timezone.utc))
 
-        total_charged_micros = (cost_row1.cost_eur_micros if cost_row1 else 0) + (cost_row2.cost_eur_micros if cost_row2 else 0)
-        cap_ok = total_charged_micros <= 500_000  # RUN_BUDGET_EUR_MICROS, restated as an int literal here deliberately: this is the gate's OWN cross-check, independent of the coordinator's own internal enforcement
-        checks.append((cap_ok, f"aggregate_cost_within_cap: {total_charged_micros} micro-EUR (<= 500000) -> {'PASS' if cap_ok else 'FAIL'}"))
-        overall_pass = overall_pass and cap_ok
+        charged1 = cost_row1.cost_eur_micros if cost_row1 else 0
+        charged2 = cost_row2.cost_eur_micros if cost_row2 else 0
+        total_charged_micros = charged1 + charged2
+        cost_checks = evaluate_cost_caps(charged1, charged2)
+        checks.extend(cost_checks)
+        overall_pass = overall_pass and all(ok for ok, _ in cost_checks)
 
         return {
             "source_commit": None,  # filled in by main()
@@ -312,8 +374,8 @@ def run_gate(*, judgment_mode: str, gate_root: Path) -> dict:
             "clean_total": score.clean_total,
             "invariants": invariants,
             "checks": [msg for _, msg in checks],
-            "cost_row1_micros": cost_row1.cost_eur_micros if cost_row1 else 0,
-            "cost_row2_micros": cost_row2.cost_eur_micros if cost_row2 else 0,
+            "cost_row1_micros": charged1,
+            "cost_row2_micros": charged2,
             "total_charged_eur_micros": total_charged_micros,
             "overall_pass": overall_pass,
         }

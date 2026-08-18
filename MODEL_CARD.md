@@ -45,6 +45,37 @@ circuit breaker, and a run-scoped EUR budget (not per-request) derived
 into a conservative per-call USD ceiling via a freshly-resolved ECB
 reference rate.
 
+### 3a. Adopted bounds (`adr/0005-phase3-gate-remediation.md`, 2026-08-19)
+
+- Haiku per-run cap **EUR 0.75** (`RUN_BUDGET_EUR_MICROS = 750_000`),
+  raised from EUR 0.50 on measured-workload evidence, not on a
+  post-hoc wish for more headroom. It is the general iteration/dev/
+  live Haiku breaker, not a gate-only exception.
+- Per-call reservation ceiling **150,000 micro-EUR**
+  (`MAX_PER_CALL_RESERVE_EUR_MICROS`), raised from 100,000 — the same
+  20% failed-call burn fraction of the run budget as before.
+- SDK allowance safety margin **0.70, unchanged**. Deliberately not
+  relaxed: raising it would buy execution through the back door.
+- `MAX_TURNS` 10 and `MAX_TOOL_CALLS_PER_CHECK` 5, both unchanged.
+- **Absent-file deterministic no-call path**: when a judgment
+  request's document is confirmed absent (`JudgmentRequest.text is
+  None`), `judge()` returns the empty result *before* any budget
+  reservation, SDK allowance construction, or model call, and writes
+  no `agent_calls` row. Such a surface never enters the model path at
+  all; the condition is established deterministically upstream by the
+  three-state fetch contract and needs no model judgment.
+- The Phase-3 dev gate runs its two designated run IDs under **two
+  independent `RunBudgetCoordinator` instances**, one EUR 0.75 breaker
+  each, so the maximum real-model spend for a two-run gate session is
+  **EUR 1.50**. Run 2 executes the same frozen workload under its own
+  budget and must genuinely exercise the agent for its idempotent-rerun
+  and dedup invariants to count.
+
+These are the settings the one remaining re-gate will run under. This
+document makes **no** claim that they produce a passing gate: the
+re-gate has not been run, and the recorded result stays the honest
+2026-08-05 FAIL until it is.
+
 ## 4. Deterministic host canonicalization (evidence contract)
 
 The model never emits a complete, ledger-ready finding. It proposes a
@@ -64,7 +95,7 @@ docs, 2026-08), not this system's interpretation of it. Under the
 operator's subscription authentication (never an API key for this
 gate), `cost_eur_micros` recorded in this system's ledger and CostRows
 represents **estimated model-equivalent consumption for Sentinel's own
-internal EUR-0.50 run cap** — it is not, and is never described as, a
+internal EUR-0.75 run cap** — it is not, and is never described as, a
 direct per-run invoice. If API-key billing is ever used instead, that
 distinction would be stated explicitly wherever the figure appears.
 

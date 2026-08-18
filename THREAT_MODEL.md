@@ -71,15 +71,20 @@ granted, or to exceed a declared bound (turns, tool calls, cost).
 - `ClaudeAgentOptions.max_budget_usd` is the SDK's own enforcement
   point for the per-call USD ceiling the run-budget coordinator derives
   (see §5); the coordinator additionally caps every reservation at
-  `MAX_PER_CALL_RESERVE_EUR_MICROS` independent of the SDK's own check.
+  `MAX_PER_CALL_RESERVE_EUR_MICROS` (150,000 micro-EUR since adr/0005)
+  independent of the SDK's own check.
+- `MAX_TURNS` (10) and `MAX_TOOL_CALLS_PER_CHECK` (5) are unchanged by
+  adr/0005 — they are runaway-stops, and no persisted turn- or
+  tool-ceiling event exists in the gate evidence.
 
 **Residual risk**: the SDK's `max_budget_usd` check runs *after* each
 API call completes (documented behavior — see `MODEL_CARD.md`), so a
 single call can in principle overshoot its allowance before the SDK
-halts it. `SDK_ALLOWANCE_SAFETY_MARGIN` (config.py) exists specifically
-to keep that overshoot inside the coordinator's own reservation ceiling
-in the common case; it is a margin, not a hard guarantee for every
-conceivable single call.
+halts it. `SDK_ALLOWANCE_SAFETY_MARGIN` (config.py, 0.70 — deliberately
+left unchanged by adr/0005, since relaxing it would buy execution
+through the back door) exists specifically to keep that overshoot
+inside the coordinator's own reservation ceiling in the common case; it
+is a margin, not a hard guarantee for every conceivable single call.
 
 ## 4. Model-output fabrication
 
@@ -115,11 +120,37 @@ single owner of the run's budget state; every call reserves
 conservatively before executing and commits (or the harness commits
 `commit_unresolved`, charging the *full* reservation) after — the
 run's aggregate charged cost cannot exceed `RUN_BUDGET_EUR_MICROS`
-(enforced by `commit()`'s own invariant check, proven in
-`tests/test_bounds.py`). FX conversion uses the ECB daily reference
-rate, resolved fresh per run and recorded with source/date/retrieval
-time/exact Decimal rate on every audit row — never invented, never
-stale-cached.
+(EUR 0.75 since adr/0005; enforced by `commit()`'s own invariant check,
+proven in `tests/test_bounds.py`). There is exactly one budget pool per
+run: no second pool was introduced alongside it. FX conversion uses the
+ECB daily reference rate, resolved fresh per run and recorded with
+source/date/retrieval time/exact Decimal rate on every audit row —
+never invented, never stale-cached.
+
+Three amendments from `adr/0005-phase3-gate-remediation.md` bear
+directly on this threat:
+
+- **Per-call reservation ceiling 150,000 micro-EUR** (20% of the run
+  budget, the same fraction as before). A call that starts but ends
+  without recoverable final usage is charged its *full* reservation, so
+  a single failed unresolved call can now burn up to 150,000 micro-EUR
+  — the accepted cost of giving a genuine multi-emission call enough
+  per-call headroom to finish. Five such failures still exhaust a run,
+  unchanged.
+- **Absent files no longer enter the model path.** A judgment request
+  whose document is confirmed absent (`JudgmentRequest.text is None`)
+  returns empty deterministically before any reservation, allowance
+  construction or model call, and books no spend and no audit row. This
+  removes a category of charge that bought no judgment at all.
+- **Independent per-run coordinators in the Phase-3 gate.**
+  `scripts/run_phase3_dev_gate.py` builds one EUR 0.75 breaker per
+  designated run ID (EUR 1.50 maximum across the two-run gate session),
+  and cross-checks both bounds against its own deliberate literals
+  rather than importing config's. This exists because the first gate's
+  single shared coordinator let run 1's exhaustion make run 2's
+  validation vacuous — run 2 made zero real calls, and its invariants
+  passed on exhaustion containment rather than on real-agent
+  re-execution.
 
 **Residual risk (documented, not hidden)**: `total_cost_usd` from the
 SDK is itself a client-side estimate, not authoritative billing data

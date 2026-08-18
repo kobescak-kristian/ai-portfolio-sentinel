@@ -236,6 +236,24 @@ unchanged Phase-2 behavior) from an agent-mode run (real aggregated
 CostRow) when writing `FINDINGS.md`/cost-ledger output, including after
 crash recovery.
 
+**Absent-document judgment requests write no row** (`adr/0005-phase3-gate-remediation.md`).
+When a judgment request's document is confirmed absent
+(`JudgmentRequest.text is None`, established deterministically upstream
+by the three-state fetch contract — `ConfirmedAbsent`, §3),
+`agents/checker/harness.py::CagedCheckerStub.judge` returns the empty
+result immediately: **no model call, no budget reservation or charge,
+and no `agent_calls` row of any state** — not `COMPLETED`, and not
+`FAILED`/`REJECTED`/`EXHAUSTED` either. The skip is therefore invisible
+in the agent audit trail by design, and an agent-mode run's
+`agent_calls` count is the number of judgment requests that actually
+had a document to judge, never the number of judgment tasks created.
+
+This is **not** an agent failure and must not be read as one. The empty
+return is a legitimate `Confirmed([])` — the same result
+`NullJudgmentStub` has always produced — so the task reaches `DONE`,
+not `DEAD_LETTER`, and contributes nothing to the run's CostRow. A
+genuine agent failure still raises and still dead-letters, unchanged.
+
 ## 8. State transitions
 
 - **Task**: `PENDING → IN_PROGRESS → {DONE | FAILED}`; `PENDING →

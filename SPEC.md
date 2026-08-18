@@ -120,10 +120,13 @@ executes, AI recommends.
 
 Hard ceiling EUR 50/month, all lane spend pooled; trailing-30-day
 spend > EUR 40 drops run frequency one notch (daily → every-2-days →
-weekly); frequency drops, caps and ceiling never rise. Per-run caps:
-iteration/dev/live ≤ EUR 0.50 (Haiku); official gate ≤ EUR 5.00
-(Sonnet). Cost telemetry from Phase 0: every run, including dev,
-writes a CostRow (integer micro-euros; no floating-point currency).
+weekly). Frequency drops automatically at that threshold; the EUR 50
+monthly hard ceiling never rises; per-run caps change only through an
+approved ADR and are otherwise fixed. Per-run caps: iteration/dev/live
+≤ EUR 0.75 (Haiku — amended from EUR 0.50 by adr/0005, 2026-08-19);
+official gate ≤ EUR 5.00 (Sonnet). Cost telemetry from Phase 0: every
+run, including dev, writes a CostRow (integer micro-euros; no
+floating-point currency).
 
 ## 7. Claims rules (mirrors BLUEPRINT §11(f); ladder in CLAUDE.md)
 

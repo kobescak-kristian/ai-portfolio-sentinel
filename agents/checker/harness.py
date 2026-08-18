@@ -115,6 +115,21 @@ class CagedCheckerStub:
     query_fn: Callable = field(default=run_query)
 
     def judge(self, request: JudgmentRequest) -> Sequence[ObservedFinding]:
+        # Deterministic absent-file short-circuit (adr/0005). A
+        # confirmed-absent file is already established deterministically
+        # upstream by the three-state fetch contract (``ConfirmedAbsent``
+        # in sentinel/inventory/base.py) and needs no model judgment, so
+        # this returns the empty result *before* the auth check, before
+        # any budget reservation or SDK allowance construction, and
+        # before any model call — leaving no ``agent_calls`` row at all
+        # for a request that never entered the model path. An empty
+        # successful return is a legitimate ``Confirmed([])``, the same
+        # semantics ``NullJudgmentStub`` has always had; it is not an
+        # agent failure and never dead-letters. Every *actual* agent
+        # call below keeps its unchanged fail-closed behavior.
+        if request.text is None:
+            return ()
+
         now = self.clock()
         task_key = f"{request.surface}::{request.check_class}"
 
