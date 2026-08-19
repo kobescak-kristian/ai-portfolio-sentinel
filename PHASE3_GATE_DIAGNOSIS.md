@@ -321,7 +321,12 @@ Every required diagnostic question is either answered directly from
 persisted evidence with exact supporting rows, or explicitly marked
 unavailable/not-determinable, and every mandated reconciliation (TP/FP/
 miss counts, per-class recall, token and cost totals) closes exactly
-against `artifacts/phase3_dev_gate.json` and `EVAL_RESULTS.md` with zero
+against the original Phase-3 gate artifact —
+`artifacts/phase3_dev_gate.json` as committed at
+`f9b7ea4e0762161a2519158ec817288308128584`, blob
+`2b34e31e13ab8c6dd4e59fd9110e40159b48bcb4`; that working-tree path now
+carries the 2026-08-19 re-gate artifact — and `EVAL_RESULTS.md`
+(ORIGINAL DESIGNATED GATE section) with zero
 unexplained discrepancy. The presence of the unknowns listed above does
 not block any mandated reconciliation from closing.
 

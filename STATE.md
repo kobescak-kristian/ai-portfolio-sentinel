@@ -12,20 +12,39 @@ pre-registered, BLUEPRINT §0).
 **Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
 2026-07-15, canonical record in the private operations OS (same
 date). Public-while-dormant is intended; do not flag.
-**Phase status:** Phase 3 remains **OPEN** — designated Haiku dev
-gate run 2026-08-05 and recorded an honest **FAIL** (BLUEPRINT §6 P3:
-"Dev gate leg green on fixtures" was not met). Pooled precision
-47/56 = 0.8393 (< 0.90), pooled recall 47/60 = 0.7833 (< 0.85);
-per-class recall FAIL on `stale-STATE-marker` (2/10) and
-`missing-synthetic-label` (5/10); the four deterministic classes and
-the clean-false-flag rate all PASS. Full figures, run IDs
-(`r-8f646359aef946178f2863acd75887c4`, `r-06dc9ec88f6c4cdc9057dacec88a1a0a`),
-and cost evidence: `EVAL_RESULTS.md`. Source commit
-`cf713649bc1aaf31f1494112921d7741493533b0`. No fixture, label,
-answer-key, scoring, threshold, model, or prompt change was made
-after seeing this result — per the binding gate discipline, any
-subsequent remediation requires a separately approved ADR (not
-designed in this record). Implementation itself (the caged checker
+**Phase status:** Phase 3 remains **OPEN** after **two** recorded
+results, neither of which replaces the other. (1) The designated Haiku
+dev gate ran 2026-08-05 at source commit
+`cf713649bc1aaf31f1494112921d7741493533b0` and recorded an honest
+**FAIL** (BLUEPRINT §6 P3: "Dev gate leg green on fixtures" was not
+met): pooled precision 47/56 = 0.8393 (< 0.90), pooled recall
+47/60 = 0.7833 (< 0.85); per-class recall FAIL on `stale-STATE-marker`
+(2/10) and `missing-synthetic-label` (5/10); the four deterministic
+classes and the clean-false-flag rate all PASS; run IDs
+`r-8f646359aef946178f2863acd75887c4`,
+`r-06dc9ec88f6c4cdc9057dacec88a1a0a`. (2) The one permitted re-gate
+under `adr/0005-phase3-gate-remediation.md` ran 2026-08-19 at source
+commit `c12beee577b929f58cd6f91ff36d048fe955d73f` (run IDs
+`r-80b91c34a10a4925a62d573a473cfb4d`,
+`r-659b534850f945c2bb614f0065eaa6e7`) and recorded an honest **OVERALL
+FAIL**. Every scoring threshold PASSED there — pooled precision 60/60,
+pooled recall 60/60, all six classes 10/10, clean false flags 0/166 —
+and `every_task_terminal` and `zero_lost_tasks` PASSED; the failure is
+isolated to the two cross-run invariants, `idempotent_rerun` and
+`dedup_correct_on_doubled_fixture_run`, both traced to one
+cross-run finding-identity defect. Full figures, invariant predicates,
+cost evidence and the root-cause record for **both** results:
+`EVAL_RESULTS.md`. Note that `artifacts/phase3_dev_gate.json` now
+carries the re-gate artifact; the original gate's artifact is preserved
+at commit `f9b7ea4e0762161a2519158ec817288308128584`, blob
+`2b34e31e13ab8c6dd4e59fd9110e40159b48bcb4`. No fixture, label,
+answer-key, scoring, threshold, model, prompt, lifecycle, fingerprint
+or evidence-validation change was made after seeing either result. The
+one permitted re-gate is now **consumed** and no third gate run is
+authorized under the current BLUEPRINT or ADR 0005; remediation design
+and any subsequent validation path require a separate owner-governed
+decision, and the exact governance form is not decided in these
+records. Implementation itself (the caged checker
 agent, run-scoped EUR budget, main-ledger audit, `--judgment-mode
 stub|agent` activation, the cage-suite tests, `THREAT_MODEL.md`,
 `MODEL_CARD.md`) landed complete and CI-green at commit
@@ -40,8 +59,9 @@ review evidence committed; see the 2026-08-04 change-log entry and
 evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
-success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: the one
-permitted re-gate — see the Plan field below.
+success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: see the
+Plan field below — the re-gate is spent, so what follows is a separate
+owner-governed decision, not another run.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -55,11 +75,17 @@ implementation LANDED 2026-08-19 in one dedicated remediation commit
 containing remediation only (dispatch q77-p3-remediation-implement-a;
 see that change-log entry). That commit's own SHA is not self-cited
 here — it is recorded, with its exact CI run, in the private
-operations OS's Q-77 annotation. Next action, once that commit's
-exact-SHA CI run is green: the one separately authorized and
-separately dispatched re-gate. Exactly one re-gate remains and none
-has been run. Activating the standing scheduled task in agent mode
-remains a separate, later decision either way — SentinelDailyRun stays
+operations OS's Q-77 annotation. That commit's exact-SHA CI run was
+green, and the one separately authorized re-gate has since been run at
+that source: OVERALL FAIL, recorded in full in `EVAL_RESULTS.md` and in
+the 2026-08-20 change-log entry below. **Exactly zero re-gates remain**
+— the single permitted re-gate is consumed, and no third gate run is
+authorized under the current BLUEPRINT or ADR 0005. Next action:
+remediation design and any subsequent validation path require a
+separate owner-governed decision; the exact governance form is not
+decided in this record, and nothing here designs, authorizes or implies
+one. Activating the standing scheduled task in agent mode remains a
+separate, later decision either way — SentinelDailyRun stays
 stub-mode, unedited.
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
 name kept). Internal path reference removed from the Visibility line
@@ -137,7 +163,11 @@ merges every change."
   passing; this proves budget-exhaustion safety, not real-agent-rerun
   idempotency — full qualification in `EVAL_RESULTS.md`. Total charged
   500,000 micro-EUR (= the 500,000 cap, PASS). Full record:
-  `EVAL_RESULTS.md`, `artifacts/phase3_dev_gate.json`. Per the binding
+  `EVAL_RESULTS.md` (ORIGINAL DESIGNATED GATE section) and this gate's
+  own artifact, `artifacts/phase3_dev_gate.json` as committed at
+  `f9b7ea4e0762161a2519158ec817288308128584`, blob
+  `2b34e31e13ab8c6dd4e59fd9110e40159b48bcb4` — that working-tree path
+  now carries the 2026-08-19 re-gate artifact. Per the binding
   gate discipline: no fixture, label, answer-key, scoring, threshold,
   model, or prompt change was made after seeing this result; no rerun
   in this session. **Phase 3 remains OPEN.** Q-77 remains open.
@@ -420,3 +450,105 @@ merges every change."
   claims it works. **Phase 3 remains OPEN. Q-77 remains OPEN. Exactly
   one re-gate remains.** Next action: the separately authorized
   `q77-p3-remediation-regate-a` (or equivalent) gate dispatch.
+- 2026-08-20 — Phase 3 ONE PERMITTED RE-GATE: honest **OVERALL FAIL**
+  (recording dispatch q77-p3-remediation-regate-record-a; this is a
+  recording-only entry — the re-gate itself ran 2026-08-19). Source
+  commit `c12beee577b929f58cd6f91ff36d048fe955d73f` (the ADR-0005
+  remediation implementation commit). Model
+  `claude-haiku-4-5-20251001`, auth mode
+  `operator-subscription-oauth-assumed`, judgment mode `agent`. Run 1
+  (primary/scoring) `r-80b91c34a10a4925a62d573a473cfb4d`, run 2
+  (doubled-fixture) `r-659b534850f945c2bb614f0065eaa6e7`. Fresh
+  evidence directory and database per the ADR re-gate protocol:
+  `var/phase3_regate/` (gitignored), SHA-256 `gate.sqlite3`
+  `1e013b5d352fcccb724776748d7575a862aeab923214b49e3419c52024121d16`,
+  `gate.jsonl`
+  `0aaa2c0d0f0983a7eb4e71d8f674319b501d781f4952aff479c245a107da3794`,
+  `cost_ledger.jsonl`
+  `332cad54b503a42df15b56eaecd6cdc5cba07b20a32dee9a6d1fb3e78f2190da`,
+  `FINDINGS.md`
+  `4101ee1dfeb10e2085c05420d0251a5b5083ae146db2d59cc843a2bc26080d42`
+  (identical before and after the read-only queries behind this
+  record). **Scoring: all PASS.** 60 emitted, 60 true positives, 0
+  false positives, 0 misses against the 60 frozen positives; pooled
+  precision 60/60 = 1.0000 (≥ 0.90 PASS); pooled recall 60/60 = 1.0000
+  (≥ 0.85 PASS); per-class recall 10/10 on all six classes including
+  the two that failed the original gate; clean false-flag 0/166 (PASS,
+  ≤ 16 allowed). Verification status of those scoring figures: they are
+  transcribed from the gate runner's own artifact and corroborated by
+  the persisted ledger shape (60 OPEN findings first seen in run 1 plus
+  the one later-resolved run-1 row; 80/80 terminal tasks per run; 23
+  COMPLETED `agent_calls` per run, 46 total, zero FAILED, REJECTED or
+  EXHAUSTED rows) — they were **not** independently rescored against
+  `evals/answer_key.jsonl` in the recording session, because reading
+  that path is blocked by an operator-level deny rule matching the
+  filename and the recording dispatch forbids re-running the gate or
+  the scorer. **Invariants: two FAIL.** `every_task_terminal` PASS,
+  `zero_lost_tasks` PASS; `idempotent_rerun` **FAIL** (predicate: run 2
+  `findings_new == 0`; observed 1);
+  `dedup_correct_on_doubled_fixture_run` **FAIL** (predicate: run 2
+  `findings_still_open == TP + FP` and `findings_resolved == 0`;
+  observed 59 vs 60, and 1). Cost: run 1 629,131 micro-EUR and run 2
+  636,623 micro-EUR (each ≤ the 750,000 per-run cap, PASS), session
+  total 1,265,754 micro-EUR (≤ the 1,500,000 cap, PASS). Unlike the
+  original gate, run 2 genuinely exercised the real agent, so the
+  earlier zero-real-call qualification does not apply to these
+  invariants. **Root cause, reconstructed independently from the
+  persisted gate evidence and the committed source (not from any
+  summary):** exactly one semantic defect was implicated —
+  `missing-synthetic-label` on `synthetic-05/EVAL_RESULTS.md`, location
+  `EVAL_RESULTS.md:14`, reason code
+  `FIGURE_WITHOUT_ADJACENT_SYNTHETIC_LABEL`, frozen source line
+  `- Coverage: 85.5 percent`. Run 1 cited the excerpt
+  `Coverage: 85.5 percent`; run 2 cited `- Coverage: 85.5 percent`.
+  Both are valid verbatim spans of that same frozen line, and
+  `agents/checker/evidence.py` admits both (it requires only that the
+  excerpt appear verbatim within the cited line). Because the
+  model-selected excerpt participates in `normalized_content`, which
+  `sentinel/lifecycle.py` feeds through `compute_content_hash` and then
+  `compute_fingerprint`, the two valid spans produced different
+  `content_hash` values (`bc6de62d…c298119e` vs `e4a1ff1d…5b772d5d4`)
+  and therefore different fingerprints (`43869a66…d662b71`, ledger id
+  48, now RESOLVED; `839cd93d…f3e541d8`, ledger id 61, OPEN) while
+  surface, check class, location and reason code were identical. Both
+  hash pairs were recomputed from the committed `contracts/schemas.py`
+  functions during recording and reproduce the persisted rows exactly.
+  The deterministic lifecycle then behaved correctly for the
+  fingerprints it was given: the run-2 observation was inserted as new
+  and the run-1 identity auto-resolved. Scope: exactly 1 semantic
+  defect and 2 ledger rows; the other 59 run-1 findings advanced
+  cleanly. The structural identity vulnerability **predates**
+  `c12beee` — `agents/checker/evidence.py`, `contracts/schemas.py` and
+  `sentinel/lifecycle.py` are not among the 13 files that commit
+  changed, and their identity behavior last changed at `cf71364` or
+  earlier; the remediation did not introduce it. The exact cross-run
+  manifestation was not previously observable because the original
+  designated run 2 made zero real model calls, so no second set of
+  model-selected excerpts existed to compare. **No claim is made that a
+  hypothetical pre-remediation real run 2 would certainly have failed;
+  that counterfactual is not determinable.** Note that
+  `artifacts/phase3_dev_gate.json` now carries the re-gate artifact,
+  committed exactly as the gate runner wrote it; the original gate's
+  artifact is preserved at commit
+  `f9b7ea4e0762161a2519158ec817288308128584`, blob
+  `2b34e31e13ab8c6dd4e59fd9110e40159b48bcb4`, and transcribed in
+  `EVAL_RESULTS.md`. One pointer in `PHASE3_GATE_DIAGNOSIS.md` was
+  repaired to that historical reference under a narrow owner
+  authorization; no diagnosis, finding, metric, conclusion or
+  historical meaning in that document changed.
+  `artifacts/phase3_gate_diagnosis.json` carries the same stale path
+  strings and was deliberately left byte-frozen as a machine-written
+  artifact of the original gate — disclosed, not edited. **The one
+  permitted re-gate is CONSUMED. No third gate run is authorized under
+  the current BLUEPRINT or ADR 0005. Phase 3 remains OPEN. Q-77 remains
+  OPEN.** Remediation design and any subsequent validation path require
+  a separate owner-governed decision; the exact governance form is not
+  decided in this record. `SentinelDailyRun` unchanged and still
+  stub-mode. This recording session made no Sentinel checker-agent
+  model call, no Haiku or Sonnet gate or re-gate call, no manual
+  Sentinel judgment call and no additional evaluation execution; no
+  prompt, model configuration, budget, fixture, answer key, clean
+  manifest, scorer, threshold, `max_regates`, lifecycle, fingerprint,
+  evidence-validation, test or production-code change landed here. This
+  commit does not self-cite its own SHA — that SHA and its exact CI run
+  are recorded in the private operations OS's Q-77 annotation.

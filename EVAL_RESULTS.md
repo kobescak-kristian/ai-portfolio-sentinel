@@ -1,13 +1,28 @@
-<!-- Records the designated Phase-3 Haiku dev gate (BLUEPRINT §6 P3;
-dispatch q77-p3-a). REAL DATA: real Haiku model calls under the
-operator's subscription authentication, scored against the frozen
-SYNTHETIC fixture bed (fixtures/, evals/) and its frozen answer key.
-Status: in development toward production-ready. No production claim
-is made in this document. This file transcribes
-artifacts/phase3_dev_gate.json verbatim — no figure here is
-recomputed or restated differently from that file. -->
+<!-- Records BOTH Phase-3 Haiku dev gate results (BLUEPRINT §6 P3):
+the original designated gate (dispatch q77-p3-a) and the one permitted
+re-gate under adr/0005 (recording dispatch
+q77-p3-remediation-regate-record-a). REAL DATA in both: real Haiku
+model calls under the operator's subscription authentication, scored
+against the frozen SYNTHETIC fixture bed (fixtures/, evals/) and its
+frozen answer key. Status: in development toward production-ready. No
+production claim is made in this document.
 
-# EVAL_RESULTS — Phase 3 designated Haiku dev gate
+Artifact provenance — the ORIGINAL DESIGNATED GATE section below
+transcribes artifacts/phase3_dev_gate.json as committed at
+f9b7ea4e0762161a2519158ec817288308128584 (blob
+2b34e31e13ab8c6dd4e59fd9110e40159b48bcb4). The ONE PERMITTED RE-GATE
+section transcribes that same path at its current content, which the
+re-gate run overwrote. Neither section recomputes or restates any
+figure differently from the artifact it transcribes. -->
+
+# EVAL_RESULTS — Phase 3 Haiku dev gate
+
+This file records TWO results, in order: the original designated gate
+(2026-08-05, FAIL) and the one permitted re-gate (2026-08-19, OVERALL
+FAIL). Neither replaces the other; the original record below is
+preserved unchanged.
+
+# ORIGINAL DESIGNATED GATE — 2026-08-05
 
 ## Result: FAIL
 
@@ -98,6 +113,202 @@ allowance at 56 emitted). No root-cause analysis, prompt change, or
 remediation design is undertaken in this record — per the binding gate
 discipline, any subsequent remediation requires a separately approved
 ADR.
+
+## Labels
+
+Synthetic fixture bed (`fixtures/`, `evals/`) — **SYNTHETIC**, frozen,
+unchanged since `4d46c1d4fc3c4f485a83f44fa54afa6b04b1f541`. The model
+calls that scored against it were **REAL** — real Haiku 4.5 calls under
+the operator's own subscription authentication, not simulated.
+
+# ONE PERMITTED RE-GATE — 2026-08-19
+
+## Result: OVERALL FAIL
+
+Phase 3 remains **OPEN**. Every scoring threshold and both single-run
+invariants PASS; the failure is isolated to the two cross-run
+invariants, `idempotent_rerun` and
+`dedup_correct_on_doubled_fixture_run`. This is the honest, recorded
+result of the one permitted re-gate authorized by
+`adr/0005-phase3-gate-remediation.md`. That re-gate is now
+**consumed**. No third gate run is authorized under the current
+BLUEPRINT or under ADR 0005.
+
+## Identification
+
+| Field | Value |
+|---|---|
+| Source commit | `c12beee577b929f58cd6f91ff36d048fe955d73f` (the ADR-0005 remediation implementation commit) |
+| Model | `claude-haiku-4-5-20251001` |
+| Auth mode | `operator-subscription-oauth-assumed` (subscription OAuth; not API-key billing — `cost_eur_micros` below is estimated model-equivalent consumption, never a literal invoice) |
+| Judgment mode | `agent` (explicit) |
+| Run 1 (primary/scoring pass) | `r-80b91c34a10a4925a62d573a473cfb4d` |
+| Run 2 (doubled-fixture pass) | `r-659b534850f945c2bb614f0065eaa6e7` |
+| Persisted evidence directory | `var/phase3_regate/` (fresh directory and database per the ADR re-gate protocol; gitignored, retained locally) |
+
+Evidence integrity — SHA-256 of the persisted files, taken before and
+after the read-only queries that produced this record, identical both
+times:
+
+| File | SHA-256 |
+|---|---|
+| `gate.sqlite3` | `1e013b5d352fcccb724776748d7575a862aeab923214b49e3419c52024121d16` |
+| `gate.jsonl` | `0aaa2c0d0f0983a7eb4e71d8f674319b501d781f4952aff479c245a107da3794` |
+| `cost_ledger.jsonl` | `332cad54b503a42df15b56eaecd6cdc5cba07b20a32dee9a6d1fb3e78f2190da` |
+| `FINDINGS.md` | `4101ee1dfeb10e2085c05420d0251a5b5083ae146db2d59cc843a2bc26080d42` |
+
+## Metrics (against the frozen answer key, 60 positives / 166 clean units)
+
+| Metric | Result | Threshold | Outcome |
+|---|---|---|---|
+| Pooled precision | 60/60 = 1.0000 | ≥ 0.90 | PASS |
+| Pooled recall | 60/60 = 1.0000 | ≥ 0.85 | PASS |
+| Per-class recall — broken-link | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — missing-required-file | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — missing-synthetic-label | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — number-mismatch | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — readme-structure | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — stale-STATE-marker | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Clean false-flag rate | 0/166 flagged | ≤ 16 flagged | PASS |
+
+Emitted findings: 60. True positives: 60. False positives: 0. Misses: 0.
+
+The two classes that failed the original gate — `stale-STATE-marker`
+(2/10) and `missing-synthetic-label` (5/10) — both reach 10/10 here.
+
+**Verification status of these scoring figures.** They are transcribed
+from `artifacts/phase3_dev_gate.json` as the gate runner wrote it, and
+they are corroborated by the shape of the persisted ledger: 60 OPEN
+findings first seen in run 1 plus the one run-1 row later resolved,
+80/80 terminal tasks per run, and 23 COMPLETED `agent_calls` rows per
+run with no FAILED, REJECTED or EXHAUSTED row. They were **not**
+independently rescored against `evals/answer_key.jsonl` in this
+recording session: reading that path is blocked by an operator-level
+deny rule matching the filename, and the recording dispatch forbids any
+re-execution of the gate or the scorer. This limitation applies to the
+scoring figures only. It does **not** apply to the invariant failure
+and its root cause below, which were reconstructed independently from
+the persisted gate evidence and the committed source.
+
+## Invariants
+
+| Invariant | Predicate (`scripts/run_phase3_dev_gate.py:310-317`) | Observed | Result |
+|---|---|---|---|
+| every_task_terminal | `tasks_created == tasks_terminal` in both runs | 80 == 80, 80 == 80 | PASS |
+| zero_lost_tasks | both runs created > 0 tasks | 80, 80 | PASS |
+| idempotent_rerun | run 2 `findings_new == 0` | `findings_new = 1` | **FAIL** |
+| dedup_correct_on_doubled_fixture_run | run 2 `findings_still_open == TP + FP` **and** `findings_resolved == 0` | `59 != 60`; `findings_resolved = 1` | **FAIL** |
+
+Run 2's recorded lifecycle counters: `findings_new = 1`,
+`findings_still_open = 59`, `findings_resolved = 1`. Both invariant
+failures trace to the same single observation; there is no second,
+independent defect behind them.
+
+## Cost
+
+| | Micro-EUR | Cap | Outcome |
+|---|---|---|---|
+| Run 1 charged | 629,131 | 750,000 per run | PASS |
+| Run 2 charged | 636,623 | 750,000 per run | PASS |
+| **Total charged** | **1,265,754** | 1,500,000 per gate session | PASS |
+
+Unlike the original gate, run 2 here genuinely exercised the real
+agent: 23 COMPLETED model calls, 46 across the session, with zero
+FAILED, REJECTED or EXHAUSTED rows in either run. The original gate's
+zero-real-call qualification (see the documented limitation in the
+section above) therefore does **not** apply to these two invariants.
+They failed on real agent behavior, which is exactly what the ADR
+re-gate protocol required run 2 to test.
+
+## Root cause of the invariant failure
+
+Reconstructed from the persisted gate evidence (`var/phase3_regate/`)
+and the committed source at `c12beee…`. Nothing in this subsection is
+inferred from a summary or attributed to any assistant; each step is
+either a row in the ledger or a line of committed code, and the hash
+chain was recomputed from the committed functions.
+
+**One semantic defect was implicated**, on one line of one fixture:
+
+| Field | Value |
+|---|---|
+| Surface | `synthetic-05/EVAL_RESULTS.md` |
+| Check class | `missing-synthetic-label` |
+| Location | `EVAL_RESULTS.md:14` |
+| Reason code | `FIGURE_WITHOUT_ADJACENT_SYNTHETIC_LABEL` |
+| Frozen source line 14 | `- Coverage: 85.5 percent` |
+
+The two runs cited two different, both valid, verbatim spans of that
+one line:
+
+- Run 1 excerpt: `Coverage: 85.5 percent`
+- Run 2 excerpt: `- Coverage: 85.5 percent`
+
+Host-side evidence validation accepts both. `agents/checker/evidence.py`
+requires only that the excerpt appear verbatim within the cited source
+line (`if item.excerpt not in source_line: raise EvidenceRejected`), so
+a span and the full line are equally admissible.
+
+**The excerpt then participates in identity.**
+`agents/checker/evidence.py` builds
+`normalized_content = f"{reason_code}|{primary.excerpt}"`;
+`sentinel/lifecycle.py` passes that through
+`compute_content_hash(location, normalized_content)` and then
+`compute_fingerprint(surface, check_class, content_hash)`. Surface,
+check class, location and reason code were identical across the two
+runs. Only the model-selected excerpt differed, and that difference
+alone produced two distinct fingerprints:
+
+| Excerpt | content_hash | fingerprint | Ledger row |
+|---|---|---|---|
+| `Coverage: 85.5 percent` | `bc6de62dcb94bead7cb9f953853afac4efe901c8198dfdd31d9d09acc298119e` | `43869a664aa18db41106fb256eecf35b096b5d50dc30c38c7be1e19e8d662b71` | id 48, now RESOLVED |
+| `- Coverage: 85.5 percent` | `e4a1ff1d44d223baf43fe9468d47469c669c4ee6f4b6c7e6b524eca5b772d5d4` | `839cd93dbf24bc7898ec220b0c39cea81f020c98df77eebaa37c29e4f3e541d8` | id 61, OPEN |
+
+Both hash pairs were recomputed from the committed
+`contracts/schemas.py` functions during this recording session and
+reproduce the persisted ledger rows exactly.
+
+**The deterministic lifecycle then behaved correctly for the
+fingerprints it was given.** Presented with an unseen fingerprint it
+inserted a new finding (`findings_new = 1`); the run-1 identity was not
+observed again in run 2, so it was auto-resolved
+(`findings_resolved = 1`, `resolved_run_id`
+`r-659b534850f945c2bb614f0065eaa6e7`). This is not a lifecycle or dedup
+coding error. The identity handed to dedup was unstable across runs.
+
+**Scope: exactly 1 semantic defect, 2 ledger rows.** The other 59 run-1
+findings advanced cleanly as still-open, with unchanged fingerprints.
+
+**The vulnerability predates the remediation commit.**
+`agents/checker/evidence.py`, `contracts/schemas.py` and
+`sentinel/lifecycle.py` are not among the 13 files changed by
+`c12beee…`; their identity behavior last changed at `cf71364` or
+earlier. The remediation did not introduce it.
+
+**Why it was not observable before.** The original designated gate's
+run 2 made zero real model calls (budget exhaustion, recorded above),
+so no second set of model-selected excerpts existed to compare against
+the first. Nothing here supports a claim that a hypothetical
+pre-remediation real run 2 would certainly have failed the same way:
+**that counterfactual is not determinable** from any evidence on record.
+
+## Disposition
+
+- Phase 3 remains **OPEN**.
+- Q-77 remains **OPEN**.
+- The one permitted re-gate is **consumed**.
+- **No third gate run is authorized** under the current BLUEPRINT or
+  ADR 0005.
+- Remediation design and any subsequent validation path require a
+  separate owner-governed decision; the exact governance form is not
+  decided in this recording session.
+- `SentinelDailyRun` is unchanged and remains stub-mode.
+- No fixture, label, answer-key, scoring, threshold, model, prompt,
+  lifecycle, fingerprint or evidence-validation change was made after
+  seeing this result. No Sentinel checker-agent model call, no
+  Haiku/Sonnet gate or re-gate call, no manual Sentinel judgment call
+  and no additional evaluation execution occurred in this recording
+  session.
 
 ## Labels
 
