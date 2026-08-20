@@ -12,8 +12,8 @@ pre-registered, BLUEPRINT §0).
 **Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
 2026-07-15, canonical record in the private operations OS (same
 date). Public-while-dormant is intended; do not flag.
-**Phase status:** Phase 3 remains **OPEN** after **two** recorded
-results, neither of which replaces the other. (1) The designated Haiku
+**Phase status:** Phase 3 remains **OPEN** after **three** recorded
+results, none of which replaces another. (1) The designated Haiku
 dev gate ran 2026-08-05 at source commit
 `cf713649bc1aaf31f1494112921d7741493533b0` and recorded an honest
 **FAIL** (BLUEPRINT §6 P3: "Dev gate leg green on fixtures" was not
@@ -32,19 +32,42 @@ pooled recall 60/60, all six classes 10/10, clean false flags 0/166 —
 and `every_task_terminal` and `zero_lost_tasks` PASSED; the failure is
 isolated to the two cross-run invariants, `idempotent_rerun` and
 `dedup_correct_on_doubled_fixture_run`, both traced to one
-cross-run finding-identity defect. Full figures, invariant predicates,
-cost evidence and the root-cause record for **both** results:
-`EVAL_RESULTS.md`. Note that `artifacts/phase3_dev_gate.json` now
-carries the re-gate artifact; the original gate's artifact is preserved
+cross-run finding-identity defect. (3) The one prospective validation
+cycle under `adr/0007-prospective-validation-protocol.md` ran
+2026-08-20 at source commit
+`8c235af1ba254e9a238a797be558129bc2a82f99` (run IDs
+`r-e8e27a1133754705ac76fd0f0842c101`,
+`r-a2ed87b770014722a5f7bd583b9637db`) and recorded, after independent
+ADR-0007 Step-F verification, a **VALID COMPLETED FAIL** — terminal
+for the current Sentinel-v1 Phase-3 validation lineage. Every scoring
+threshold PASSED there (pooled precision 58/58 = 1.0000, pooled
+recall 58/60 = 0.9667, all six classes at or above the per-class
+threshold, clean false flags 0/166) and the ADR-0006 identity defect
+did NOT recur (60 persisted finding rows, 60 distinct fingerprints;
+`dedup_correct_on_doubled_fixture_run` PASS); the FAIL is an
+execution-validity failure — one run-1 Haiku call failed at the SDK
+per-call budget ceiling, dead-lettering its scope fail-closed, so run
+1 FAILED and `idempotent_rerun` failed on the resulting execution gap
+(run 2 `findings_new = 2`, both in that exact scope), not on identity
+instability. Full figures, invariant predicates, cost evidence and
+the root-cause record for **all three** results: `EVAL_RESULTS.md`.
+Note that `artifacts/phase3_dev_gate.json` continues to carry the
+2026-08-19 re-gate artifact — the prospective cycle wrote its
+artifact to a fresh external evidence parent and the committed file
+is untouched; the prospective raw evidence remains external/local and
+is identified in `EVAL_RESULTS.md` by SHA-256. The original gate's
+artifact is preserved
 at commit `f9b7ea4e0762161a2519158ec817288308128584`, blob
 `2b34e31e13ab8c6dd4e59fd9110e40159b48bcb4`. No fixture, label,
 answer-key, scoring, threshold, model, prompt, lifecycle, fingerprint
-or evidence-validation change was made after seeing either result. The
-one permitted re-gate is now **consumed** and no third gate run is
-authorized under ADR 0005; exactly one prospective validation cycle is
+or evidence-validation change was made after seeing any result. The
+one permitted re-gate is **consumed** and no third gate run is
+authorized under ADR 0005; the one prospective validation cycle
 separately authorized by `adr/0007-prospective-validation-protocol.md`
-via BLUEPRINT §11(i) (ADOPTED 2026-08-20 — governance only, not
-implemented, not executed; both historical FAILs stand unrelabeled). The identity
+via BLUEPRINT §11(i) (ADOPTED 2026-08-20) is now also **consumed**
+(executed 2026-08-20; VALID COMPLETED FAIL — terminal for this
+lineage; all three historical FAILs stand unrelabeled; no further
+validation cycle is authorized by ADR-0007). The identity
 remediation design decision has since been taken as a separate
 owner-governed ADR: `adr/0006-judgment-finding-identity.md`, ADOPTED
 2026-08-20, adopting Option C — persistent judgment finding identity is
@@ -59,10 +82,11 @@ checker-agent model call and ran no gate, re-gate, eval or scorer**;
 its only evidence is model-free regression evidence. The one permitted
 re-gate remains **consumed** and **Phase 3 remains OPEN** — passing
 model-free tests is not Phase-3 closure. The subsequent validation
-path has now been decided: `adr/0007-prospective-validation-protocol.md`
-(ADOPTED 2026-08-20) authorizes exactly one prospective validation
-cycle via BLUEPRINT §11(i) — governance only; nothing is implemented
-or executed under it yet.
+path decided by `adr/0007-prospective-validation-protocol.md`
+(ADOPTED 2026-08-20) has now run to completion: its one prospective
+cycle executed 2026-08-20 and reached **VALID COMPLETED FAIL**
+(terminal for this lineage; see result (3) above and
+`EVAL_RESULTS.md`).
 Implementation itself (the caged checker
 agent, run-scoped EUR budget, main-ledger audit, `--judgment-mode
 stub|agent` activation, the cage-suite tests, `THREAT_MODEL.md`,
@@ -78,12 +102,10 @@ review evidence committed; see the 2026-08-04 change-log entry and
 evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
-success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: see the
-Plan field below — the prospective validation path for the
-now-implemented ADR-0006 correction is governed by `adr/0007`
-(ADOPTED 2026-08-20). The re-gate is spent; the one authorized
-prospective cycle is a new, separately governed cycle under that ADR's
-protocol, not another re-gate.
+success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: none
+in this repo under ADR-0007 — its A–F sequence is complete, its one
+cycle is consumed, and any subsequent validation path requires a new
+owner-governed decision; see the Plan field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -109,17 +131,26 @@ remediation ADR ADOPTED 2026-08-20
 correction, its model-free T1–T8 regression suite and the documentation
 truth repair those changes required. Prospective-validation governance
 ADOPTED 2026-08-20 (`adr/0007-prospective-validation-protocol.md`,
-BLUEPRINT §11(i)): exactly one prospective validation cycle is
-authorized under that ADR's protocol. Stage 1 (step A) landed
-2026-08-20 and its exact-SHA CI ran green (step A2); Stage 2 (step B)
-is IMPLEMENTED 2026-08-20 in this commit — the runner now
+BLUEPRINT §11(i)): exactly one prospective validation cycle was
+authorized under that ADR's protocol, and its full A–F sequence is
+now complete. Stage 1 (step A) landed 2026-08-20 with exact-SHA CI
+green (step A2); Stage 2 (step B) landed 2026-08-20 — the runner
 self-validates the §2 execution-validity predicates and the §5
-preflight, with model-free regression evidence only (see the
-2026-08-20 Stage-2 change-log entry). Nothing has executed under the
-ADR: the prospective cycle has NOT run. Next action: ADR-0007
-sequence step C — exact-SHA CI and freeze green on this Stage-2
-commit — then step D (external pin of the Stage-2 SHA); nothing
-executes before that pin and the §5 preflight (steps E–F follow).
+preflight — with exact-SHA CI and freeze green on that commit (step
+C); the external pin (step D) was recorded in the private operations
+OS's Q-77 annotation; the one cycle executed 2026-08-20 under the §5
+preflight (step E); and independent verification (step F) recorded
+the disposition: **VALID COMPLETED FAIL**, terminal for the current
+Sentinel-v1 Phase-3 validation lineage — the cycle is consumed, no
+further validation cycle is authorized by ADR-0007, Phase 4 is not
+permitted under this lineage, and Phase 3 remains OPEN (full record:
+`EVAL_RESULTS.md`, prospective section, and the 2026-08-20 Step-F
+recording change-log entry below). The committed fixed-path
+`artifacts/phase3_dev_gate.json` continues to carry the 2026-08-19
+re-gate artifact; the prospective raw evidence remains
+external/local, identified in `EVAL_RESULTS.md` by SHA-256. Next
+action: any subsequent validation path requires a new owner-governed
+decision; none is designed or authorized here.
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -933,3 +964,102 @@ merges every change."
   this Stage-2 SHA in the private operations OS's Q-77 annotation;
   only then may the single prospective cycle execute (step E) under
   the §5 preflight, followed by independent verification (step F).
+- 2026-08-20 — ADR-0007 PROSPECTIVE VALIDATION CYCLE: honest **VALID
+  COMPLETED FAIL** (Step-F recording-only entry — the cycle itself
+  ran 2026-08-20, sequence step E, after step C exact-SHA CI/freeze
+  green on the Stage-2 commit and the step-D external pin recorded in
+  the private operations OS's Q-77 annotation). Source commit
+  `8c235af1ba254e9a238a797be558129bc2a82f99` (the ADR-0007 Stage-2
+  implementation commit; `required_source_sha`, `attested_source_sha`
+  and `source_commit` in the gate artifact are all equal to it).
+  Model `claude-haiku-4-5-20251001`, auth mode
+  `operator-subscription-oauth-assumed`, judgment mode `agent`. Run 1
+  (primary/scoring) `r-e8e27a1133754705ac76fd0f0842c101`, run status
+  FAILED; run 2 (doubled-fixture)
+  `r-a2ed87b770014722a5f7bd583b9637db`, run status COMPLETED.
+  Disposition per ADR-0007 §3, independently verified in Step F:
+  `C = 46 > 0` (independently reconstructed as 23
+  positive-reservation `agent_calls` rows per run) with a complete
+  parseable gate result failing binding conditions → **VALID
+  COMPLETED FAIL** — the one authorized prospective cycle is
+  **consumed** and the result is **terminal for the current
+  Sentinel-v1 Phase-3 validation lineage**: Phase 3 stays OPEN, Phase
+  4 is not permitted under this lineage, no further validation cycle
+  is authorized by ADR-0007, Q-77 stays OPEN. Scoring: every frozen
+  threshold PASSED — pooled precision 58/58 = 1.0000, pooled recall
+  58/60 = 0.9667, per-class recall 10/10 on five classes and 8/10 =
+  0.8000 on `missing-synthetic-label` (all ≥ 0.80), clean false flags
+  0/166; emitted 58, TP 58, FP 0, misses 2; independent Step-F
+  reconstruction exactly matched the artifact on every figure, with
+  zero artifact/reconstruction disagreements. The two misses are
+  exactly `inj-004` (`synthetic-01/EVAL_RESULTS.md:12`) and `inj-005`
+  (`synthetic-01/EVAL_RESULTS.md:13`), both inside the run-1
+  DEAD_LETTER scope — there is no additional independently observed
+  model-quality miss. Execution validity (ADR-0007 §2) FAILED on six
+  reconstructed predicates — `run1_completed`, `runs_exit_code_zero`,
+  `zero_dead_letter_tasks`, `all_agent_calls_completed`,
+  `zero_agent_calls_failed`, `run2_call_count_equals_run1` — and
+  PASSED the rest including `source_sha_attested`; run 1 FAILED with
+  80 tasks terminal (79 DONE, 1 DEAD_LETTER; 22 COMPLETED + 1 FAILED
+  agent calls), run 2 COMPLETED with 80 DONE and 23 COMPLETED calls,
+  zero FAILED/REJECTED/EXHAUSTED/RESERVED rows. Root cause of the
+  FAIL: one run-1 Haiku call (`agent_calls` id 1, scope
+  `synthetic-01/EVAL_RESULTS.md`, class `missing-synthetic-label`)
+  failed at the SDK per-call budget ceiling (persisted error,
+  verbatim: "Exception: Claude Code returned an error result: Reached
+  maximum budget ($0.1226)"; `reserved_eur_micros = 150000`,
+  `charged_eur_micros = 150000` — conservatively charged its full
+  reservation because final SDK usage was not recoverable); the
+  harness handled it fail-closed as designed (FAILED agent call →
+  Inconclusive → DEAD_LETTER task → run 1 FAILED), and
+  `idempotent_rerun` FAILED on the frozen predicate (run 2
+  `findings_new = 2`, both findings in that exact dead-lettered
+  scope, which run 2 completed for 26,583 micro-EUR) — an execution
+  gap, not identity instability. The ADR-0006 identity defect did NOT
+  recur: all 58 run-1 findings that existed were re-observed in run 2
+  with stable identity, the 60 persisted finding rows carry 60
+  distinct fingerprints, zero spurious resolutions, zero identity
+  fragmentation, and `dedup_correct_on_doubled_fixture_run` PASSED.
+  The narrower evidenced conclusion is recorded, never "there was no
+  system issue": the frozen scoring/identity/dedup behavior was
+  correct on the completed work; the gate failed because one
+  stochastic model call hit its configured SDK per-call budget
+  ceiling; the current execution policy does not tolerate even one
+  such transient incomplete judgment, so the binding gate correctly
+  failed; and the evidence does not establish why that individual
+  call consumed unusually high model budget. Cost: run 1 charged
+  648,422, run 2 charged 493,293, session total 1,141,715 micro-EUR —
+  all frozen caps PASS (750,000 per run; 1,500,000 per session).
+  Evidence: persisted locally outside the repository under
+  evidence-parent basename `prospective-20260820T182647Z-033e8a9b`
+  (fresh per the §5 preflight; retained locally); Step-F before/after
+  SHA-256 byte-identical for all six files, recorded in
+  `EVAL_RESULTS.md` (raw prospective gate artifact SHA-256
+  `9e401356e7682bd8ab07e92f53b7ef034d2dd1edefed35da89d1f21fa95e24bb`).
+  The raw artifact is NOT committed to this public repository: its
+  byte-verbatim machine output contains absolute local paths
+  prohibited by this repo's public-live writing rule, and editing
+  evidence would break verbatimness — it stays external,
+  hash-identified. The committed fixed-path
+  `artifacts/phase3_dev_gate.json` is untouched and continues to
+  carry the 2026-08-19 re-gate artifact; no displaced-artifact
+  pointer is created because nothing was displaced. Recording surface
+  of this commit: `EVAL_RESULTS.md` (third result section),
+  `STATE.md`, and narrow truth repairs in `MODEL_CARD.md` (§3 end,
+  §4a evidence status, §6), `THREAT_MODEL.md` (§4 evidence status)
+  and `SPEC.md` §3 — statements that the prospective cycle had not
+  executed. Both prior `EVAL_RESULTS.md` sections and both historical
+  FAILs are preserved unchanged; no remediation, retry design, budget
+  change, ADR-0008, or further validation cycle is designed or
+  authorized here; `evals/eval_config.yaml` `max_regates` remains 1;
+  fixtures, answer key, scorer, thresholds, prompts, identity,
+  lifecycle and fingerprint semantics are untouched. **This recording
+  session made no Sentinel checker-agent model call, no Haiku or
+  Sonnet gate call, no manual Sentinel judgment call and no
+  additional evaluation execution.** `SentinelDailyRun` unchanged and
+  still stub-mode. No Phase 4 work. **Phase 3 remains OPEN. Q-77
+  remains OPEN.** This commit does not self-cite its own SHA — that
+  SHA and its exact CI run are recorded in the private operations
+  OS's Q-77 annotation. Next action: none in this repo under ADR-0007
+  — any subsequent validation path requires a new owner-governed
+  decision.

@@ -136,11 +136,19 @@ wrong line; a rejected proposal still yields no finding at all. That is
 proven directly by the T4 tests in `tests/test_bounds.py`, which
 include the specific risk that a secondary excerpt no longer affecting
 identity might be waved through. **Evidence status:** the correction's
-only evidence is its model-free T1–T8 regression suite. The ADR-0005
-re-gate remains consumed; exactly one prospective validation cycle is
-now authorized by `adr/0007` / BLUEPRINT §11(i) (adopted 2026-08-20),
-not yet implemented or executed, and no real-model run of any kind has
-been performed for this correction. **Phase 3 remains OPEN**.
+model-free T1–T8 regression suite landed with it. The ADR-0005
+re-gate remains consumed. The one prospective validation cycle
+authorized by `adr/0007` / BLUEPRINT §11(i) (adopted 2026-08-20)
+executed 2026-08-20 and is now also consumed: on the completed work
+the identity defect did NOT recur (60 persisted finding rows, 60
+distinct fingerprints; zero spurious resolutions;
+`dedup_correct_on_doubled_fixture_run` PASS), but the cycle's overall
+disposition is **VALID COMPLETED FAIL** on execution validity — one
+run-1 call failed at the SDK per-call budget ceiling and its scope
+dead-lettered fail-closed, failing `idempotent_rerun` through that
+execution gap, not through identity instability (`EVAL_RESULTS.md`,
+prospective section). That result is terminal for the current
+Sentinel-v1 Phase-3 validation lineage. **Phase 3 remains OPEN**.
 
 **Residual risk**: the model can still *miss* a real defect (false
 negative) or select a technically-verbatim-but-misleading excerpt

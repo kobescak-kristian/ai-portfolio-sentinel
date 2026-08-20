@@ -78,9 +78,12 @@ per-class recall 10/10 on all six classes, clean false flags 0/166),
 and the failure is isolated to the two cross-run invariants,
 `idempotent_rerun` and `dedup_correct_on_doubled_fixture_run` — see
 §4a and `EVAL_RESULTS.md`. The re-gate is **consumed**; no third gate
-run is authorized under `adr/0005`. Exactly one prospective validation
-cycle is separately authorized by `adr/0007` / BLUEPRINT §11(i)
-(adopted 2026-08-20, not yet implemented or executed). Phase 3
+run is authorized under `adr/0005`. The one prospective validation
+cycle separately authorized by `adr/0007` / BLUEPRINT §11(i) (adopted
+2026-08-20) executed 2026-08-20 under these same bounds and reached
+**VALID COMPLETED FAIL** — consumed, terminal for the current
+Sentinel-v1 Phase-3 validation lineage; see `EVAL_RESULTS.md`,
+prospective section. Phase 3
 remains OPEN. This document makes no claim that the bounds above
 produce a passing gate.
 
@@ -134,12 +137,21 @@ scoring; the frozen scorer, answer key and thresholds are unchanged
 **Evidence status — read this before quoting anything above.** The
 correction landed together with its model-free T1–T8 regression suite
 (`tests/test_bounds.py`, `tests/test_lifecycle.py`,
-`tests/test_checks_deterministic.py`). That suite is the **only**
-evidence this correction currently has. The one permitted ADR-0005
-re-gate remains consumed. Exactly one prospective validation cycle is
-now authorized by `adr/0007` / BLUEPRINT §11(i) (adopted 2026-08-20)
-— not yet implemented or executed, and no real-model run of any kind
-has been performed for this correction. Nothing here claims the
+`tests/test_checks_deterministic.py`). The one permitted ADR-0005
+re-gate remains consumed. The one prospective validation cycle
+authorized by `adr/0007` / BLUEPRINT §11(i) (adopted 2026-08-20)
+executed 2026-08-20 and is now also consumed: on the work that
+completed, the correction behaved as designed — the identity defect
+did NOT recur, all 58 re-observed run-1 findings kept stable
+identity, the 60 persisted finding rows carried 60 distinct
+fingerprints, and `dedup_correct_on_doubled_fixture_run` PASSED —
+but the cycle's overall disposition is **VALID COMPLETED FAIL** for
+an execution-validity reason: one run-1 model call failed at the SDK
+per-call budget ceiling and its scope dead-lettered fail-closed, so
+`idempotent_rerun` failed on the resulting execution gap, not on
+identity instability (`EVAL_RESULTS.md`, prospective section). That
+result is terminal for the current Sentinel-v1 Phase-3 validation
+lineage. Nothing here claims the
 correction produces a passing gate, and **Phase 3 remains OPEN**.
 
 ## 5. Cost and accounting semantics
@@ -164,10 +176,13 @@ for two of them), 166 clean units, scored per the frozen
 `evals/eval_config.yaml`. **Actual measured figures for the two
 judgment classes this model handles — precision, recall, per-class
 recall, clean false-flag rate, and each run's real cost/token evidence
-— are recorded in `EVAL_RESULTS.md` for both the designated
-2026-08-05 dev gate (honest FAIL) and the one permitted 2026-08-19
+— are recorded in `EVAL_RESULTS.md` for the designated
+2026-08-05 dev gate (honest FAIL), the one permitted 2026-08-19
 re-gate (honest OVERALL FAIL: scoring thresholds all PASS, two
-cross-run invariants FAIL). This document transcribes no figure it does
+cross-run invariants FAIL) and the one 2026-08-20 ADR-0007
+prospective validation cycle (honest VALID COMPLETED FAIL: all
+scoring thresholds PASS; execution validity and `idempotent_rerun`
+FAIL). This document transcribes no figure it does
 not take from that record.**
 
 ## 7. Known limitations and failure modes

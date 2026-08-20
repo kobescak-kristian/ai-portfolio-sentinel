@@ -1,26 +1,36 @@
-<!-- Records BOTH Phase-3 Haiku dev gate results (BLUEPRINT §6 P3):
-the original designated gate (dispatch q77-p3-a) and the one permitted
+<!-- Records the Phase-3 Haiku validation results (BLUEPRINT §6 P3):
+the original designated gate (dispatch q77-p3-a), the one permitted
 re-gate under adr/0005 (recording dispatch
-q77-p3-remediation-regate-record-a). REAL DATA in both: real Haiku
-model calls under the operator's subscription authentication, scored
-against the frozen SYNTHETIC fixture bed (fixtures/, evals/) and its
-frozen answer key. Status: in development toward production-ready. No
-production claim is made in this document.
+q77-p3-remediation-regate-record-a), and the one prospective
+validation cycle under adr/0007 (Step-F recording). REAL DATA in all
+three: real Haiku model calls under the operator's subscription
+authentication, scored against the frozen SYNTHETIC fixture bed
+(fixtures/, evals/) and its frozen answer key. Status: in development
+toward production-ready. No production claim is made in this document.
 
 Artifact provenance — the ORIGINAL DESIGNATED GATE section below
 transcribes artifacts/phase3_dev_gate.json as committed at
 f9b7ea4e0762161a2519158ec817288308128584 (blob
 2b34e31e13ab8c6dd4e59fd9110e40159b48bcb4). The ONE PERMITTED RE-GATE
 section transcribes that same path at its current content, which the
-re-gate run overwrote. Neither section recomputes or restates any
+re-gate run overwrote and which remains the committed artifact — the
+prospective cycle did NOT overwrite it. The PROSPECTIVE VALIDATION
+CYCLE section transcribes the prospective runner's artifact persisted
+locally OUTSIDE the repository (see that section's Identification for
+the evidence-parent basename and the artifact's SHA-256); that raw
+artifact is not committed here because its byte-verbatim machine
+output contains absolute local paths prohibited by this repo's
+public-live writing rule, and editing evidence to strip them would
+break evidence verbatimness. No section recomputes or restates any
 figure differently from the artifact it transcribes. -->
 
 # EVAL_RESULTS — Phase 3 Haiku dev gate
 
-This file records TWO results, in order: the original designated gate
-(2026-08-05, FAIL) and the one permitted re-gate (2026-08-19, OVERALL
-FAIL). Neither replaces the other; the original record below is
-preserved unchanged.
+This file records THREE results, in order: the original designated
+gate (2026-08-05, FAIL), the one permitted re-gate (2026-08-19,
+OVERALL FAIL), and the one prospective validation cycle under
+`adr/0007` (2026-08-20, VALID COMPLETED FAIL). None replaces another;
+each earlier record below is preserved unchanged.
 
 # ORIGINAL DESIGNATED GATE — 2026-08-05
 
@@ -308,6 +318,205 @@ pre-remediation real run 2 would certainly have failed the same way:
   seeing this result. No Sentinel checker-agent model call, no
   Haiku/Sonnet gate or re-gate call, no manual Sentinel judgment call
   and no additional evaluation execution occurred in this recording
+  session.
+
+## Labels
+
+Synthetic fixture bed (`fixtures/`, `evals/`) — **SYNTHETIC**, frozen,
+unchanged since `4d46c1d4fc3c4f485a83f44fa54afa6b04b1f541`. The model
+calls that scored against it were **REAL** — real Haiku 4.5 calls under
+the operator's own subscription authentication, not simulated.
+
+# PROSPECTIVE VALIDATION CYCLE (ADR-0007) — 2026-08-20
+
+## Result: VALID COMPLETED FAIL
+
+Phase 3 remains **OPEN**. This is the §3 disposition of
+`adr/0007-prospective-validation-protocol.md`, independently verified
+in Step F: `C = 46 > 0` — independently reconstructed as 23
+positive-reservation `agent_calls` rows in run 1 plus 23 in run 2 —
+and a complete parseable gate result exists that fails binding
+conditions. The one authorized prospective cycle is **consumed**, and
+the result is **terminal for the current Sentinel-v1 Phase-3
+validation lineage**: Phase 3 stays OPEN, Phase 4 is not permitted
+under this lineage, no further validation cycle is authorized by
+ADR-0007, and Q-77 remains OPEN. This is a real VALID COMPLETED FAIL
+— recorded, not relabeled, not waived.
+
+## Identification
+
+| Field | Value |
+|---|---|
+| Source commit | `8c235af1ba254e9a238a797be558129bc2a82f99` (the ADR-0007 Stage-2 implementation commit) |
+| Source pin | `required_source_sha`, `attested_source_sha` and `source_commit` in the gate artifact are all equal to the source commit above; the pre-execution external pin (sequence step D) is recorded in the private operations OS's Q-77 annotation |
+| Model | `claude-haiku-4-5-20251001` |
+| Auth mode | `operator-subscription-oauth-assumed` (subscription OAuth; not API-key billing — `cost_eur_micros` below is estimated model-equivalent consumption, never a literal invoice) |
+| Judgment mode | `agent` (explicit) |
+| Run 1 (primary/scoring pass) | `r-e8e27a1133754705ac76fd0f0842c101` (run status FAILED) |
+| Run 2 (doubled-fixture pass) | `r-a2ed87b770014722a5f7bd583b9637db` (run status COMPLETED) |
+| Persisted evidence parent | fresh local directory outside the repository, basename `prospective-20260820T182647Z-033e8a9b` (fresh per the §5 preflight; retained locally) |
+
+Unlike the two prior results, the raw gate artifact of this cycle is
+**not** committed to this repository, and the committed fixed-path
+`artifacts/phase3_dev_gate.json` is untouched — it continues to carry
+the 2026-08-19 re-gate artifact. The prospective runner wrote its
+artifact into the fresh external evidence parent above; that
+byte-verbatim machine output contains absolute local paths, which
+this repo's public-live writing rule prohibits, and editing evidence
+to strip them would break evidence verbatimness. The artifact
+therefore stays external and is identified here by its SHA-256:
+`9e401356e7682bd8ab07e92f53b7ef034d2dd1edefed35da89d1f21fa95e24bb`.
+
+Evidence integrity — SHA-256 of the persisted files in the evidence
+parent, taken before and after the read-only Step-F verification
+queries that produced this record, byte-identical both times:
+
+| File | SHA-256 |
+|---|---|
+| `artifacts/phase3_dev_gate.json` | `9e401356e7682bd8ab07e92f53b7ef034d2dd1edefed35da89d1f21fa95e24bb` |
+| `console.log` | `7c0c846089a44ab7bfeb33cc8fadf9d3e3bc51e5862b75418d9e005418e8f6e3` |
+| `gate/FINDINGS.md` | `6b430470cf3bee6c531e7b332a2c08d065af058a53fd10ebed849068dbe689bd` |
+| `gate/cost_ledger.jsonl` | `d414bff2e46245904b9df7f6263af3757af21f7bca6cae631e3b1532c8192d04` |
+| `gate/gate.jsonl` | `61dbd61dc0977c46171794e097eeb059fe7e046a596f8ff0a8d9ea709f3462f6` |
+| `gate/gate.sqlite3` | `4e4dc913166ea229a6e63ae5c2978af0e0dacf689d11a84469578293c9c651d3` |
+
+## Metrics (against the frozen answer key, 60 positives / 166 clean units)
+
+| Metric | Result | Threshold | Outcome |
+|---|---|---|---|
+| Pooled precision | 58/58 = 1.0000 | ≥ 0.90 | PASS |
+| Pooled recall | 58/60 = 0.9667 | ≥ 0.85 | PASS |
+| Per-class recall — broken-link | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — missing-required-file | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — missing-synthetic-label | 8/10 = 0.8000 | ≥ 0.80 | PASS |
+| Per-class recall — number-mismatch | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — readme-structure | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — stale-STATE-marker | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Clean false-flag rate | 0/166 flagged | ≤ 16 flagged | PASS |
+
+Emitted findings: 58. True positives: 58. False positives: 0. Misses: 2.
+
+**Verification status of these scoring figures.** Independent Step-F
+reconstruction exactly matched the artifact on every figure above;
+artifact/reconstruction disagreements: zero. The two misses are
+exactly `inj-004` (`synthetic-01/EVAL_RESULTS.md:12`) and `inj-005`
+(`synthetic-01/EVAL_RESULTS.md:13`), both inside the run-1
+dead-lettered scope described below. There is no additional
+independently observed model-quality miss.
+
+## Execution validity (ADR-0007 §2 — first result recorded under it)
+
+The gate result is complete and parseable, and every scoring
+threshold, single-run invariant and cost cap PASSES — but the §2
+execution-validity requirement FAILS, independently reconstructed
+with zero disagreement against the artifact:
+
+| Predicate | Observed | Result |
+|---|---|---|
+| run1_completed | run 1 status FAILED | **FAIL** |
+| run2_completed | run 2 status COMPLETED | PASS |
+| runs_exit_code_zero | run 1 did not exit 0 | **FAIL** |
+| zero_failed_tasks | 0 FAILED tasks in both runs | PASS |
+| zero_dead_letter_tasks | 1 DEAD_LETTER task in run 1 | **FAIL** |
+| all_agent_calls_completed | 22 of 23 run-1 calls COMPLETED | **FAIL** |
+| zero_agent_calls_failed | 1 FAILED call in run 1 | **FAIL** |
+| zero_agent_calls_rejected | 0 REJECTED | PASS |
+| zero_agent_calls_exhausted | 0 EXHAUSTED | PASS |
+| zero_agent_calls_reserved | 0 left RESERVED | PASS |
+| run2_has_completed_calls | 23 COMPLETED | PASS |
+| run2_call_count_equals_run1 | 23 != 22 | **FAIL** |
+| source_sha_attested | preflight-verified SHA == required SHA | PASS |
+
+Run tallies: run 1 FAILED — 80 tasks all terminal (79 DONE, 1
+DEAD_LETTER), agent calls 22 COMPLETED + 1 FAILED; run 2 COMPLETED —
+80 tasks DONE, 23 COMPLETED agent calls, zero FAILED, REJECTED,
+EXHAUSTED or RESERVED rows and zero dead-letter tasks.
+
+## Invariants
+
+| Invariant | Predicate (frozen, unchanged) | Observed | Result |
+|---|---|---|---|
+| every_task_terminal | `tasks_created == tasks_terminal` in both runs | 80 == 80, 80 == 80 | PASS |
+| zero_lost_tasks | both runs created > 0 tasks | 80, 80 | PASS |
+| idempotent_rerun | run 2 `findings_new == 0` | `findings_new = 2` | **FAIL** |
+| dedup_correct_on_doubled_fixture_run | run 2 `findings_still_open == TP + FP` and `findings_resolved == 0` | satisfied — zero spurious resolutions, zero fragmentation | PASS |
+
+Run 2's two new findings are both in the exact run-1 DEAD_LETTER
+scope — `synthetic-01/EVAL_RESULTS.md`, check class
+`missing-synthetic-label`, locations `EVAL_RESULTS.md:12` and
+`EVAL_RESULTS.md:13`. Run 1 had no findings for that scope because
+its judgment task did not complete; run 2 completed the same scope
+and found both expected defects. `idempotent_rerun` therefore failed
+because of the run-1 execution gap, NOT because of another identity
+or fingerprint instability.
+
+## Cost
+
+| | Micro-EUR | Cap | Outcome |
+|---|---|---|---|
+| Run 1 charged | 648,422 | 750,000 per run | PASS |
+| Run 2 charged | 493,293 | 750,000 per run | PASS |
+| **Total charged** | **1,141,715** | 1,500,000 per gate session | PASS |
+
+All frozen cost caps PASS. The failed run-1 call is conservatively
+charged its full 150,000 micro-EUR reservation because its final SDK
+usage was not recoverable. The identical scope later completed in
+run 2 for 26,583 micro-EUR. The persisted evidence does NOT establish
+why the failed call became unusually expensive; no cause is asserted
+here beyond the recorded SDK budget-ceiling event.
+
+## Why the gate failed (fail-closed, as designed)
+
+One run-1 Haiku call — `agent_calls` id 1, scope
+`synthetic-01/EVAL_RESULTS.md`, check class `missing-synthetic-label`
+— failed at the SDK per-call budget ceiling. Persisted error,
+verbatim:
+
+    Exception: Claude Code returned an error result: Reached maximum budget ($0.1226)
+
+That call had `reserved_eur_micros = 150000` and
+`charged_eur_micros = 150000`. The harness handled the event
+fail-closed exactly as designed: FAILED agent call → Inconclusive →
+DEAD_LETTER task → run 1 FAILED. The current execution policy does
+not tolerate even one such transient incomplete judgment, so the
+binding gate correctly failed.
+
+## Identity result (ADR-0006)
+
+The ADR-0006 identity defect did NOT recur. All 58 run-1 findings
+that existed were re-observed in run 2 with stable identity. The 60
+persisted finding rows carry 60 distinct fingerprints — zero spurious
+resolutions, zero identity fragmentation — and
+`dedup_correct_on_doubled_fixture_run` PASSED.
+
+**What this record does and does not conclude.** It does NOT record
+"there was no system issue." The narrower evidenced conclusion is:
+the previous cross-run identity defect did not recur; the frozen
+scoring, identity and dedup behavior was correct on the completed
+work; the prospective gate failed because one stochastic model call
+hit its configured SDK per-call budget ceiling; Sentinel handled that
+event fail-closed as designed; the current execution policy does not
+tolerate even one such transient incomplete judgment, so the binding
+gate correctly failed; and the evidence does not establish why that
+individual call consumed unusually high model budget.
+
+## Disposition
+
+- ADR-0007 §3 disposition: **VALID COMPLETED FAIL** (`C = 46 > 0`; a
+  complete parseable gate result exists and fails binding conditions).
+- The one authorized prospective cycle is **consumed**.
+- **Terminal for the current Sentinel-v1 Phase-3 validation lineage.**
+- Phase 3 remains **OPEN**. Phase 4 is **not permitted** under this
+  lineage. Q-77 remains **OPEN**.
+- No further validation cycle is authorized by ADR-0007. Any
+  subsequent path requires a new owner-governed decision; none is
+  designed or authorized in this recording session.
+- `SentinelDailyRun` is unchanged and remains stub-mode.
+- No fixture, label, answer-key, scoring, threshold, model, prompt,
+  budget, lifecycle, fingerprint or evidence-validation change was
+  made after seeing this result. No Sentinel checker-agent model
+  call, no Haiku or Sonnet call, no manual Sentinel judgment call and
+  no additional evaluation execution occurred in this recording
   session.
 
 ## Labels
