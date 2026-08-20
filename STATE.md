@@ -159,12 +159,10 @@ name kept). Internal path reference removed from the Visibility line
 2026-08-03 (this repo's own public-live rule; content unchanged
 otherwise). Fixture final counts → quantization integers: RESOLVED
 2026-08-04 at the Phase 1 freeze (integers stated in
-evals/eval_config.yaml and CI-enforced). Canonical validator does not
-recognize decisions/ (this repo is no longer affected — it holds no
-`decisions/` folder since the 2026-08-20 consolidation; the marketing
-repo remains affected). Canonical patch belongs to the
-queued hook-maintenance batch in the private operations OS — not this
-repo's work.
+evals/eval_config.yaml and CI-enforced). Canonical validator recognizes both
+`adr/` and `decisions/` as valid decision-record directories. This
+repository now uses only `adr/` as a representation/reader-clarity
+normalization; no validator change is required by this cleanup.
 
 Decision 0001 — Separate track (adopted 2026-07-13). Status: ADOPTED
 and IN FORCE. Ruling provenance: main governance chat 2026-07-12;
@@ -183,9 +181,12 @@ record at the former path `decisions/0001-separate-track.md`
 (pre-consolidation blob `f8a6696a678e30baca940e605d77dc2cb82aecc7`,
 recoverable through Git history). That file was consolidated into
 STATE.md on 2026-08-20 solely to comply with this repository's
-governing ARTIFACT_STANDARD decision-record cap of five non-template
-records. This is a representation change only: the decision is neither
-revoked nor superseded, and no replacement standalone artifact exists.
+then-governing ARTIFACT_STANDARD decision-record cap of five
+non-template records; after the v2.6 cap removal it was restored
+byte-exact at its original path the same day, and on 2026-08-20 it was
+moved to `adr/0001-separate-track.md`, where the standalone record now
+lives. Representation changes only: the decision is neither revoked
+nor superseded.
 
 Scope decision 2026-07-14 (Kristian): sentinel is built to
 production engineering standard as an explicit learning objective —
@@ -1061,5 +1062,38 @@ merges every change."
   remains OPEN.** This commit does not self-cite its own SHA — that
   SHA and its exact CI run are recorded in the private operations
   OS's Q-77 annotation. Next action: none in this repo under ADR-0007
+  — any subsequent validation path requires a new owner-governed
+  decision.
+- 2026-08-20 — ADR-ledger representation NORMALIZED (dispatch
+  adr-ledger-cleanup-a; representation/information-architecture only).
+  The historical decision `decisions/0001-separate-track.md` was moved
+  via git rename to `adr/0001-separate-track.md`, byte-identical (same
+  blob `f8a6696a678e30baca940e605d77dc2cb82aecc7`); the then-empty
+  `decisions/` directory disappears with the move. The numbered
+  placeholder `adr/0001-template.md` was deleted with no replacement:
+  it was a template, never an adopted decision, and no governing rule
+  (canonical ARTIFACT_STANDARD v2.6, BLUEPRINT, or repo instructions)
+  requires a repo-local ADR template — the canonical template stays
+  centralized in the private operations OS. The public ledger is now a
+  single chronological sequence `adr/0001`–`adr/0007`. Mechanical
+  reference repairs: BLUEPRINT §4 repo tree (one `adr/` ledger line)
+  and §10 item 7 (exact path `adr/0001-separate-track.md` governs);
+  the stale Open-decisions validator paragraph above replaced with the
+  current truth (the validator recognizes both `adr/` and `decisions/`;
+  no validator change required); the Decision-0001 artifact note above
+  extended with the restore-then-move history. Historical dated
+  references to the former `decisions/` path (BLUEPRINT Phase-0 gate
+  row, README v0.1 version-log row, prior change-log entries here)
+  remain unchanged — accurate for their dates. ADRs 0002–0007 have
+  zero diff: no renumbering, no substantive edits, no ADR-0008; no
+  decision content lost; git history preserves both former paths.
+  `.githooks/validate_artifacts.py`, CI, tests, fixtures, evals,
+  budgets, `EVAL_RESULTS.md` and `artifacts/` untouched. **This
+  session made no Sentinel checker-agent model call, no Haiku or
+  Sonnet call, no gate, re-gate, eval or scorer execution, and no
+  manual Sentinel judgment call.** `SentinelDailyRun` unchanged and
+  still stub-mode. No Phase 4 work. ADR-0007's terminal VALID
+  COMPLETED FAIL disposition and consumed cycle are unaffected.
+  **Phase 3 remains OPEN. Q-77 remains OPEN.** Next action: unchanged
   — any subsequent validation path requires a new owner-governed
   decision.

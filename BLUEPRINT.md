@@ -170,8 +170,7 @@ runner (v2 pattern) · live-inventory derivation (no static lists).
 ```
 ai-portfolio-sentinel/
 ├── BLUEPRINT.md / SPEC.md / README.md / CLAUDE.md / STATE.md
-├── decisions/0001-separate-track.md
-├── adr/
+├── adr/                        # decision records 0001–0007
 ├── contracts/schemas.py        # CheckTask, Finding, RunRecord, CostRow
 ├── sentinel/                   # control plane: inventory, scheduler entry,
 │                               # dedup, lifecycle, aggregation, breakers
@@ -303,8 +302,8 @@ of cost telemetry under ceiling, committed.
 6. Infrastructure: GitHub Actions/cloud IS in scope as curriculum —
    local Task Scheduler at P2 entry, Actions as P5 exit criterion
    (ruling, 2026-07-13).
-7. Track: separate, marketing-repo precedent; decisions/0001 governs
-   (ruling, 2026-07-12).
+7. Track: separate, marketing-repo precedent; adr/0001-separate-track.md
+   governs (ruling, 2026-07-12).
 8. Domain: own-portfolio monitoring; supersedes curriculum-radar
    concept per §1 lineage; proposes-never-edits (ruling, 2026-07-13).
 9. Name: ai-portfolio-sentinel; rename window 7 days from scaffold,
