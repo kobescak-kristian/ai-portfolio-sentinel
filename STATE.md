@@ -1155,6 +1155,8 @@ merges every change."
   lineage. Q-77 remains OPEN.**
   This commit does not self-cite its own SHA — that SHA and its exact
   CI run are recorded in the private operations OS's annotation for
-  this work item. Next action: a publication-clear adoption commit,
-  then an independent read of the adopted ADR-0008, then a separate
-  implementation dispatch if ADR-0008 survives that review.
+  this work item. Independent post-adoption read (2026-08-21): PASS —
+  ADR-0008 survives review. Next action: a separate ADR-0008
+  implementation dispatch for runtime changes plus the complete
+  model-free R1–R24 proof package. No real-model validation is
+  authorized.
