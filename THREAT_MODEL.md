@@ -172,15 +172,36 @@ mis-tracked, letting real spend exceed the intended ceiling.
 
 **Mitigation**: `agents/checker/budget.py::RunBudgetCoordinator` is the
 single owner of the run's budget state; every call reserves
-conservatively before executing and commits (or the harness commits
-`commit_unresolved`, charging the *full* reservation) after — the
-run's aggregate charged cost cannot exceed `RUN_BUDGET_EUR_MICROS`
-(EUR 0.75 since adr/0005; enforced by `commit()`'s own invariant check,
-proven in `tests/test_bounds.py`). There is exactly one budget pool per
-run: no second pool was introduced alongside it. FX conversion uses the
-ECB daily reference rate, resolved fresh per run and recorded with
-source/date/retrieval time/exact Decimal rate on every audit row —
-never invented, never stale-cached.
+conservatively before executing and is accounted after. There is
+exactly one budget pool per run: no second pool was introduced
+alongside it, and ADR-0008's bounded re-execution draws an ordinary
+reservation from that same pool rather than a recovery budget. FX
+conversion uses the ECB daily reference rate, resolved fresh per run
+and recorded with source/date/retrieval time/exact Decimal rate on
+every audit row — never invented, never stale-cached.
+
+**Corrected by `adr/0008-judgment-call-execution-reliability` §7.**
+This section previously claimed the run's aggregate charged cost
+"cannot exceed `RUN_BUDGET_EUR_MICROS`", enforced by an invariant check
+inside `commit()`. That claim was false and is withdrawn. The pinned
+SDK enforces its own per-call budget only *after* API-call activity, so
+a call already in flight can overshoot its allowance before the SDK
+halts it; no code in this repository can retroactively prevent spend
+that already happened. The old `commit()` check did not prevent
+overshoot — it forced a *known* overshoot to be silently clamped to the
+reservation, which understated real consumption. It has been removed in
+favour of honest accounting.
+
+What is actually enforced is a **start** condition: a new model
+invocation begins only if a reservation can still be taken from
+remaining accounted capacity; every recoverable post-call estimate is
+accounted in full, including overshoot above that call's reservation;
+and once accounted consumption reaches or exceeds the cap, `reserve()`
+refuses, so remaining capacity may legitimately be zero or negative and
+no further call starts. A negative remaining figure is truthful
+DETECTED OVERSHOOT, not an accounting failure and not permission for
+further spend. Proven model-free in `tests/test_adr0008.py`
+(R11–R18).
 
 Three amendments from `adr/0005-phase3-gate-remediation.md` bear
 directly on this threat:

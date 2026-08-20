@@ -71,6 +71,44 @@ reference rate.
   budget and must genuinely exercise the agent for its idempotent-rerun
   and dedup invariants to count.
 
+### 3b. Bounded re-execution (`adr/0008-judgment-call-execution-reliability`, IMPLEMENTED)
+
+ADR-0008 is now implemented. What it changes at the judgment-call seam,
+and nothing beyond it:
+
+- **At most two actual model invocations per logical judgment task**
+  (`MAX_MODEL_ATTEMPTS_PER_TASK = 2`). This counts real SDK calls; a
+  pre-call `REJECTED`/`EXHAUSTED` audit row, where no model call
+  happened, does not count.
+- **Exactly one retryable failure class**: a *captured typed* terminal
+  SDK subtype `error_max_budget_usd`. Every other failure — a different
+  typed subtype, an untyped transport/process exception, no result
+  message, the tool-call breaker, an auth refusal, pre-call budget
+  exhaustion — stays fail-closed and dead-letters as before. Exception
+  **prose never authorizes a retry**: the SDK's trailing exception for
+  this case is an untyped `Exception` that merely quotes the CLI text,
+  so the same words with no captured typed result remain
+  non-retryable. If a local containment failure coexists with a budget
+  subtype, containment wins.
+- **The second invocation is ordinary in every respect**: same request,
+  same prompts, same model, same one-tool cage, same `MAX_TURNS` and
+  `MAX_TOOL_CALLS_PER_CHECK`, same run-scoped coordinator, and an
+  ordinary reservation from whatever capacity remains — never a retry
+  pool, never a larger reservation, never a relaxed margin. If capacity
+  cannot fund it, no second invocation occurs.
+- **No partial success.** Each invocation gets fresh host state, and
+  findings emitted during a failed invocation are audit evidence only —
+  they never become live findings, and no cross-attempt merger occurs.
+  A failed call stays call-level `accepted = false` even if one of its
+  proposals passed host validation first.
+- **Caps do not move.** EUR 0.75, 150,000 micro-EUR, 0.70, 10 and 5 are
+  all unchanged by ADR-0008.
+
+Its evidence is model-free only: the R1–R24 proof suite in
+`tests/test_adr0008.py`, plus the pre-write R10 uniqueness proof. **No
+real-model validation is authorized, and none has been run against this
+behaviour.** Passing model-free tests is not Phase-3 closure.
+
 These are the settings the one permitted re-gate ran under. That
 re-gate ran 2026-08-19 and recorded an honest **OVERALL FAIL**: every
 scoring threshold PASSED (pooled precision 60/60, pooled recall 60/60,

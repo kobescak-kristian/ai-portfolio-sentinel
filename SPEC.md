@@ -134,6 +134,15 @@ official gate ≤ EUR 5.00 (Sonnet). Cost telemetry from Phase 0: every
 run, including dev, writes a CostRow (integer micro-euros; no
 floating-point currency).
 
+Per-run caps govern whether a further model call may **start**, not
+what an in-flight call has already spent
+(`adr/0008-judgment-call-execution-reliability` §7): the pinned SDK
+enforces its own per-call budget after API-call activity, so a call
+can overshoot before being halted. All known overshoot is accounted in
+full rather than clamped, which means a run's accounted consumption may
+end above its nominal cap. Once accounted capacity is gone no further
+invocation begins. The caps themselves do not rise to absorb it.
+
 ## 7. Claims rules (mirrors BLUEPRINT §11(f); ladder in CLAUDE.md)
 
 Three levels:

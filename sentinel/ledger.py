@@ -598,6 +598,83 @@ def list_agent_calls_for_run(conn: sqlite3.Connection, run_id: str) -> list[Agen
     return [_agent_call_from_row(row) for row in rows]
 
 
+class ToolAttemptRow(NamedTuple):
+    id: int
+    agent_call_id: int
+    ordinal: int
+    proposed_reason_code: str
+    proposed_evidence_count: int
+    primary_line: int | None
+    secondary_line: int | None
+    outcome: str
+    rejection_category: str | None
+    proposed_excerpt: str | None
+
+
+def insert_tool_attempts(
+    conn: sqlite3.Connection, agent_call_id: int, attempts: Sequence[object]
+) -> None:
+    """Flush one invocation's buffered tool-attempt audit (adr/0008).
+
+    Like every other write here this does not commit — the caller wraps
+    it in the SAME ``unit_of_work`` as ``finalize_agent_call``, so a
+    failure on either leg rolls both back and the call stays visibly
+    RESERVED rather than being finalized with its audit silently
+    dropped. Accepts any object exposing the record's attributes; the
+    harness passes ``agents.checker.tools.ToolAttemptRecord``."""
+    if not attempts:
+        return
+    conn.executemany(
+        """
+        INSERT INTO agent_tool_attempts (
+            agent_call_id, ordinal, proposed_reason_code,
+            proposed_evidence_count, primary_line, secondary_line,
+            outcome, rejection_category, proposed_excerpt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                agent_call_id,
+                a.ordinal,
+                a.proposed_reason_code,
+                a.proposed_evidence_count,
+                a.primary_line,
+                a.secondary_line,
+                a.outcome,
+                a.rejection_category,
+                a.proposed_excerpt,
+            )
+            for a in attempts
+        ],
+    )
+
+
+def list_tool_attempts_for_call(
+    conn: sqlite3.Connection, agent_call_id: int
+) -> list[ToolAttemptRow]:
+    rows = conn.execute(
+        "SELECT * FROM agent_tool_attempts WHERE agent_call_id = ? ORDER BY ordinal",
+        (agent_call_id,),
+    ).fetchall()
+    return [ToolAttemptRow(**dict(row)) for row in rows]
+
+
+def list_tool_attempts_for_run(conn: sqlite3.Connection, run_id: str) -> list[ToolAttemptRow]:
+    """Every tool-attempt row for a run, ordered by the parent call's
+    insertion order and then by proposal order — the deterministic
+    attempt ordering ADR-0008 section 3 requires."""
+    rows = conn.execute(
+        """
+        SELECT t.* FROM agent_tool_attempts t
+          JOIN agent_calls c ON c.id = t.agent_call_id
+         WHERE c.run_id = ?
+         ORDER BY t.agent_call_id, t.ordinal
+        """,
+        (run_id,),
+    ).fetchall()
+    return [ToolAttemptRow(**dict(row)) for row in rows]
+
+
 def unresolved_agent_calls(conn: sqlite3.Connection, run_id: str) -> list[AgentCallRow]:
     """Rows still RESERVED for a run: a call that started but whose
     final usage was never recovered (crash mid-call). Reconciliation

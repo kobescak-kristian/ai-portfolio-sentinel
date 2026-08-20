@@ -164,3 +164,80 @@ is what's conservatively charged into the run's aggregate CostRow
 Retention follows §5's rule exactly: never deleted, no TTL or rotation
 at Phase 3, same growth-review threshold reasoning (an agent-mode run
 adds a few rows per judgment task, not per finding).
+
+One logical judgment task may now hold **two** `agent_calls` rows: a
+bounded re-execution is permitted for exactly one failure class
+(`adr/0008-judgment-call-execution-reliability`). The first, failed row
+is never reused, rewritten, relabelled or deleted when a second attempt
+succeeds — both remain, and both are charged.
+
+## 14. ADR-0008 addition: per-proposal tool-attempt audit
+
+`agent_tool_attempts` rows (SQLite, additive to the same never-delete
+ledger) persist, per `emit_finding` proposal within one model
+invocation: the parent `agent_calls` id, the 1-based proposal ordinal
+inside that invocation, the model-proposed reason code, the proposed
+evidence count, up to two proposed line coordinates, the outcome
+(`ACCEPTED`, `REJECTED`, `DUPLICATE`, `BREAKER_REFUSED`), and a closed
+rejection category. This closes the gap recorded in
+`PHASE3_GATE_DIAGNOSIS.md`, where per-attempt acceptance or rejection
+for a failed call was `UNAVAILABLE_FROM_PERSISTED_EVIDENCE`.
+
+**Storage discipline.** Runtime-local, gitignored, never committed,
+never deleted — and, unlike `agent_calls`, never **updated** either: an
+individual attempt row has no update lifecycle, so the DDL refuses
+`UPDATE` as well as `DELETE`. Run and task identity are not duplicated
+here; they are derivable through the parent call.
+
+**Retained model-proposed text, exactly.** Reason codes and coordinates
+are the primary evidence and are preferred wherever they carry the same
+diagnostic value. One bounded snippet of proposed text is retained, and
+only under all of these conditions at once:
+
+- the proposal was REJECTED, and
+- its rejection category is `EXCERPT_NOT_VERBATIM` — the one category
+  where the proposed text is itself the diagnostic discriminator.
+
+Why it is retained at all: a test in `tests/test_adr0008.py`
+(`test_9a_coordinates_and_category_alone_lose_the_required_distinction`)
+demonstrates that a substantively correct near-miss (a cited span one
+character off) and an outright fabrication reject with the *same*
+reason code, the *same* coordinate and the *same* category, so a
+coordinates-only record collapses them into one indistinguishable row.
+That is precisely the distinction ADR-0008 §4 requires to remain
+reconstructible. Every other rejection category retains **no** proposed
+text, and an accepted or duplicate proposal retains none either.
+
+**Bounds on that snippet.** At most 80 characters, enforced both in
+code (`agents/checker/tools.py::MAX_PROPOSED_EXCERPT_CHARS`) and by a
+DDL `CHECK`. It passes through the same first-party redaction boundary
+as the structured logs (`sentinel/logs.py::redact` — control-character
+stripping, secret-shaped and machine-local-path token replacement)
+*before* deterministic truncation, because a monitored document can
+itself carry injected secret-shaped text that a model might propose
+back. Honest limitation: that boundary normalizes internal whitespace
+runs to single spaces, so a near-miss differing from the source line
+only by repeated whitespace is not distinguishable in this field.
+Proposed reason codes are separately capped at 64 characters.
+
+**Never persisted here**: chain-of-thought, full model responses,
+transcripts, raw prompts, arbitrary raw tool JSON, or any unbounded
+proposed payload. Nothing from this table is ever emitted into
+`FINDINGS.md` or any other public output. The older
+`agent_calls.rejection_reason` field no longer carries raw host
+validation prose either — that prose embedded the proposed excerpt
+verbatim and unbounded, which would have bypassed this section through
+an existing text field; it now records the closed category instead.
+
+**Durability boundary, stated plainly.** Attempt records are buffered
+in memory during one invocation and flushed in the *same* SQLite
+transaction that finalizes the parent call, so a caught in-process
+failure can never finalize a call while silently dropping its audit —
+a failure on either leg rolls both back and the call stays visibly
+`RESERVED`. Host-process death mid-invocation is a different boundary
+and is unchanged: the `RESERVED` row survives, reconciliation charges
+its reservation conservatively, and the in-memory buffer may simply be
+lost. **No crash-proof per-tool telemetry is claimed.**
+
+Empty (zero rows) for every stub-mode run, including the standing
+scheduled task's runs.

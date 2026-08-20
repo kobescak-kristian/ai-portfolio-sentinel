@@ -284,3 +284,87 @@ BEFORE DELETE ON agent_calls
 BEGIN
     SELECT RAISE(ABORT, 'ledger rows are never deleted');
 END;
+
+-- ---------------------------------------------------------------------
+-- ADR-0008 addition (adr/0008-judgment-call-execution-reliability;
+-- dispatch q77-p3-adr8-impl-a). Additive to everything above — no
+-- existing table's definition changes and schema_version is NOT bumped.
+-- Bounded per-proposal audit for the one emit_finding tool, closing the
+-- ADR-0005 section 6 / ADR-0008 section 4 observability gap: before
+-- this, a failed judgment call retained only an attempt COUNT, so
+-- "a host-valid proposal was accepted and then the call failed" was
+-- indistinguishable from "no usable proposal was ever made".
+--
+-- Buffered in memory during one SDK invocation and flushed durably in
+-- the SAME transaction that finalizes the parent agent_calls row, so a
+-- caught terminal failure can never finalize a call while silently
+-- dropping its attempt audit (ADR-0008 section 5). Host-process death
+-- mid-invocation may still lose the buffer — the RESERVED parent row
+-- and the existing reconciliation remain authoritative there, and no
+-- crash-proof per-tool telemetry is claimed.
+--
+-- Data minimization: reason code and evidence COORDINATES are the
+-- primary evidence. One bounded, redacted proposed-excerpt snippet is
+-- retained ONLY where the proposed text is itself the diagnostic
+-- discriminator (a non-verbatim citation), which section 9A of the
+-- implementation dispatch proved necessary to tell a substantively
+-- correct near-miss from a fabrication. Never chain-of-thought, never
+-- a full model response, never a transcript, never a raw prompt, never
+-- arbitrary raw tool JSON, and never emitted into public FINDINGS
+-- output. See DATA_RETENTION_POLICY.md.
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS agent_tool_attempts (
+    id                      INTEGER PRIMARY KEY,
+    -- Run and task identity are derivable through this FK, so they are
+    -- deliberately not duplicated here.
+    agent_call_id           INTEGER NOT NULL REFERENCES agent_calls(id),
+    -- 1-based proposal order within ONE model invocation. Restarts for
+    -- a second invocation, which is unambiguous because that retry gets
+    -- its own agent_calls row.
+    ordinal                 INTEGER NOT NULL CHECK (ordinal >= 1),
+    proposed_reason_code    TEXT NOT NULL
+                            CHECK (length(proposed_reason_code) <= 64),
+    -- As proposed by the model, even when that count is itself wrong.
+    proposed_evidence_count INTEGER NOT NULL CHECK (proposed_evidence_count >= 0),
+    -- Bounded to the two locations the current judgment classes need.
+    -- NULL means the model supplied no usable positive coordinate.
+    primary_line            INTEGER CHECK (primary_line IS NULL OR primary_line >= 1),
+    secondary_line          INTEGER CHECK (secondary_line IS NULL OR secondary_line >= 1),
+    outcome                 TEXT NOT NULL CHECK (outcome IN (
+                                'ACCEPTED', 'REJECTED', 'DUPLICATE', 'BREAKER_REFUSED'
+                            )),
+    rejection_category      TEXT CHECK (rejection_category IS NULL OR rejection_category IN (
+                                'DOCUMENT_ABSENT', 'EVIDENCE_NOT_A_LIST',
+                                'MALFORMED_EVIDENCE_ITEM', 'REASON_CODE_NOT_ALLOWED',
+                                'EVIDENCE_COUNT_MISMATCH', 'LINE_OUT_OF_RANGE',
+                                'EXCERPT_EMPTY', 'EXCERPT_NOT_VERBATIM'
+                            )),
+    proposed_excerpt        TEXT CHECK (proposed_excerpt IS NULL
+                                        OR length(proposed_excerpt) <= 80),
+    -- Deterministic per-call proposal ordering, and no double-flush.
+    UNIQUE (agent_call_id, ordinal),
+    -- A category is recorded exactly when the proposal was rejected.
+    CHECK ((outcome = 'REJECTED') = (rejection_category IS NOT NULL)),
+    -- The snippet is retained only for the one text-discriminated
+    -- category; every other outcome carries no proposed text at all.
+    CHECK (proposed_excerpt IS NULL OR rejection_category = 'EXCERPT_NOT_VERBATIM')
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tool_attempts_call
+    ON agent_tool_attempts (agent_call_id);
+
+-- Strictly append-only. Unlike agent_calls (which legitimately moves
+-- RESERVED -> terminal), an individual tool-attempt row has no update
+-- lifecycle at all, so UPDATE is refused as well as DELETE.
+CREATE TRIGGER IF NOT EXISTS agent_tool_attempts_never_deleted
+BEFORE DELETE ON agent_tool_attempts
+BEGIN
+    SELECT RAISE(ABORT, 'ledger rows are never deleted');
+END;
+
+CREATE TRIGGER IF NOT EXISTS agent_tool_attempts_never_updated
+BEFORE UPDATE ON agent_tool_attempts
+BEGIN
+    SELECT RAISE(ABORT, 'tool-attempt audit rows are append-only');
+END;

@@ -49,16 +49,36 @@ RUN_BUDGET_EUR_MICROS = 750_000  # EUR 0.75
 MAX_PER_CALL_RESERVE_EUR_MICROS = 150_000  # EUR 0.15
 
 # The SDK checks its own max_budget_usd *after* each API call
-# completes (documented behavior: the estimate can overshoot by up to
-# one call's cost before the SDK halts). This safety margin keeps the
-# USD allowance handed to the SDK conservative enough that even a
-# one-call overshoot should not push the run's *charged* total past
-# RUN_BUDGET_EUR_MICROS. A margin, not a guarantee — the coordinator's
-# own post-call accounting (budget.py) is the actual enforcement point
-# for the EUR 0.75 ceiling, this only reduces how often it's tested.
-# Deliberately NOT relaxed by adr/0005: raising it would buy execution
-# through the back door.
+# completes (documented behavior, re-verified against the pinned SDK
+# source: the estimate can overshoot by up to one call's cost before
+# the SDK halts). This safety margin keeps the USD allowance handed to
+# the SDK conservative enough that a one-call overshoot is less likely
+# to push the run's *charged* total past RUN_BUDGET_EUR_MICROS.
+#
+# A margin, not a guarantee — and per
+# adr/0008-judgment-call-execution-reliability section 7 no guarantee
+# of that kind exists: a call already in flight CAN overshoot, and when
+# it does the full known overshoot is accounted honestly rather than
+# clamped, so accounted run consumption may end above the nominal cap.
+# What the coordinator does enforce is that no FURTHER invocation
+# starts once capacity is gone (budget.py).
+#
+# Deliberately NOT relaxed by adr/0005 or adr/0008: raising it would
+# buy execution through the back door.
 SDK_ALLOWANCE_SAFETY_MARGIN = "0.70"  # Decimal string; see budget.py
+
+# Maximum ACTUAL SDK/model invocations for one logical judgment task
+# (adr/0008-judgment-call-execution-reliability section 2): the initial
+# invocation plus at most one bounded re-execution.
+#
+# This counts real model calls. It is NOT a maximum number of
+# agent_calls audit rows — a pre-call REJECTED or EXHAUSTED row is
+# recorded where no SDK call ever happened and does not count — and it
+# is NOT a generic or transport retry count. The single retryable
+# failure class is a CAPTURED typed terminal SDK subtype
+# 'error_max_budget_usd'; every other failure stays fail-closed, and
+# exception prose never authorizes a retry.
+MAX_MODEL_ATTEMPTS_PER_TASK = 2
 
 MCP_SERVER_NAME = "sentinelchecker"
 TOOL_NAME = "emit_finding"

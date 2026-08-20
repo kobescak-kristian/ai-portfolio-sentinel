@@ -264,6 +264,50 @@ return is a legitimate `Confirmed([])` — the same result
 not `DEAD_LETTER`, and contributes nothing to the run's CostRow. A
 genuine agent failure still raises and still dead-letters, unchanged.
 
+**ADR-0008 addition**: `agent_tool_attempts` (surrogate `id` PK, FK
+`agent_call_id` → `agent_calls`) is the bounded per-proposal audit for
+the one `emit_finding` tool — one row per proposal within one model
+invocation, carrying the proposed reason code, the proposed evidence
+count, up to two proposed line coordinates, a closed outcome
+(`ACCEPTED`/`REJECTED`/`DUPLICATE`/`BREAKER_REFUSED`) and a closed
+rejection category. Purely additive again: no existing table's
+definition changed and `schema_version` is **not** bumped. Run and task
+identity are derivable through the parent call and are deliberately not
+duplicated. Rows are strictly append-only — `DELETE` and `UPDATE` are
+both refused by trigger, since an attempt row has no update lifecycle.
+Retained proposed text is bounded, redacted and confined to the single
+rejection category where the text itself is the diagnostic
+discriminator; see `DATA_RETENTION_POLICY.md` §14 for the exact rule
+and its proof.
+
+**One logical judgment task may hold two `agent_calls` rows.** ADR-0008
+permits exactly one bounded re-execution, and only for a *captured
+typed* terminal SDK subtype `error_max_budget_usd`. Both attempts share
+the run's single budget coordinator and one `(run_id, task_key)`
+identity; `agent_calls.id` insertion order is their deterministic
+order. The first, failed row is never reused, rewritten, relabelled or
+deleted when the second succeeds. A failed call stays call-level
+`accepted = false` even when one of its proposals passed host
+validation before the SDK failure — that accepted proposal survives in
+the per-attempt audit, and findings emitted during a failed invocation
+never become live findings.
+
+**Cost fields are estimates, and known overshoot is not clamped.**
+`agent_calls.usd_cost_estimate` is the SDK's own client-side figure —
+a model-equivalent consumption signal, never authoritative provider
+billing. `charged_eur_micros` follows ADR-0008 §6: a completed call
+with a recoverable estimate is charged the **full** converted estimate
+(never `min(estimate, reservation)`, the silent clamp ADR-0008
+removed); a failed call with a recoverable estimate is charged
+`max(reservation, estimate)`, so re-execution can never make a failed
+call cheaper; and either state without a recoverable estimate burns the
+full reservation. Because the pinned SDK enforces its per-call budget
+only *after* API-call activity, a call already in flight can overshoot,
+so a run's accounted consumption may end **above** the nominal EUR 0.75
+run budget. That is a truthful record of spend that already happened,
+not permission for more: once accounted capacity is gone, no further
+model invocation starts.
+
 ## 8. State transitions
 
 - **Task**: `PENDING → IN_PROGRESS → {DONE | FAILED}`; `PENDING →

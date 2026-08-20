@@ -1,10 +1,31 @@
 """Run-scoped EUR budget coordinator (dispatch q77-p3-a, section E).
 
 One coordinator owns the *entire* run's agent budget — not a per-call
-budget. It reserves conservatively before each call (deriving a
-capped USD allowance for the SDK from the remaining EUR budget and the
-resolved FX rate, with an explicit safety margin), and never lets the
-run's aggregate *charged* cost exceed ``RUN_BUDGET_EUR_MICROS``.
+budget. It reserves conservatively before each call, deriving a capped
+USD allowance for the SDK from the remaining EUR budget and the
+resolved FX rate with an explicit safety margin.
+
+What it does and does NOT guarantee (corrected by
+adr/0008-judgment-call-execution-reliability section 7). This module
+used to claim it "never lets the run's aggregate *charged* cost exceed
+``RUN_BUDGET_EUR_MICROS``". That claim was false and is withdrawn: the
+pinned SDK enforces its own per-call budget only *after* API-call
+activity, so a call already in flight can overshoot its allowance
+before the SDK halts it. The coordinator cannot retroactively prevent
+spend that already happened.
+
+The invariant it actually enforces is a **start** condition:
+
+* a new model invocation begins only if a reservation can still be
+  taken from remaining accounted/reserved capacity;
+* every recoverable post-call estimate is accounted in full, including
+  a known overshoot above that call's reservation;
+* once accounted consumption reaches or exceeds the run cap,
+  ``reserve()`` refuses — so remaining capacity may legitimately be
+  zero or negative, and no further call starts.
+
+A negative remaining figure is therefore truthful DETECTED OVERSHOOT,
+not an accounting failure and not permission for further spend.
 """
 
 from __future__ import annotations
@@ -48,6 +69,10 @@ class RunBudgetCoordinator:
     _reserved_eur_micros: int = field(default=0, init=False)  # held by in-flight calls
 
     def remaining_eur_micros(self) -> int:
+        """May be zero or NEGATIVE after a detected post-call overshoot
+        is accounted (ADR-0008 section 7). ``reserve()`` refuses at
+        ``<= 0``, so a negative figure is a truthful record of spend
+        that already happened, never a licence for more."""
         return self.total_eur_micros - self._committed_eur_micros - self._reserved_eur_micros
 
     def reserve(self) -> Reservation:
@@ -72,15 +97,22 @@ class RunBudgetCoordinator:
         return float(usd)
 
     def commit(self, reservation: Reservation, *, charged_eur_micros: int) -> None:
-        """A call finished with a known, final charge. Moves
-        ``charged_eur_micros`` from reserved to committed; the unused
-        remainder of the reservation is released back to the budget
-        automatically (reserved drops by the full reservation,
-        committed rises by only the charged amount)."""
-        if charged_eur_micros > reservation.reserved_eur_micros:
-            raise ValueError(
-                f"charged {charged_eur_micros} exceeds reserved {reservation.reserved_eur_micros}"
-            )
+        """A call finished with a known, final charge. Deterministic
+        bookkeeping for an already-issued reservation and a charge the
+        caller has already computed and validated: reserved drops by
+        the full reservation, committed rises by the charged amount, so
+        any unused remainder is released back to the budget.
+
+        ``charged_eur_micros`` MAY exceed the reservation. That is not
+        an error — it is ADR-0008's honest overshoot accounting, and
+        refusing it here is what previously forced a known overshoot to
+        be silently clamped away. Overshoot simply reduces (possibly
+        past zero) what ``reserve()`` will hand out next.
+
+        Ordering contract (ADR-0008): callers invoke this only AFTER
+        the call's terminal evidence is durably committed to the
+        ledger, so in-memory accounting can never run ahead of the
+        audit trail."""
         if charged_eur_micros < 0:
             raise ValueError("charged_eur_micros must not be negative")
         self._reserved_eur_micros -= reservation.reserved_eur_micros

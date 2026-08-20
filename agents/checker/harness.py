@@ -1,5 +1,5 @@
 """Real caged checker agent entry point (dispatch q77-p3-a, section A):
-builds the caged ``ClaudeAgentOptions``, runs one ``query()`` per
+builds the caged ``ClaudeAgentOptions``, runs ``query()`` per
 ``JudgmentRequest``, and returns ``Sequence[ObservedFinding]`` — the
 same shape ``NullJudgmentStub`` returns — so ``CagedCheckerStub`` drops
 in unchanged as ``Deps.judgment`` for ``--judgment-mode agent``. No
@@ -14,6 +14,20 @@ checker exception to ``Inconclusive`` -> ``DEAD_LETTER``, so a failed
 judgment call is never silently indistinguishable from "nothing wrong
 found" (an empty *successful* return is still a legitimate
 ``Confirmed([])`` result — same semantics as ``NullJudgmentStub``).
+
+ADR-0008 additions (dispatch q77-p3-adr8-impl-a):
+
+* the terminal ``ResultMessage`` is captured OUT of the stream, so the
+  SDK's trailing non-zero-exit exception can no longer destroy the one
+  typed signal that identifies a per-call budget-ceiling event;
+* failures are mechanically classified (``agents/checker/failures.py``)
+  and exactly ONE class — a captured terminal subtype
+  ``error_max_budget_usd`` — permits exactly ONE second invocation, in
+  the same run, on an ordinary reservation from the same coordinator;
+* each invocation gets FRESH tool state, so a failed attempt's findings
+  are audit evidence only and never become live findings;
+* terminal evidence is made durable BEFORE in-memory budget accounting
+  advances, and known cost overshoot is accounted instead of clamped.
 """
 
 from __future__ import annotations
@@ -29,7 +43,7 @@ from typing import Callable, Optional, Sequence
 import anyio
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, create_sdk_mcp_server, query
 
-from agents.checker import auth
+from agents.checker import auth, failures
 from agents.checker.budget import (
     BudgetExhausted,
     Reservation,
@@ -38,17 +52,20 @@ from agents.checker.budget import (
 )
 from agents.checker.config import (
     AUTH_MODE_LABEL,
+    MAX_MODEL_ATTEMPTS_PER_TASK,
     MAX_TURNS,
     MCP_SERVER_NAME,
     MODEL,
     QUALIFIED_TOOL_NAME,
 )
+from agents.checker.failures import QueryOutcome
 from agents.checker.fx import resolve_ecb_usd_per_eur
 from agents.checker.prompts import build_system_prompt, build_user_prompt
 from agents.checker.tools import CheckerToolState, build_emit_finding_tool
 from checks.base import ObservedFinding
 from checks.judgment.stubs import JudgmentRequest
 from sentinel import ledger
+from sentinel.logs import redact
 
 
 class CheckerAgentError(RuntimeError):
@@ -58,12 +75,25 @@ class CheckerAgentError(RuntimeError):
     usage. Always raised, never swallowed into an empty finding list."""
 
 
+class TerminalAccountingError(CheckerAgentError):
+    """The call's terminal evidence was durably committed but in-memory
+    budget accounting then failed. Fails closed: no further model
+    invocation is started, and the durable audit row is never rewritten
+    or deleted to make the two layers agree."""
+
+
 def build_options(check_class: str, reservation: Reservation) -> ClaudeAgentOptions:
     """The cage (dispatch section C): no built-in tools, exactly one
     qualified custom tool, a bounded turn count, a per-call USD
     ceiling derived from the run's EUR budget, and no inherited
     settings/subagents/skills. ``mcp_servers`` is attached by the
-    caller once the tool is built for this specific request."""
+    caller once the tool is built for this specific request.
+
+    A second (ADR-0008) invocation is built through this very function
+    from the same request and its own ordinary reservation, so it gets
+    the same model, the same one-tool cage and the same turn allowance
+    — only the SDK budget allowance differs, and only because it is
+    derived from whatever run capacity actually remains."""
     return ClaudeAgentOptions(
         model=MODEL,
         system_prompt=build_system_prompt(check_class),
@@ -82,12 +112,22 @@ async def run_query(
     reservation: Reservation,
     state: CheckerToolState,
     user_prompt: str,
-) -> Optional[ResultMessage]:
+) -> QueryOutcome:
     """The real SDK call. Kept as a free function (not a method) so
     tests can substitute an entirely different async callable via
     ``CagedCheckerStub.query_fn`` without touching ``claude_agent_sdk``
     at all — conftest.py's ``block_network`` fixture would fail any
-    test that reached the real subprocess/network regardless."""
+    test that reached the real subprocess/network regardless.
+
+    Returns a ``QueryOutcome`` rather than an ``Optional[ResultMessage]``
+    and never re-raises. That is the ADR-0008 information-loss fix: the
+    pinned SDK delivers its terminal ResultMessage to the stream first
+    and only then converts the CLI's deliberate non-zero exit into an
+    untyped ``Exception``. Collecting the result in a local and letting
+    that exception propagate — the previous behaviour — discarded the
+    subtype, token counts and cost estimate that the terminal message
+    had already carried. Both halves are returned side by side instead;
+    the caller classifies from the typed half and never from prose."""
     server = create_sdk_mcp_server(
         name=MCP_SERVER_NAME, version="1.0.0", tools=[build_emit_finding_tool(state)]
     )
@@ -95,10 +135,13 @@ async def run_query(
     options.mcp_servers = {MCP_SERVER_NAME: server}
 
     result: Optional[ResultMessage] = None
-    async for message in query(prompt=user_prompt, options=options):
-        if isinstance(message, ResultMessage):
-            result = message
-    return result
+    try:
+        async for message in query(prompt=user_prompt, options=options):
+            if isinstance(message, ResultMessage):
+                result = message
+    except Exception as exc:  # noqa: BLE001 - any SDK/transport failure
+        return QueryOutcome(result=result, error=exc)
+    return QueryOutcome(result=result, error=None)
 
 
 @dataclass
@@ -141,108 +184,142 @@ class CagedCheckerStub:
                 request=request,
                 at_utc=now,
                 state="REJECTED",
-                rejection_reason=str(exc),
+                rejection_reason=f"{failures.AUTH_OVERRIDE}: {exc}",
             )
             raise CheckerAgentError(str(exc)) from exc
 
-        try:
-            reservation = self.coordinator.reserve()
-        except BudgetExhausted as exc:
-            self._record_terminal(
+        # ADR-0008 section 2: the loop bound IS the contract. At most
+        # MAX_MODEL_ATTEMPTS_PER_TASK actual SDK invocations happen for
+        # one logical judgment task, and the only way to reach a second
+        # iteration is a cleanly classified SDK_BUDGET_CEILING.
+        for attempt_index in range(MAX_MODEL_ATTEMPTS_PER_TASK):
+            try:
+                reservation = self.coordinator.reserve()
+            except BudgetExhausted as exc:
+                # No SDK call occurs here. The audit row records the
+                # pre-call exhaustion and does NOT count as one of the
+                # bounded model invocations.
+                self._record_terminal(
+                    task_key=task_key,
+                    request=request,
+                    at_utc=self.clock(),
+                    state="EXHAUSTED",
+                    rejection_reason=f"{failures.RUN_BUDGET_EXHAUSTED}: {exc}",
+                )
+                raise CheckerAgentError(str(exc)) from exc
+
+            call_id = self._insert_reserved(
                 task_key=task_key,
                 request=request,
-                at_utc=now,
-                state="EXHAUSTED",
-                rejection_reason=str(exc),
+                at_utc=now if attempt_index == 0 else self.clock(),
+                reservation=reservation,
             )
-            raise CheckerAgentError(str(exc)) from exc
 
-        call_id = self._insert_reserved(
-            task_key=task_key, request=request, at_utc=now, reservation=reservation
-        )
+            # Fresh per-invocation host state: findings, within-call
+            # dedup, breaker and the bounded tool-attempt buffer. A
+            # failed attempt's accepted findings therefore cannot leak
+            # into a retry's live result.
+            state = CheckerToolState(request=request)
+            user_prompt = build_user_prompt(request)
+            outcome = self._invoke(request.check_class, reservation, state, user_prompt)
 
-        state = CheckerToolState(request=request)
-        user_prompt = build_user_prompt(request)
-        try:
-            # The real query_fn (run_query) is async, so production
-            # always takes the anyio.run() path. Tests may inject a
-            # plain sync callable instead — nothing in a fake needs to
-            # await anything, and a plain call sidesteps an unrelated
-            # Windows-specific interaction where even a fully local,
-            # no-I/O event loop's self-pipe socketpair() trips
-            # conftest.py's blanket network-connect guard.
-            if inspect.iscoroutinefunction(self.query_fn):
-                result = anyio.run(
-                    self.query_fn, request.check_class, reservation, state, user_prompt
+            failure_class = failures.classify_invocation(
+                outcome, breaker_tripped=state.breaker_tripped()
+            )
+            completed = failure_class is None
+            estimate = self._estimate_eur_micros(outcome.result)
+            charged = failures.terminal_charge(
+                completed=completed,
+                reserved_eur_micros=reservation.reserved_eur_micros,
+                estimate_eur_micros=estimate,
+            )
+
+            self._terminalize(
+                call_id,
+                completed=completed,
+                failure_class=failure_class,
+                outcome=outcome,
+                tool_state=state,
+                charged_eur_micros=charged,
+                estimate_eur_micros=estimate,
+            )
+            # Durable first, in-memory second: the ledger transaction
+            # above has committed before any reservation is released,
+            # so a persistence failure can never leave the coordinator
+            # believing a call settled while its row is still RESERVED.
+            self._advance_budget(reservation, charged_eur_micros=charged)
+
+            if completed:
+                return tuple(state.findings)
+
+            retry_available = (
+                failures.is_retryable(failure_class)
+                and attempt_index + 1 < MAX_MODEL_ATTEMPTS_PER_TASK
+            )
+            if not retry_available:
+                raise CheckerAgentError(
+                    "checker agent call did not complete cleanly: "
+                    f"{failures.failure_reason(failure_class, outcome)}"
                 )
+
+        # Unreachable: the final iteration always returns or raises.
+        raise CheckerAgentError("checker agent exhausted its bounded model attempts")
+
+    # -- invocation / accounting helpers -------------------------------
+
+    def _invoke(
+        self,
+        check_class: str,
+        reservation: Reservation,
+        state: CheckerToolState,
+        user_prompt: str,
+    ) -> QueryOutcome:
+        """Run one actual SDK/model invocation and normalize whatever
+        it produced into a ``QueryOutcome``.
+
+        The real ``run_query`` is async, so production always takes the
+        anyio.run() path. Tests may inject a plain sync callable
+        instead — nothing in a fake needs to await anything, and a
+        plain call sidesteps an unrelated Windows-specific interaction
+        where even a fully local, no-I/O event loop's self-pipe
+        socketpair() trips conftest.py's blanket network-connect guard.
+
+        A fake (or a transport failure escaping any future query_fn)
+        that raises is captured here rather than propagating, so every
+        failure reaches the one mechanized classification path instead
+        of bypassing it."""
+        try:
+            if inspect.iscoroutinefunction(self.query_fn):
+                raw = anyio.run(self.query_fn, check_class, reservation, state, user_prompt)
             else:
-                result = self.query_fn(request.check_class, reservation, state, user_prompt)
+                raw = self.query_fn(check_class, reservation, state, user_prompt)
         except Exception as exc:  # noqa: BLE001 - any SDK/transport failure
-            self.coordinator.commit_unresolved(reservation)
-            self._finalize(
-                call_id,
-                state="FAILED",
-                at_utc=self.clock(),
-                charged_eur_micros=reservation.reserved_eur_micros,
-                tool_attempts=state.tool_attempts,
-                accepted=False,
-                rejection_reason=f"{type(exc).__name__}: {exc}",
-            )
-            raise CheckerAgentError(f"checker agent call failed: {exc}") from exc
+            return QueryOutcome(result=None, error=exc)
+        if isinstance(raw, QueryOutcome):
+            return raw
+        return QueryOutcome(result=raw, error=None)
 
-        if result is None or result.is_error or state.breaker_tripped():
-            self.coordinator.commit_unresolved(reservation)
-            if state.breaker_tripped():
-                reason = "tool-call circuit breaker tripped"
-            elif result is None:
-                reason = "no result message returned"
-            else:
-                reason = f"SDK result error (subtype={result.subtype!r})"
-            self._finalize(
-                call_id,
-                state="FAILED",
-                at_utc=self.clock(),
-                charged_eur_micros=reservation.reserved_eur_micros,
-                sdk_turns=getattr(result, "num_turns", None),
-                sdk_is_error=getattr(result, "is_error", None),
-                sdk_subtype=getattr(result, "subtype", None),
-                tool_attempts=state.tool_attempts,
-                accepted=False,
-                rejection_reason=reason,
-            )
-            raise CheckerAgentError(f"checker agent call did not complete cleanly: {reason}")
-
-        usd_cost = result.total_cost_usd
+    def _estimate_eur_micros(self, result: object) -> Optional[int]:
+        """The SDK's own reported cost, conservatively converted. This
+        is an ESTIMATE / model-equivalent consumption signal — never
+        authoritative provider billing. ``None`` means no final figure
+        was recoverable, which drives the conservative
+        full-reservation charge rather than a retry."""
+        if result is None:
+            return None
+        usd_cost = getattr(result, "total_cost_usd", None)
         if usd_cost is None:
-            # Successful result but no recoverable cost figure: treat
-            # as unresolved usage, charge the full reservation (never
-            # zero) — the binding decision applies to this case too.
-            self.coordinator.commit_unresolved(reservation)
-            charged = reservation.reserved_eur_micros
-        else:
-            charged = min(
-                usd_to_charged_eur_micros(Decimal(str(usd_cost)), self.coordinator.fx_rate),
-                reservation.reserved_eur_micros,
-            )
-            self.coordinator.commit(reservation, charged_eur_micros=charged)
+            return None
+        return usd_to_charged_eur_micros(Decimal(str(usd_cost)), self.coordinator.fx_rate)
 
-        usage = result.usage or {}
-        self._finalize(
-            call_id,
-            state="COMPLETED",
-            at_utc=self.clock(),
-            charged_eur_micros=charged,
-            sdk_turns=result.num_turns,
-            sdk_is_error=result.is_error,
-            sdk_subtype=result.subtype,
-            input_tokens=usage.get("input_tokens"),
-            output_tokens=usage.get("output_tokens"),
-            usd_cost_estimate=(str(usd_cost) if usd_cost is not None else None),
-            tool_attempts=state.tool_attempts,
-            accepted=bool(state.findings),
-            rejection_reason=state.last_rejection_reason if not state.findings else None,
-        )
-        return tuple(state.findings)
+    def _advance_budget(self, reservation: Reservation, *, charged_eur_micros: int) -> None:
+        try:
+            self.coordinator.commit(reservation, charged_eur_micros=charged_eur_micros)
+        except Exception as exc:  # noqa: BLE001 - must not be swallowed
+            raise TerminalAccountingError(
+                "terminal evidence was durably recorded but run-budget accounting failed: "
+                f"{type(exc).__name__}"
+            ) from exc
 
     # -- ledger plumbing (main-ledger audit — no second database) -----
 
@@ -267,9 +344,63 @@ class CagedCheckerStub:
                 fx_rate_decimal=str(fx_rate.usd_per_eur),
             )
 
-    def _finalize(self, call_id: int, *, at_utc: datetime, **kwargs) -> None:
+    def _terminalize(
+        self,
+        call_id: int,
+        *,
+        completed: bool,
+        failure_class: Optional[str],
+        outcome: QueryOutcome,
+        tool_state: CheckerToolState,
+        charged_eur_micros: int,
+        estimate_eur_micros: Optional[int],
+    ) -> None:
+        """Persist this invocation's buffered tool-attempt audit AND
+        finalize its ``agent_calls`` row in ONE transaction.
+
+        ``unit_of_work`` rolls back on any exception, so a failure on
+        either leg aborts both: the call stays visibly RESERVED and is
+        never finalized with its per-proposal audit silently dropped.
+        That is the fail-closed half of ADR-0008 section 5.
+
+        Call-level ``accepted`` stays conservative. A FAILED call is
+        ``accepted=false`` even when one of its proposals passed host
+        validation before the later SDK failure — the per-attempt audit
+        is where that accepted proposal survives, and a failed call must
+        never read as successful output."""
+        result = outcome.result
+        usage = getattr(result, "usage", None) or {}
+        if completed:
+            state_name = "COMPLETED"
+            accepted = bool(tool_state.findings)
+            reason = tool_state.last_rejection_reason if not tool_state.findings else None
+        else:
+            state_name = "FAILED"
+            accepted = False
+            reason = failures.failure_reason(failure_class, outcome)
+
         with ledger.unit_of_work(self.conn):
-            ledger.finalize_agent_call(self.conn, call_id, finished_at_utc=at_utc, **kwargs)
+            ledger.insert_tool_attempts(self.conn, call_id, tool_state.attempts)
+            ledger.finalize_agent_call(
+                self.conn,
+                call_id,
+                state=state_name,
+                finished_at_utc=self.clock(),
+                charged_eur_micros=charged_eur_micros,
+                sdk_turns=getattr(result, "num_turns", None),
+                sdk_is_error=getattr(result, "is_error", None),
+                sdk_subtype=getattr(result, "subtype", None),
+                input_tokens=usage.get("input_tokens"),
+                output_tokens=usage.get("output_tokens"),
+                usd_cost_estimate=(
+                    str(getattr(result, "total_cost_usd", None))
+                    if estimate_eur_micros is not None
+                    else None
+                ),
+                tool_attempts=tool_state.tool_attempts,
+                accepted=accepted,
+                rejection_reason=redact(reason) if reason else None,
+            )
 
     def _record_terminal(
         self,
@@ -282,7 +413,9 @@ class CagedCheckerStub:
     ) -> None:
         """For EXHAUSTED/REJECTED: nothing was ever reserved with the
         coordinator (reserve() itself failed, or was never attempted),
-        so insert and finalize in one transaction, reserved=charged=0."""
+        so insert and finalize in one transaction, reserved=charged=0.
+        No SDK invocation occurred, so there is no tool-attempt audit
+        and this row never counts toward the model-attempt bound."""
         fx_rate = self.coordinator.fx_rate
         with ledger.unit_of_work(self.conn):
             call_id = ledger.insert_agent_call_reserved(
@@ -308,7 +441,7 @@ class CagedCheckerStub:
                 charged_eur_micros=0,
                 tool_attempts=0,
                 accepted=False,
-                rejection_reason=rejection_reason,
+                rejection_reason=redact(rejection_reason),
             )
 
 

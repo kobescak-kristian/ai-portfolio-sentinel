@@ -155,9 +155,11 @@ ADR ADOPTED 2026-08-20
 (`adr/0008-judgment-call-execution-reliability.md`): bounded
 failed-call observability, a mechanized failure taxonomy, exactly one
 same-run re-execution for the single captured SDK budget-ceiling
-class, and honest overshoot accounting — NOT yet implemented; it
-authorizes no validation cycle (see the 2026-08-20 ADR-0008 adoption
-change-log entry below).
+class, and honest overshoot accounting. **IMPLEMENTED 2026-08-21**,
+landed together with the complete model-free R1–R24 proof package the
+ADR requires (see the 2026-08-21 implementation change-log entry
+below). It authorizes no validation cycle, and none has been run: its
+only evidence is model-free regression evidence.
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -1160,3 +1162,102 @@ merges every change."
   implementation dispatch for runtime changes plus the complete
   model-free R1–R24 proof package. No real-model validation is
   authorized.
+- 2026-08-21 — ADR-0008 IMPLEMENTED (dispatch q77-p3-adr8-impl-a, with
+  owner correction 1). `adr/0008-judgment-call-execution-reliability.md`
+  implemented exactly as adopted, in one commit, together with the
+  complete model-free R1–R24 proof package the ADR requires to land
+  with it. The ADR decision text itself is unchanged.
+  **Pre-write R10 proof.** Owner ruled R10 PASS conditional on
+  mechanically pinning the logical-task uniqueness invariant BEFORE any
+  runtime edit, against the ACTUAL production constructors rather than
+  hand-built policy objects. Eight tests landed and passed first, with
+  zero change to any inventory module: the fixture path list pinned
+  directly and through the real `FixtureSurfaceProvider`; the live
+  `_derive_policy` and `build_repo_surfaces` driven with a fake HTTP
+  client returning a git tree that repeats blob paths and a repo name
+  repeated across two pagination pages; `build_site_surface` driven the
+  same way; carry-forward `open_scopes` proven unable to reintroduce a
+  duplicate path; `_dedupe_repos_by_owner` proven to collapse doubled
+  owners before any work unit exists; and a combined case asserting
+  `(surface, check_class)` — and therefore `task_key` — is unique
+  across every production branch in one run. `(run_id, task_key)` is
+  reused unchanged: no task_id was added to `JudgmentRequest`, and no
+  attempt ordinal, retry-of reference or other identity mechanism was
+  invented. **Runtime landed.** `MAX_MODEL_ATTEMPTS_PER_TASK = 2` bounds
+  ACTUAL SDK invocations per logical judgment task (a pre-call
+  `REJECTED`/`EXHAUSTED` row, where no model call occurred, does not
+  count). The terminal `ResultMessage` is now captured out of the SDK
+  stream and carried beside any trailing exception, closing the
+  information-loss path that destroyed the typed subtype, token counts
+  and cost estimate of the 2026-08-20 failed call. One mechanized
+  classifier maps an invocation to exactly one class of the adopted
+  taxonomy; only a captured typed subtype `error_max_budget_usd` is
+  retryable, exception prose never authorizes a retry, and a tripped
+  tool breaker outranks a coexisting budget subtype. The second
+  invocation is ordinary: same request, prompts, model, cage,
+  `MAX_TURNS`, `MAX_TOOL_CALLS_PER_CHECK` and run-scoped coordinator,
+  with an ordinary reservation from remaining capacity. Each invocation
+  gets fresh host state, so a failed attempt's findings stay audit
+  evidence and never become live. **Observability.** New additive,
+  strictly append-only `agent_tool_attempts` table (no `ALTER TABLE`, no
+  `schema_version` bump, `IF NOT EXISTS` throughout, `DELETE` and
+  `UPDATE` both refused by trigger) records per proposal: parent call,
+  ordinal within that invocation, proposed reason code, proposed
+  evidence count, up to two proposed coordinates, outcome
+  (ACCEPTED/REJECTED/DUPLICATE/BREAKER_REFUSED) and a closed rejection
+  category. **Excerpt retention was decided by test, not assertion**, as
+  the owner correction required: an adversarial pair — a substantively
+  correct near-miss and an outright fabrication — was shown to reject
+  with identical reason code, coordinate and category, collapsing a
+  coordinates-only record into one indistinguishable row. A bounded
+  snippet is therefore retained, and only on that single
+  text-discriminated category, capped at 80 characters in code and by
+  DDL CHECK, redacted through the existing first-party boundary before
+  deterministic truncation; every other outcome retains no proposed
+  text. The older unbounded leak is closed too: `rejection_reason` no
+  longer stores raw host-validation prose that embedded the proposed
+  excerpt verbatim. **Accounting.** The silent
+  `min(converted_estimate, reservation)` clamp is gone: a completed call
+  with a recoverable estimate is charged the full converted estimate, a
+  failed call `max(reservation, estimate)`, and either state without a
+  recoverable estimate burns the full reservation. Known overshoot may
+  drive remaining run capacity to zero or negative, after which
+  `reserve()` refuses — a truthful record, never permission for more
+  spend. **Cross-layer ordering**, per the owner correction: tool-attempt
+  audit and call finalization commit in ONE ledger transaction, and the
+  in-memory coordinator advances only AFTER that transaction commits, so
+  a persistence failure can never leave accounting ahead of the audit
+  trail; failure injection on both legs proves the row stays RESERVED,
+  zero partial attempt rows survive, the reservation is still held at
+  its conservative post-reservation figure, no retry follows, and the
+  judgment fails closed. Process-crash behaviour is unchanged and no
+  crash-proof per-tool telemetry is claimed. Frozen values untouched:
+  `RUN_BUDGET_EUR_MICROS` 750000, `MAX_PER_CALL_RESERVE_EUR_MICROS`
+  150000, `SDK_ALLOWANCE_SAFETY_MARGIN` 0.70, `MAX_TURNS` 10,
+  `MAX_TOOL_CALLS_PER_CHECK` 5. Unchanged surfaces verified by diff:
+  prompts, evidence validation, the two judgment adapters, the judgment
+  stub protocol, the pipeline, every inventory module, `sentinel/config.py`,
+  `BLUEPRINT.md`, `EVAL_RESULTS.md`, fixtures, evals, artifacts, the
+  Phase-3 gate runner, answer key, scorer, thresholds, model and
+  ADR-0006 identity semantics. Documentation truth repair in the same
+  commit, narrow: `THREAT_MODEL.md` withdraws its false claim that
+  aggregate charged cost "cannot exceed" the run cap and states the
+  start-condition invariant that is actually enforced; `DATA_CONTRACT.md`
+  records the new table, the two-row logical task and the cost rules;
+  `DATA_RETENTION_POLICY.md` gains a section stating exactly what is and
+  is not retained, the snippet bound and its whitespace-normalization
+  limitation; `MODEL_CARD.md` records the bounded re-execution contract;
+  `SPEC.md` §6 records that caps govern whether a call may start.
+  **This session made no Sentinel checker-agent model call, no Haiku or
+  Sonnet call, no gate, re-gate, eval or scorer execution, and no manual
+  Sentinel judgment call.** ADR-0007's one prospective cycle remains
+  consumed and terminal, `max_regates` remains consumed, no gate runner
+  is amended and no gate predicate is relaxed or reinterpreted; all
+  three historical FAILs stand unrelabeled. Passing model-free tests is
+  not Phase-3 closure. `SentinelDailyRun` unchanged and still stub-mode.
+  No Phase 4 work. **Phase 3 remains OPEN. Phase 4 is not permitted
+  under the current lineage.** This commit does not self-cite its own
+  SHA — that SHA and its exact CI run are recorded in the private
+  operations OS's annotation for this work item. Next action:
+  independent post-implementation review of the exact implementation
+  commit and its R1–R24 proof. No real-model validation is authorized.
