@@ -46,3 +46,4 @@ posts/2026-08-05-phase-2-gate.md | stubs, with bounds tests proving no-write-acc
 posts/2026-08-05-phase-3-gate.md | Q-77 stays open. Phase 3 stays open. | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
 posts/2026-08-05-phase-3-gate.md | run under the current blueprint. Phase 3 stays open, Q-77 stays open, | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
 scripts/check_phase1_frozen.py | """Phase-1 freeze guard (BLUEPRINT §6 P1 freeze; Q-77 Phase 2 dispatch). | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
+STATE.md |   lineage. Q-77 remains OPEN.** | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only

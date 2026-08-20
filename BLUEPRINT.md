@@ -170,7 +170,7 @@ runner (v2 pattern) · live-inventory derivation (no static lists).
 ```
 ai-portfolio-sentinel/
 ├── BLUEPRINT.md / SPEC.md / README.md / CLAUDE.md / STATE.md
-├── adr/                        # decision records 0001–0007
+├── adr/                        # decision records 0001–0008
 ├── contracts/schemas.py        # CheckTask, Finding, RunRecord, CostRow
 ├── sentinel/                   # control plane: inventory, scheduler entry,
 │                               # dedup, lifecycle, aggregation, breakers

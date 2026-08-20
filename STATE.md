@@ -150,7 +150,14 @@ recording change-log entry below). The committed fixed-path
 re-gate artifact; the prospective raw evidence remains
 external/local, identified in `EVAL_RESULTS.md` by SHA-256. Next
 action: any subsequent validation path requires a new owner-governed
-decision; none is designed or authorized here.
+decision; none is designed or authorized here. Runtime-reliability
+ADR ADOPTED 2026-08-20
+(`adr/0008-judgment-call-execution-reliability.md`): bounded
+failed-call observability, a mechanized failure taxonomy, exactly one
+same-run re-execution for the single captured SDK budget-ceiling
+class, and honest overshoot accounting — NOT yet implemented; it
+authorizes no validation cycle (see the 2026-08-20 ADR-0008 adoption
+change-log entry below).
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -1097,3 +1104,57 @@ merges every change."
   **Phase 3 remains OPEN. Q-77 remains OPEN.** Next action: unchanged
   — any subsequent validation path requires a new owner-governed
   decision.
+- 2026-08-20 — ADR-0008 ADOPTED (dispatch q77-p3-adr8-adopt-a;
+  adoption-only commit).
+  `adr/0008-judgment-call-execution-reliability.md` created with
+  Status: ADOPTED, owner approved 2026-08-20 on the evidence basis of
+  the read-only design session (q77-p3-adr8-design-a) and its owner
+  red-team. Decision, in brief: the smallest runtime contract that
+  makes one pathological judgment-model call a contained, diagnosable
+  event — (1) bounded failed-call observability sufficient to
+  diagnose caught in-process judgment-call failures (the ADR-0005 §6
+  pre-registered revisit trigger fired: the 2026-08-20 failed real
+  call could not be adequately diagnosed from retained evidence);
+  (2) a mechanized failure taxonomy classified from captured typed
+  SDK signals, never from exception prose; (3) exactly ONE same-run
+  re-execution for exactly ONE failure class — captured terminal SDK
+  subtype `error_max_budget_usd` — inside the SAME run-scoped budget
+  state, with an ordinary reservation, a maximum of two actual model
+  invocations per logical judgment task, and fail-closed dead-letter
+  on any second-invocation failure; (4) honest overshoot accounting
+  replacing the silent `min(converted_estimate, reservation)` clamp
+  on recovered successful-call cost estimates (a latent
+  accounting/enforcement design vulnerability found by design review;
+  no historical occurrence is evidenced); (5) fail-closed behavior
+  preserved for every other failure class. The evidence boundary is
+  recorded in the ADR and stays narrow: the failed call's root cause
+  is not proven transient or stochastic — this is the only currently
+  observed execution-failure class for which the incident was
+  followed by successful same-scope re-execution. Frozen values
+  unchanged: RUN_BUDGET_EUR_MICROS 750000,
+  MAX_PER_CALL_RESERVE_EUR_MICROS 150000,
+  SDK_ALLOWANCE_SAFETY_MARGIN 0.70, MAX_TURNS 10,
+  MAX_TOOL_CALLS_PER_CHECK 5; ADR-0005's "FAIL -> raise again ->
+  rerun" prohibition stands. The BLUEPRINT.md change in this commit
+  is exactly one descriptive repository-tree line (decision records
+  0001–0007 -> 0001–0008); no substantive BLUEPRINT amendment.
+  **ADR-0008 is ADOPTED but NOT implemented** — no runtime, Python,
+  ledger-schema, test, prompt, model, fixture, answer-key, scorer,
+  threshold, identity or lifecycle change landed here, and the
+  required model-free proof package (ADR-0008 §9, R1–R24) does not
+  yet exist. **ADR-0008 authorizes no real-model validation cycle**:
+  ADR-0007's one prospective cycle remains consumed and terminal for
+  the current Sentinel-v1 Phase-3 validation lineage, `max_regates`
+  remains consumed, no gate runner is amended, no gate predicate is
+  relaxed or reinterpreted, and all three historical FAILs stand
+  unrelabeled. **This session made no Sentinel checker-agent model
+  call, no Haiku or Sonnet call, no gate, re-gate, eval or scorer
+  execution, and no manual Sentinel judgment call.**
+  `SentinelDailyRun` unchanged and still stub-mode. No Phase 4 work.
+  **Phase 3 remains OPEN. Phase 4 is not permitted under the current
+  lineage. Q-77 remains OPEN.**
+  This commit does not self-cite its own SHA — that SHA and its exact
+  CI run are recorded in the private operations OS's annotation for
+  this work item. Next action: a publication-clear adoption commit,
+  then an independent read of the adopted ADR-0008, then a separate
+  implementation dispatch if ADR-0008 survives that review.
