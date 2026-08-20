@@ -47,9 +47,7 @@ else:
                        if "template" not in f.name.lower()]
     count = len(decision_files)
     if count == 0:
-        errors.append("adr/ (or decisions/) has no decisions (need 1-5)")
-    elif count > 5:
-        errors.append(f"adr/ (or decisions/) has {count} decisions (cap is 5 - decisions were not decisions)")
+        errors.append("adr/ (or decisions/) has no decisions (need at least 1)")
 
 for banned in BANNED_WITHOUT_TRIGGER:
     if (ROOT / banned).exists():

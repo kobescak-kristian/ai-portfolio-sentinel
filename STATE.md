@@ -759,3 +759,28 @@ merges every change."
   self-cite its own SHA — that SHA and its exact CI run are recorded in
   the private operations OS's Q-77 annotation. Next action: a separate
   owner-governed decision about the prospective validation path.
+- 2026-08-20 — ARTIFACT_STANDARD v2.6 cap removal SYNCED; decision 0001
+  RESTORED (dispatch adr-cap-removal-a). ARTIFACT_STANDARD v2.6
+  (governing decision in the private operations OS,
+  ADR-2026-08-20-artifact-standard-v2.6-adr-cap-removal) supersedes the
+  five-record decision-record maximum; `.githooks/validate_artifacts.py`
+  synced to the no-hard-cap behavior (count>5 failure removed;
+  zero-count wording now "need at least 1"; folder-required and
+  at-least-one-record failures retained). Previous cap and consolidation
+  records in this change log remain historical and accurate for their
+  dates. The standalone `decisions/0001-separate-track.md` — consolidated
+  into this STATE.md on 2026-08-20 under the then-current five-record
+  rule — was restored at its exact original path, byte-exact from its
+  pre-consolidation Git blob `f8a6696a678e30baca940e605d77dc2cb82aecc7`
+  (hash re-verified on the restored file), recreating the `decisions/`
+  folder; the consolidation record above stands as history.
+  `adr/0002-architecture-skeleton-reuse.md` remains on disk, untouched.
+  A future ADR-0007 may coexist with ADR-0002 through ADR-0006 when a
+  genuine material decision warrants it; none is created by this commit.
+  **No Sentinel functional/evaluation behavior changed** — no evaluation
+  contract, model, prompt, fixture, answer key, scorer, threshold,
+  budget, identity, lifecycle, or Phase-3 result is altered. **This
+  session made no Sentinel model call; no real-model validation is
+  authorized by this commit.** Phase 3 remains OPEN. Q-77 remains OPEN.
+  Next action: a separate owner-governed decision about the prospective
+  validation path.
