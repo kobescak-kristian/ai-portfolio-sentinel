@@ -41,10 +41,18 @@ at commit `f9b7ea4e0762161a2519158ec817288308128584`, blob
 answer-key, scoring, threshold, model, prompt, lifecycle, fingerprint
 or evidence-validation change was made after seeing either result. The
 one permitted re-gate is now **consumed** and no third gate run is
-authorized under the current BLUEPRINT or ADR 0005; remediation design
-and any subsequent validation path require a separate owner-governed
-decision, and the exact governance form is not decided in these
-records. Implementation itself (the caged checker
+authorized under the current BLUEPRINT or ADR 0005. The identity
+remediation design decision has since been taken as a separate
+owner-governed ADR: `adr/0006-judgment-finding-identity.md`, ADOPTED
+2026-08-20, adopting Option C — persistent judgment finding identity is
+separated from descriptive model-selected evidence, with
+`normalized_content = "reason=<reason_code>"` for the two judgment
+classes built through `agents/checker/evidence.py`. That ADR is a
+decision record only: **the correction is not implemented**, and it
+authorizes **no** new real-model gate or validation run. Any subsequent
+validation path remains a separate owner-governed decision, and its
+exact governance form is not decided in these records.
+Implementation itself (the caged checker
 agent, run-scoped EUR budget, main-ledger audit, `--judgment-mode
 stub|agent` activation, the cage-suite tests, `THREAT_MODEL.md`,
 `MODEL_CARD.md`) landed complete and CI-green at commit
@@ -60,8 +68,9 @@ evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
 success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: see the
-Plan field below — the re-gate is spent, so what follows is a separate
-owner-governed decision, not another run.
+Plan field below — a separate implementation session for the ADR-0006
+correction and its model-free regression suite. The re-gate is spent;
+nothing that follows is another run.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -80,13 +89,16 @@ green, and the one separately authorized re-gate has since been run at
 that source: OVERALL FAIL, recorded in full in `EVAL_RESULTS.md` and in
 the 2026-08-20 change-log entry below. **Exactly zero re-gates remain**
 — the single permitted re-gate is consumed, and no third gate run is
-authorized under the current BLUEPRINT or ADR 0005. Next action:
-remediation design and any subsequent validation path require a
-separate owner-governed decision; the exact governance form is not
-decided in this record, and nothing here designs, authorizes or implies
-one. Activating the standing scheduled task in agent mode remains a
-separate, later decision either way — SentinelDailyRun stays
-stub-mode, unedited.
+authorized under the current BLUEPRINT or ADR 0005. Identity
+remediation ADR ADOPTED 2026-08-20
+(`adr/0006-judgment-finding-identity.md`, Option C) — decision record
+only, no implementation and no new validation authorized. Next action:
+a separate implementation session landing the identity correction
+together with its model-free T1–T8 regression suite; any subsequent
+real-model validation path remains a separate owner-governed decision,
+and nothing here designs, authorizes or implies one. Activating the
+standing scheduled task in agent mode remains a separate, later
+decision either way — SentinelDailyRun stays stub-mode, unedited.
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
 name kept). Internal path reference removed from the Visibility line
 2026-08-03 (this repo's own public-live rule; content unchanged
@@ -97,6 +109,27 @@ recognize decisions/ (two repos
 now affected: marketing, this one). Canonical patch belongs to the
 queued hook-maintenance batch in the private operations OS — not this
 repo's work.
+
+Decision 0001 — Separate track (adopted 2026-07-13). Status: ADOPTED
+and IN FORCE. Ruling provenance: main governance chat 2026-07-12;
+marketing-repo precedent applies. Substance, unchanged:
+ai-portfolio-sentinel runs as its own track; its task queue is this
+STATE.md; the private operations OS's task queue is READ-ONLY from this
+repo's sessions — it may be consulted for cross-dependencies but is
+never written from them; the private operations OS carries only the
+pointer/annotation required by its own governance workflow.
+Reopening condition (pre-registered): if this lane blocks or delays an
+operations-OS task queue item TWICE, track status is re-decided.
+Occurrences are counted here, dated, append-only. **Occurrence count:
+none.**
+Artifact note: this ruling previously lived as a standalone decision
+record at the former path `decisions/0001-separate-track.md`
+(pre-consolidation blob `f8a6696a678e30baca940e605d77dc2cb82aecc7`,
+recoverable through Git history). That file was consolidated into
+STATE.md on 2026-08-20 solely to comply with this repository's
+governing ARTIFACT_STANDARD decision-record cap of five non-template
+records. This is a representation change only: the decision is neither
+revoked nor superseded, and no replacement standalone artifact exists.
 
 Scope decision 2026-07-14 (Kristian): sentinel is built to
 production engineering standard as an explicit learning objective —
@@ -552,3 +585,78 @@ merges every change."
   evidence-validation, test or production-code change landed here. This
   commit does not self-cite its own SHA — that SHA and its exact CI run
   are recorded in the private operations OS's Q-77 annotation.
+- 2026-08-20 — Phase 3 identity-remediation ADR ADOPTED (dispatch
+  q77-p3-remediation-adr-adopt-b). `adr/0006-judgment-finding-identity.md`
+  created with Status: ADOPTED, owner approved 2026-08-20. Required
+  because ADR 0005 both froze `agents/checker/evidence.py` and stated
+  that a failed re-gate authorizes no further adjustment of any kind,
+  any subsequent path needing a new owner-approved ADR. **Decision —
+  Option C:** separate persistent finding identity from descriptive,
+  model-selected evidence. For the two judgment classes built through
+  `evidence.py`, `normalized_content` becomes `"reason=<reason_code>"`,
+  so judgment finding identity is effectively `(surface, check_class,
+  primary location, closed validated reason_code)`. Model-selected
+  excerpt text and the stale-STATE secondary anchor remain validated
+  and retained in `detail` as audit evidence but leave persistent
+  identity; `detail` is defined explicitly as first-seen audit
+  evidence, not latest-run evidence. `compute_content_hash` and
+  `compute_fingerprint` are unchanged, as are the ledger schema,
+  lifecycle semantics, deterministic checkers, prompts, tool schema,
+  budget configuration, model, fixtures, answer key, clean manifest,
+  scorer, thresholds and `max_regates`. Root cause recorded from the
+  consumed re-gate: two equally valid verbatim excerpt spans of the
+  same frozen line (`Coverage: 85.5 percent` and
+  `- Coverage: 85.5 percent` on `synthetic-05/EVAL_RESULTS.md:14`) both
+  passed host validation and produced two fingerprints for one semantic
+  defect. Alternatives A, B, D, E and F recorded as rejected, with F
+  recorded precisely: F **does** remove the secondary-anchor
+  fragmentation path and is rejected instead because primary source
+  content would remain part of identity. Honest residuals recorded: the
+  primary line stays in identity; two distinct same-class, same-reason
+  defects on one line would collapse to one identity (the frozen answer
+  key has no such collision and is one-to-one on `(check_class,
+  surface, location)`, verified); a source-text change at a stable
+  location is deliberately one continuing finding. Scoring disclosure
+  recorded narrowly: the frozen duplicate-as-FP rule cannot distinguish
+  same-identity judgment emissions differing only in evidence text —
+  **no** broader claim that the rule becomes unreachable. Migration:
+  none — no schema migration, no `schema_version` bump, no rewrite of
+  historical gate databases or artifacts; re-verified at adoption that
+  the operational ledger holds zero judgment-class findings and zero
+  `agent_calls` rows. The ADR requires the correction to land together
+  with a model-free T1–T8 regression suite, recorded as the only
+  **pre-validation** evidence currently authorized — not the only
+  evidence the correction will ever have. `MODEL_CARD.md` and
+  `THREAT_MODEL.md` corrected in this same commit as documentation
+  truth repair: they no longer state that the re-gate is pending or
+  that one re-gate remains, they no longer claim that no free-form
+  model text reaches a fingerprint-relevant field under the current
+  implementation, and they distinguish current behavior from the
+  adopted-but-unimplemented target. `DATA_CONTRACT.md` unchanged — its
+  frozen hash formulas remain correct. **No implementation landed
+  here**: no change to `agents/checker/evidence.py` or any production
+  code, no test, prompt, fixture, answer-key, clean-manifest, scorer,
+  threshold, `max_regates`, lifecycle, fingerprint or schema change.
+  This session made no Sentinel checker-agent model call, no Haiku or
+  Sonnet gate or re-gate call, no manual Sentinel judgment call, and no
+  gate, eval or scorer execution of any kind. The one permitted re-gate
+  remains CONSUMED and no third gate run is authorized; ADR 0006
+  authorizes no new real-model gate or validation run. **Phase 3
+  remains OPEN. Q-77 remains OPEN.** `SentinelDailyRun` unchanged and
+  still stub-mode. Artifact-cap handling in this same commit: the
+  repository's Tier-0 pre-push validator blocked the first push attempt
+  because `adr/` plus `decisions/` then held six non-template decision
+  records against the governing ARTIFACT_STANDARD cap of five. By owner
+  ruling this date, historical decision 0001 (Separate track) was
+  consolidated into this STATE.md — see the "Decision 0001 — Separate
+  track" block above — and the standalone file at the former path
+  `decisions/0001-separate-track.md` was deleted. Representation only:
+  no substantive decision was revoked or superseded, no fleet governing
+  standard was changed, the validator was not modified, `--no-verify`
+  was not used, and the original file remains recoverable in Git
+  history (blob `f8a6696a678e30baca940e605d77dc2cb82aecc7`). The
+  decision-record population is now exactly five non-template records,
+  `adr/0002` through `adr/0006`. This commit does not self-cite its own
+  SHA — that SHA and its exact CI run are recorded in the private
+  operations OS's Q-77 annotation. Next action: a separate
+  implementation session.

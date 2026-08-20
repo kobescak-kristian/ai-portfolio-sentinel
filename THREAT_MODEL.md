@@ -96,9 +96,37 @@ bounded evidence (reason code + line/excerpt) through the one tool; the
 host (`evidence.py`) independently verifies every cited line is in
 range and every excerpt appears verbatim on that line of
 `JudgmentRequest.text`, and rejects anything that doesn't. `location`,
-`normalized_content`, and `detail` — the fields that feed the ledger's
-dedup fingerprint — are built deterministically from verified data,
-never from free-form model prose.
+`normalized_content`, and `detail` are built by the host from that
+verified data; fabricated prose is rejected outright and never reaches
+the ledger.
+
+**Correction — what "verified" does and does not mean for identity.**
+Verification proves the cited text is real; it does not remove the
+model from the choice of *which* span of the line to cite. Under the
+current implementation that model-selected span participates in
+`normalized_content`, and therefore in `content_hash` and the dedup
+fingerprint. An earlier version of this section implied that no
+model-selected text reaches a fingerprint-relevant field; that was
+inaccurate and is corrected here. The consequence was demonstrated, not
+hypothesized: in the one permitted re-gate (2026-08-19) two equally
+valid verbatim spans of the same frozen line —
+`Coverage: 85.5 percent` and `- Coverage: 85.5 percent` on
+`synthetic-05/EVAL_RESULTS.md:14` — both passed host validation and
+produced two different fingerprints for one semantic defect,
+fragmenting its identity across runs and failing the two cross-run
+invariants (`EVAL_RESULTS.md`, "Root cause of the invariant failure").
+This is an identity-stability defect, not a containment failure: no
+unverified text entered the ledger at any point.
+
+**Adopted target (`adr/0006-judgment-finding-identity.md`, 2026-08-20)
+— ADOPTED BUT NOT YET IMPLEMENTED.** Excerpts remain validated audit
+evidence retained in `detail`, but leave persistent identity:
+`normalized_content` becomes `"reason=<reason_code>"` for the two
+judgment classes, making judgment identity `(surface, check_class,
+primary location, closed validated reason_code)`. The
+`compute_content_hash` and `compute_fingerprint` formulas are
+unchanged. Until that correction lands, the behavior described in the
+paragraph above is what the code does.
 
 **Residual risk**: the model can still *miss* a real defect (false
 negative) or select a technically-verbatim-but-misleading excerpt

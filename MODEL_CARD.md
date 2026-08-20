@@ -1,8 +1,8 @@
 <!-- DRAFT. Lands alongside the Phase-3 capability it describes
 (BLUEPRINT §6 P3; adr/0003 P3). Status: in development toward
 production-ready. No production claim is made in this document.
-Finalized with measured dev-gate evidence after the designated Phase-3
-gate runs (see EVAL_RESULTS.md for the actual figures once available). -->
+The designated Phase-3 gate and the one permitted re-gate have both
+run; their measured figures are in EVAL_RESULTS.md. -->
 
 # MODEL_CARD (DRAFT) — ai-portfolio-sentinel caged checker agent
 
@@ -71,10 +71,16 @@ reference rate.
   budget and must genuinely exercise the agent for its idempotent-rerun
   and dedup invariants to count.
 
-These are the settings the one remaining re-gate will run under. This
-document makes **no** claim that they produce a passing gate: the
-re-gate has not been run, and the recorded result stays the honest
-2026-08-05 FAIL until it is.
+These are the settings the one permitted re-gate ran under. That
+re-gate ran 2026-08-19 and recorded an honest **OVERALL FAIL**: every
+scoring threshold PASSED (pooled precision 60/60, pooled recall 60/60,
+per-class recall 10/10 on all six classes, clean false flags 0/166),
+and the failure is isolated to the two cross-run invariants,
+`idempotent_rerun` and `dedup_correct_on_doubled_fixture_run` — see
+§4a and `EVAL_RESULTS.md`. The re-gate is **consumed**; no third gate
+run is authorized under the current BLUEPRINT or `adr/0005`. Phase 3
+remains OPEN. This document makes no claim that the bounds above
+produce a passing gate.
 
 ## 4. Deterministic host canonicalization (evidence contract)
 
@@ -83,8 +89,38 @@ reason code (from a closed, per-class set) and one or two line/excerpt
 pairs. `agents/checker/evidence.py` independently validates every
 citation against the source document and *deterministically*
 constructs `location`, `normalized_content`, and `detail` — the fields
-that feed the ledger's dedup fingerprint — from verified data only.
-No free-form model text ever reaches a fingerprint-relevant field.
+that feed the ledger's dedup fingerprint — rejecting any citation whose
+excerpt does not appear verbatim on the cited line.
+
+**Current implementation, stated accurately:** host validation proves
+the cited text is real, but the model still *selects* which span of the
+line to cite, and under the current implementation that
+model-selected span reaches `normalized_content` and therefore the
+fingerprint (`normalized_content = f"{reason_code}|{primary.excerpt}"`,
+plus the secondary excerpt for the two-evidence class). An earlier
+version of this section claimed that no free-form model text ever
+reaches a fingerprint-relevant field; that claim was wrong for
+model-selected excerpt spans and is corrected here. The consumed
+re-gate demonstrated the consequence: two equally valid verbatim spans
+of one frozen line produced two fingerprints for one semantic defect
+(`EVAL_RESULTS.md`, "Root cause of the invariant failure").
+
+### 4a. Adopted target (`adr/0006-judgment-finding-identity.md`, 2026-08-20) — NOT YET IMPLEMENTED
+
+ADR 0006 adopts Option C: persistent finding identity is separated from
+descriptive, model-selected evidence. For the two judgment classes
+built through `evidence.py`, `normalized_content` becomes
+`"reason=<reason_code>"`, so judgment identity is effectively
+`(surface, check_class, primary location, closed validated
+reason_code)`. Excerpt text and the stale-STATE secondary anchor remain
+validated and retained in `detail` as first-seen audit evidence, but
+leave persistent identity. `compute_content_hash` and
+`compute_fingerprint` are unchanged.
+
+**This is an adopted decision, not landed behavior.** The correction is
+not implemented; §4 above describes what the code does today. ADR 0006
+authorizes the correction and its model-free regression suite only —
+no new real-model gate or validation run.
 
 ## 5. Cost and accounting semantics
 
@@ -107,9 +143,12 @@ for two of them), 166 clean units, scored per the frozen
 `evals/SCORING.md` contract against locked thresholds in
 `evals/eval_config.yaml`. **Actual measured figures for the two
 judgment classes this model handles — precision, recall, per-class
-recall, clean false-flag rate, and the run's real cost/token evidence
-— are recorded in `EVAL_RESULTS.md` after the designated Phase-3 dev
-gate runs; this draft does not anticipate or assume a result.**
+recall, clean false-flag rate, and each run's real cost/token evidence
+— are recorded in `EVAL_RESULTS.md` for both the designated
+2026-08-05 dev gate (honest FAIL) and the one permitted 2026-08-19
+re-gate (honest OVERALL FAIL: scoring thresholds all PASS, two
+cross-run invariants FAIL). This document transcribes no figure it does
+not take from that record.**
 
 ## 7. Known limitations and failure modes
 
