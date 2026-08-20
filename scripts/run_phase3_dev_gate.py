@@ -31,12 +31,30 @@ Passes:
   2. Doubled-fixture pass — same fixtures, same ledger DB, a fresh
      run_id. Proves idempotent_rerun and dedup_correct_on_doubled_fixture_run:
      zero new findings, every finding from pass 1 still OPEN.
+
+ADR-0007 Stage 2 (adr/0007-prospective-validation-protocol.md §2/§5,
+§6.B): the runner self-validates the execution-validity predicates —
+OVERALL PASS now requires BOTH the frozen scoring/invariant/cost
+checks above AND a mechanically valid execution (both designated runs
+COMPLETED, zero FAILED/DEAD_LETTER tasks, every agent_call COMPLETED
+with none FAILED/REJECTED/EXHAUSTED/RESERVED, run-2 real-agent
+coverage equal to run 1's, and exact source-SHA attestation). Agent
+mode additionally requires the §5 prospective preflight — pinned
+`--require-source-sha`, origin/main == HEAD, clean tree, Phase-1
+freeze guard PASS, and explicit fresh, non-default, initially
+nonexistent gate-root and artifacts-dir — which fails closed BEFORE
+any model call or positive budget reservation can be persisted.
+Existing evidence locations are never deleted or overwritten. The
+frozen scoring contract itself is unchanged.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
+import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -76,6 +94,116 @@ DETERMINISTIC_CLASSES = {"broken-link", "number-mismatch", "missing-required-fil
 # designated run, EUR 1.50 across the two-run gate session.
 PER_RUN_COST_CAP_EUR_MICROS = 750_000
 GATE_SESSION_COST_CAP_EUR_MICROS = 1_500_000
+
+# ADR-0007 §5: prospective evidence paths must be explicit, fresh and
+# non-default. These are the historical/default evidence locations —
+# they hold (or held) real gate evidence and may never be reused or
+# overwritten by a new execution.
+FORBIDDEN_EVIDENCE_PATHS = frozenset(
+    p.resolve()
+    for p in (
+        REPO_ROOT / "var" / "phase3_gate",
+        REPO_ROOT / "var" / "phase3_regate",
+        REPO_ROOT / "artifacts",
+    )
+)
+
+_HEX40 = re.compile(r"[0-9a-f]{40}")
+
+AGENT_CALL_STATES = ("RESERVED", "COMPLETED", "FAILED", "REJECTED", "EXHAUSTED")
+
+
+class PreflightError(RuntimeError):
+    """An ADR-0007 §5 prospective precondition failed. Raised before
+    any model call or positive budget reservation can exist, so the
+    consumption count C is zero by construction."""
+
+
+@dataclass(frozen=True)
+class PreflightResult:
+    """What the preflight actually verified. ``verified_head_sha`` is
+    the HEAD commit the preflight resolved and compared against
+    ``--require-source-sha`` — it is the authoritative source identity
+    recorded in the gate artifact, never a later re-read of HEAD."""
+
+    verified_head_sha: str
+    evidence_lines: tuple[str, ...]
+
+
+def _git(args: list[str]) -> str:
+    result = subprocess.run(
+        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+    )
+    return result.stdout.strip()
+
+
+def _freeze_guard_main() -> int:
+    return importlib.import_module("scripts.check_phase1_frozen").main()
+
+
+def _assert_fresh_evidence_dir(path: Path, label: str) -> None:
+    if path.resolve() in FORBIDDEN_EVIDENCE_PATHS:
+        raise PreflightError(
+            f"{label} {path} is a historical/default evidence location; "
+            "adr/0007 §5 requires an explicit fresh, non-default path"
+        )
+    if path.exists():
+        raise PreflightError(
+            f"{label} {path} already exists; adr/0007 §5 requires an initially "
+            "nonexistent path — existing evidence is never deleted or overwritten"
+        )
+
+
+def run_prospective_preflight(
+    *, require_source_sha: str, gate_root: Path, artifacts_dir: Path
+) -> PreflightResult:
+    """ADR-0007 §5 preflight, in order, failing fast. Runs before any
+    auth check, FX resolution, coordinator construction or model call:
+    a failure here means zero agent_calls rows exist (C == 0)."""
+
+    def git_or_fail(args: list[str], what: str) -> str:
+        try:
+            return _git(args)
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            raise PreflightError(f"{what} failed: {stderr or exc}") from exc
+
+    lines: list[str] = []
+    if not (isinstance(require_source_sha, str) and _HEX40.fullmatch(require_source_sha)):
+        raise PreflightError(
+            f"--require-source-sha {require_source_sha!r} is not a "
+            "40-lowercase-hex commit SHA"
+        )
+    lines.append(f"require_source_sha .... {require_source_sha} (valid 40-hex)")
+
+    git_or_fail(["fetch", "origin"], "git fetch origin")
+    lines.append("fetch origin .......... OK")
+
+    head = git_or_fail(["rev-parse", "HEAD"], "git rev-parse HEAD")
+    if head != require_source_sha:
+        raise PreflightError(f"HEAD {head} != required source SHA {require_source_sha}")
+    lines.append(f"HEAD .................. {head} == required source SHA")
+
+    origin_main = git_or_fail(["rev-parse", "origin/main"], "git rev-parse origin/main")
+    if origin_main != head:
+        raise PreflightError(f"origin/main {origin_main} != HEAD {head}")
+    lines.append("origin/main ........... == HEAD")
+
+    status = git_or_fail(["status", "--porcelain"], "git status --porcelain")
+    if status:
+        raise PreflightError(f"git status is not clean:\n{status}")
+    lines.append("git status ............ clean")
+
+    if _freeze_guard_main() != 0:
+        raise PreflightError("Phase-1 freeze guard FAILED")
+    lines.append("phase1 freeze guard ... PASS")
+
+    _assert_fresh_evidence_dir(gate_root, "gate-root")
+    _assert_fresh_evidence_dir(artifacts_dir, "artifacts-dir")
+    lines.append(f"gate-root ............. fresh: {gate_root}")
+    lines.append(f"artifacts-dir ......... fresh: {artifacts_dir}")
+
+    return PreflightResult(verified_head_sha=head, evidence_lines=tuple(lines))
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -254,8 +382,116 @@ def evaluate_cost_caps(run1_eur_micros: int, run2_eur_micros: int) -> list[tuple
     return checks
 
 
-def run_gate(*, judgment_mode: str, gate_root: Path) -> dict:
-    gate_root.mkdir(parents=True, exist_ok=True)
+def evaluate_execution_validity(
+    conn,
+    *,
+    run1_id: str,
+    run2_id: str,
+    outcome1,
+    outcome2,
+    required_source_sha: Optional[str],
+    attested_source_sha: Optional[str],
+) -> dict:
+    """ADR-0007 §2 execution-validity predicates, reconstructed
+    read-only from persisted ledger state so an independent verifier
+    can recompute every one of them from the gate DB alone. "Relevant
+    agent_calls" = every agent_calls row for the two designated run
+    IDs — the table is schema-constrained to the two judgment classes,
+    so every row is a checker judgment call by construction. The
+    runner records the reserved_eur_micros > 0 counts (the §3
+    consumption components) but never adjudicates a §3 disposition."""
+    per_run: dict[str, dict] = {}
+    for label, run_id in (("run1", run1_id), ("run2", run2_id)):
+        run = ledger.get_run(conn, run_id)
+        state_counts = {state: 0 for state in AGENT_CALL_STATES}
+        reserved_positive = 0
+        for call in ledger.list_agent_calls_for_run(conn, run_id):
+            state_counts[call.state] += 1
+            if call.reserved_eur_micros > 0:
+                reserved_positive += 1
+        per_run[label] = {
+            "run_status": run.status if run is not None else None,
+            "tasks_total": ledger.count_tasks(conn, run_id),
+            "tasks_failed": ledger.count_tasks(conn, run_id, statuses=["FAILED"]),
+            "tasks_dead_letter": ledger.count_tasks(conn, run_id, statuses=["DEAD_LETTER"]),
+            "agent_call_state_counts": state_counts,
+            "completed_agent_calls": state_counts["COMPLETED"],
+            "reserved_positive_calls": reserved_positive,
+        }
+    r1, r2 = per_run["run1"], per_run["run2"]
+
+    # Mechanical source attestation: presence of the required SHA is
+    # never sufficient — the preflight-verified actual HEAD must equal
+    # it exactly, on a valid 40-lowercase-hex identity, re-checked here
+    # independently of the preflight itself.
+    source_sha_attested = (
+        required_source_sha is not None
+        and attested_source_sha is not None
+        and _HEX40.fullmatch(required_source_sha) is not None
+        and attested_source_sha == required_source_sha
+    )
+
+    predicates = {
+        "run1_completed": r1["run_status"] == "COMPLETED",
+        "run2_completed": r2["run_status"] == "COMPLETED",
+        "runs_exit_code_zero": outcome1.exit_code == 0 and outcome2.exit_code == 0,
+        "zero_failed_tasks": r1["tasks_failed"] == 0 and r2["tasks_failed"] == 0,
+        "zero_dead_letter_tasks": (
+            r1["tasks_dead_letter"] == 0 and r2["tasks_dead_letter"] == 0
+        ),
+        "all_agent_calls_completed": all(
+            sum(run["agent_call_state_counts"].values()) == run["completed_agent_calls"]
+            for run in (r1, r2)
+        ),
+        "zero_agent_calls_failed": all(
+            run["agent_call_state_counts"]["FAILED"] == 0 for run in (r1, r2)
+        ),
+        "zero_agent_calls_rejected": all(
+            run["agent_call_state_counts"]["REJECTED"] == 0 for run in (r1, r2)
+        ),
+        "zero_agent_calls_exhausted": all(
+            run["agent_call_state_counts"]["EXHAUSTED"] == 0 for run in (r1, r2)
+        ),
+        "zero_agent_calls_reserved": all(
+            run["agent_call_state_counts"]["RESERVED"] == 0 for run in (r1, r2)
+        ),
+        "run2_has_completed_calls": r2["completed_agent_calls"] > 0,
+        "run2_call_count_equals_run1": (
+            r2["completed_agent_calls"] == r1["completed_agent_calls"]
+        ),
+        "source_sha_attested": source_sha_attested,
+    }
+    return {
+        "predicates": predicates,
+        "valid": all(predicates.values()),
+        "run1": r1,
+        "run2": r2,
+        "required_source_sha": required_source_sha,
+        "attested_source_sha": attested_source_sha,
+        "relevant_call_definition": (
+            "all persisted agent_calls rows for the two designated run IDs "
+            "(the table is schema-constrained to the two judgment classes, "
+            "so every row is a checker judgment call)"
+        ),
+        "check_lines": [
+            f"execution_validity[{name}]: {'PASS' if ok else 'FAIL'}"
+            for name, ok in predicates.items()
+        ],
+    }
+
+
+def run_gate(
+    *,
+    judgment_mode: str,
+    gate_root: Path,
+    required_source_sha: Optional[str] = None,
+    attested_source_sha: Optional[str] = None,
+) -> dict:
+    # ADR-0007 §5: the gate root must be fresh — existing evidence is
+    # never deleted or overwritten (the former delete-and-reuse path
+    # is removed in both modes).
+    _assert_fresh_evidence_dir(gate_root, "gate-root")
+    gate_root.mkdir(parents=True, exist_ok=False)
     eval_config = _load_eval_config()
     answer_key = _read_jsonl(ANSWER_KEY_PATH)
     clean_units = _read_jsonl(CLEAN_SURFACES_PATH)
@@ -264,9 +500,6 @@ def run_gate(*, judgment_mode: str, gate_root: Path) -> dict:
     findings_path = gate_root / "FINDINGS.md"
     log_path = gate_root / "gate.jsonl"
     cost_ledger_path = gate_root / "cost_ledger.jsonl"
-    for p in (db_path, findings_path, log_path, cost_ledger_path):
-        if p.exists():
-            p.unlink()
 
     ids = RandomIdFactory()
     run1_id = ids.new_run_id()
@@ -355,6 +588,18 @@ def run_gate(*, judgment_mode: str, gate_root: Path) -> dict:
         checks.extend(cost_checks)
         overall_pass = overall_pass and all(ok for ok, _ in cost_checks)
 
+        validity = evaluate_execution_validity(
+            conn,
+            run1_id=run1_id,
+            run2_id=run2_id,
+            outcome1=outcome1,
+            outcome2=outcome2,
+            required_source_sha=required_source_sha,
+            attested_source_sha=attested_source_sha,
+        )
+        checks.extend(zip(validity["predicates"].values(), validity["check_lines"]))
+        overall_pass = overall_pass and validity["valid"]
+
         return {
             "source_commit": None,  # filled in by main()
             "model": MODEL if judgment_mode == "agent" else "none-deterministic",
@@ -377,6 +622,9 @@ def run_gate(*, judgment_mode: str, gate_root: Path) -> dict:
             "cost_row1_micros": charged1,
             "cost_row2_micros": charged2,
             "total_charged_eur_micros": total_charged_micros,
+            "required_source_sha": required_source_sha,
+            "attested_source_sha": attested_source_sha,
+            "execution_validity": validity,
             "overall_pass": overall_pass,
         }
     finally:
@@ -386,23 +634,54 @@ def run_gate(*, judgment_mode: str, gate_root: Path) -> dict:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--judgment-mode", choices=["stub", "agent"], default="agent")
-    parser.add_argument("--gate-root", type=Path, default=REPO_ROOT / "var" / "phase3_gate")
-    parser.add_argument("--artifacts-dir", type=Path, default=REPO_ROOT / "artifacts")
+    parser.add_argument("--gate-root", type=Path, required=True)
+    parser.add_argument("--artifacts-dir", type=Path, required=True)
+    parser.add_argument("--require-source-sha", default=None)
     args = parser.parse_args(argv)
 
-    import subprocess
+    if args.judgment_mode == "agent" and args.require_source_sha is None:
+        parser.error("--require-source-sha is mandatory with --judgment-mode agent (adr/0007 §5)")
+    if args.judgment_mode == "stub" and args.require_source_sha is not None:
+        parser.error(
+            "--require-source-sha requires --judgment-mode agent "
+            "(a stub run is never source-attested)"
+        )
 
+    preflight: Optional[PreflightResult] = None
     try:
-        source_commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
-        ).stdout.strip()
-    except Exception:
-        source_commit = "unknown"
+        if args.judgment_mode == "agent":
+            preflight = run_prospective_preflight(
+                require_source_sha=args.require_source_sha,
+                gate_root=args.gate_root,
+                artifacts_dir=args.artifacts_dir,
+            )
+            for line in preflight.evidence_lines:
+                print(f"PREFLIGHT: {line}")
+        else:
+            _assert_fresh_evidence_dir(args.artifacts_dir, "artifacts-dir")
 
-    result = run_gate(judgment_mode=args.judgment_mode, gate_root=args.gate_root)
-    result["source_commit"] = source_commit
+        result = run_gate(
+            judgment_mode=args.judgment_mode,
+            gate_root=args.gate_root,
+            required_source_sha=args.require_source_sha,
+            attested_source_sha=preflight.verified_head_sha if preflight else None,
+        )
+    except PreflightError as exc:
+        print(f"PREFLIGHT FAIL: {exc}")
+        return 2
 
-    args.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    if preflight is not None:
+        # The authoritative source identity is the SHA the preflight
+        # actually verified — never a post-run re-read of HEAD.
+        result["source_commit"] = preflight.verified_head_sha
+        result["preflight"] = list(preflight.evidence_lines)
+    else:
+        # Stub mode: informational only, never attested. No "unknown"
+        # fallback exists — a git failure fails the runner.
+        result["source_commit"] = _git(["rev-parse", "HEAD"])
+        result["preflight"] = None
+
+    args.artifacts_dir.mkdir(parents=True, exist_ok=False)
     artifact_path = args.artifacts_dir / "phase3_dev_gate.json"
     with open(artifact_path, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(result, handle, indent=2, sort_keys=True)

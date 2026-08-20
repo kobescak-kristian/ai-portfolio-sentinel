@@ -110,13 +110,17 @@ correction, its model-free T1–T8 regression suite and the documentation
 truth repair those changes required. Prospective-validation governance
 ADOPTED 2026-08-20 (`adr/0007-prospective-validation-protocol.md`,
 BLUEPRINT §11(i)): exactly one prospective validation cycle is
-authorized under that ADR's protocol — governance only, nothing
-implemented or executed under it yet. Next action: ADR-0007 sequence
-step A2 — exact-SHA CI green on the Stage-1 governance-adoption
-commit — then the separate Stage-2 implementation dispatch (step B).
-Stage 2 must not begin before the exact Stage-1 SHA is green; steps
-C–F follow, and nothing executes before the external Stage-2 SHA pin
-and the ADR-0007 §5 preflight. Activating the
+authorized under that ADR's protocol. Stage 1 (step A) landed
+2026-08-20 and its exact-SHA CI ran green (step A2); Stage 2 (step B)
+is IMPLEMENTED 2026-08-20 in this commit — the runner now
+self-validates the §2 execution-validity predicates and the §5
+preflight, with model-free regression evidence only (see the
+2026-08-20 Stage-2 change-log entry). Nothing has executed under the
+ADR: the prospective cycle has NOT run. Next action: ADR-0007
+sequence step C — exact-SHA CI and freeze green on this Stage-2
+commit — then step D (external pin of the Stage-2 SHA); nothing
+executes before that pin and the §5 preflight (steps E–F follow).
+Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
@@ -864,3 +868,68 @@ merges every change."
   operations OS's Q-77 annotation. Next action: sequence step A2
   (exact-SHA CI green on this commit), then the separate Stage-2
   implementation dispatch.
+- 2026-08-20 — ADR-0007 Stage 2 IMPLEMENTED (dispatch
+  q77-stage2-adr0007-implement-a, sequence step B; Stage-1 exact-SHA
+  CI was green before this session began — step A2 satisfied).
+  `scripts/run_phase3_dev_gate.py` now self-validates the ADR-0007 §2
+  execution-validity predicates: OVERALL PASS requires BOTH the
+  unchanged frozen scoring/invariant/cost checks AND a new
+  `evaluate_execution_validity` result reconstructed read-only from
+  persisted ledger state — both designated runs COMPLETED with exit
+  code 0; zero FAILED and zero DEAD_LETTER tasks; every relevant
+  agent_call COMPLETED with zero FAILED/REJECTED/EXHAUSTED/RESERVED
+  rows ("relevant" = all agent_calls rows for the two designated run
+  IDs, the table being schema-constrained to the two judgment
+  classes); mechanical Run-2 coverage (>0 relevant COMPLETED
+  agent_calls AND equal to run 1's count); and mechanical source
+  attestation (the preflight-verified HEAD SHA must exactly equal the
+  mandatory `--require-source-sha` 40-lowercase-hex value — presence
+  alone never attests; the artifact's authoritative `source_commit`
+  is the preflight-verified SHA, never a post-run HEAD re-read). The
+  full predicate/count structure is embedded in the returned and
+  persisted gate result for independent reconstruction, including the
+  per-run `reserved_eur_micros > 0` counts (the §3 C components) —
+  the runner records them and adjudicates no disposition. The §5
+  preflight (`run_prospective_preflight`) is mandatory in agent mode
+  and fails closed BEFORE `run_gate` — before any auth check, FX
+  resolution, coordinator construction or model call, hence before
+  any positive-reservation agent_call row can be persisted (C == 0 on
+  preflight failure): valid 40-hex SHA; fetch origin; origin/main ==
+  HEAD == required SHA; clean `git status`; Phase-1 freeze guard PASS
+  (in-process invocation of `scripts/check_phase1_frozen.py`);
+  explicit fresh, non-default, initially nonexistent `--gate-root`
+  and `--artifacts-dir` (both now required arguments; the historical
+  locations `var/phase3_gate`, `var/phase3_regate` and `artifacts/`
+  are rejected). The former delete-existing-evidence path and the
+  `"unknown"` source-commit fallback are removed entirely; existing
+  evidence is never deleted or overwritten (fresh-dir creation uses
+  `exist_ok=False` in both modes). Exit codes: 0 OVERALL PASS,
+  1 complete result failing any condition, 2 usage/preflight failure
+  before any consumption. No frozen metric, invariant, threshold,
+  cost cap, fixture, answer key, scoring rule, schema, ledger,
+  harness, evidence, lifecycle, fingerprint or eval-config change;
+  `max_regates` remains 1. Evidence (model-free, network-free):
+  `tests/test_phase3_gate_runner.py` extended from 10 to 56 tests
+  covering the full previously approved V1–V12 substance — the exact
+  historical false-PASS shape (all frozen checks PASS while judgment
+  work FAILED/DEAD_LETTERed → OVERALL PASS now impossible, only
+  execution-validity lines FAIL), every blocking run/task/agent_call
+  state parametrically, Run-2 zero-coverage and count-inequality,
+  mechanical source attestation (mismatched/malformed/absent SHA
+  pairs can never validate), all preflight fail-closed cases on an
+  injected fake git, the consumption-boundary ordering proof, the
+  CLI contract, and the no-deletion guarantee; full suite 625 passed
+  + 3 skipped (Phase 3/4 stubs only), 89.6% line coverage;
+  `.githooks/validate_artifacts.py` Tier 0 PASS;
+  `scripts/check_phase1_frozen.py` PASS. **This session made no
+  Sentinel checker-agent model call, no gate, re-gate, eval or scorer
+  execution, and no manual judgment call; the prospective validation
+  cycle has NOT executed.** `SentinelDailyRun` unchanged and still
+  stub-mode. No Phase 4 work. **Phase 3 remains OPEN. Q-77 remains
+  OPEN.** This commit does not self-cite its own SHA — that SHA and
+  its exact CI run belong in the private operations OS's Q-77
+  annotation. Next action: sequence step C — exact-SHA CI and freeze
+  green on this Stage-2 commit — then step D, the external pin of
+  this Stage-2 SHA in the private operations OS's Q-77 annotation;
+  only then may the single prospective cycle execute (step E) under
+  the §5 preflight, followed by independent verification (step F).
