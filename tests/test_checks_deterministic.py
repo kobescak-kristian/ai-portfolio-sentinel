@@ -281,3 +281,56 @@ def test_checkers_are_deterministic_across_repeated_calls():
     fp1 = [f.normalized_content for f in check_readme_structure(ctx).findings]
     fp2 = [f.normalized_content for f in check_readme_structure(ctx).findings]
     assert fp1 == fp2
+
+
+# --- adr/0006 regression guard (T5) -----------------------------------------
+
+
+def test_t5_deterministic_checker_identity_is_unchanged_by_adr_0006():
+    """adr/0006 changes judgment identity ONLY. The four deterministic
+    checkers keep their exact ``normalized_content`` semantics, pinned
+    here as hand-written literals in this file's anti-oracle style
+    (no answer key is read). Altering or "harmonizing" any deterministic
+    checker's identity string breaks this test.
+
+    The judgment classes' own identity rule is proven in
+    tests/test_bounds.py (T1-T4, T8) and tests/test_lifecycle.py
+    (T6, T7)."""
+    # broken-link -- URL only; HTTP status deliberately excluded.
+    link = check_broken_link(
+        _ctx({"README.md": "[a](https://dead.example.invalid)\n"}, "README.md",
+             link_map={"https://dead.example.invalid": "dead"})
+    ).findings[0]
+    assert link.normalized_content == "url=https://dead.example.invalid"
+
+    # number-mismatch -- casefolded label plus both figures.
+    number = check_number_mismatch(
+        _ctx({"README.md": "- Accuracy: 91.9 percent\n",
+              "EVAL_RESULTS.md": "- Accuracy: 90.6 percent\n"}, "README.md")
+    ).findings[0]
+    assert number.normalized_content == "label=accuracy|readme=91.9|eval_results=90.6"
+
+    # missing-required-file -- the required path.
+    absent = check_missing_required_file(_ctx({}, "STATE.md")).findings[0]
+    assert absent.normalized_content == "required_path=STATE.md"
+
+    # readme-structure -- both defect shapes.
+    missing_header = check_readme_structure(
+        _ctx({"README.md": "## Solution\ns\n## System\nsy\n## Outcome\no\n## Version Log\nv\n"}, "README.md")
+    ).findings
+    assert [f.normalized_content for f in missing_header] == [
+        "defect=missing-header|header=## Problem"
+    ]
+
+    order_defect = check_readme_structure(
+        _ctx({"README.md": "## Problem\np\n## System\nsy\n## Solution\ns\n## Outcome\no\n## Version Log\nv\n"}, "README.md")
+    ).findings
+    assert [f.normalized_content for f in order_defect] == [
+        "defect=header-order|header=## System|expected=## Solution"
+    ]
+
+    # None of these carries a "reason=" identity, and every one of them
+    # still round-trips into a contract-legal ledger Finding.
+    for finding in (link, number, absent, *missing_header, *order_defect):
+        assert not finding.normalized_content.startswith("reason=")
+        _validate_as_finding(finding)

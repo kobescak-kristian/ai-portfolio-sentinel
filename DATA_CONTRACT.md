@@ -130,9 +130,19 @@ Summary of what's new to this contract:
   plus verbatim line/excerpt citations through one tool
   (`emit_finding`); `agents/checker/evidence.py` independently
   validates every citation against `JudgmentRequest.text` and
-  deterministically constructs the actual `ObservedFinding` — no
-  free-form model text ever reaches `location`, `normalized_content`,
-  or `detail`.
+  deterministically constructs the actual `ObservedFinding`. Precisely
+  what the model does and does not influence (`adr/0006`): `surface`,
+  `check_class` and `path` are host-owned and never come from the tool
+  payload; the PRIMARY line number is model-selected but host
+  range-validated, and it forms `location` and therefore participates
+  in identity; `reason_code` is model-selected from a closed,
+  host-enforced per-class set. `normalized_content` is
+  `"reason=<reason_code>"` — **no model-selected excerpt text reaches
+  it, and none reaches `content_hash` or the dedup fingerprint.**
+  Excerpts remain required, verbatim-validated fail-closed, and
+  retained in `detail` as first-seen audit evidence; the stale-STATE
+  secondary evidence item is likewise validated and audited but does
+  not participate in persistent identity.
 - **Cost**: a run-scoped EUR budget (not per-request), derived into a
   conservative per-call USD ceiling via a freshly-resolved ECB
   reference rate (`agents/checker/fx.py`) — never a hardcoded or

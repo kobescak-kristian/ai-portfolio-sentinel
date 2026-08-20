@@ -92,35 +92,52 @@ constructs `location`, `normalized_content`, and `detail` — the fields
 that feed the ledger's dedup fingerprint — rejecting any citation whose
 excerpt does not appear verbatim on the cited line.
 
-**Current implementation, stated accurately:** host validation proves
-the cited text is real, but the model still *selects* which span of the
-line to cite, and under the current implementation that
-model-selected span reaches `normalized_content` and therefore the
-fingerprint (`normalized_content = f"{reason_code}|{primary.excerpt}"`,
-plus the secondary excerpt for the two-evidence class). An earlier
-version of this section claimed that no free-form model text ever
-reaches a fingerprint-relevant field; that claim was wrong for
-model-selected excerpt spans and is corrected here. The consumed
-re-gate demonstrated the consequence: two equally valid verbatim spans
-of one frozen line produced two fingerprints for one semantic defect
-(`EVAL_RESULTS.md`, "Root cause of the invariant failure").
+**The identity defect this exposed, stated accurately (historical —
+behavior through the consumed re-gate).** Host validation proves the
+cited text is real, but the model still *selects* which span of the
+line to cite, and through the consumed re-gate that model-selected span
+reached `normalized_content` and therefore the fingerprint
+(`normalized_content = f"{reason_code}|{primary.excerpt}"`, plus the
+secondary excerpt for the two-evidence class). An earlier version of
+this section claimed that no free-form model text ever reaches a
+fingerprint-relevant field; that claim was wrong for model-selected
+excerpt spans and was corrected here at the ADR-0006 adoption. The
+consumed re-gate demonstrated the consequence: two equally valid
+verbatim spans of one frozen line produced two fingerprints for one
+semantic defect (`EVAL_RESULTS.md`, "Root cause of the invariant
+failure"). **§4a below describes what the code does now.**
 
-### 4a. Adopted target (`adr/0006-judgment-finding-identity.md`, 2026-08-20) — NOT YET IMPLEMENTED
+### 4a. Identity rule as implemented (`adr/0006-judgment-finding-identity.md`, adopted and landed 2026-08-20)
 
-ADR 0006 adopts Option C: persistent finding identity is separated from
-descriptive, model-selected evidence. For the two judgment classes
-built through `evidence.py`, `normalized_content` becomes
-`"reason=<reason_code>"`, so judgment identity is effectively
-`(surface, check_class, primary location, closed validated
-reason_code)`. Excerpt text and the stale-STATE secondary anchor remain
-validated and retained in `detail` as first-seen audit evidence, but
-leave persistent identity. `compute_content_hash` and
-`compute_fingerprint` are unchanged.
+ADR 0006 adopted Option C and it is **implemented**: persistent finding
+identity is separated from descriptive, model-selected evidence. For
+the two judgment classes built through `evidence.py`,
+`normalized_content` is `"reason=<reason_code>"`, so judgment identity
+is effectively `(surface, check_class, primary location, closed
+validated reason_code)`. Excerpt text and the stale-STATE secondary
+anchor remain required, fail-closed host-validated and retained in
+`detail` as **first-seen audit evidence** — they no longer participate
+in persistent identity. `compute_content_hash` and
+`compute_fingerprint` are unchanged, as are the ledger schema,
+lifecycle semantics and the four deterministic checkers' identity.
 
-**This is an adopted decision, not landed behavior.** The correction is
-not implemented; §4 above describes what the code does today. ADR 0006
-authorizes the correction and its model-free regression suite only —
-no new real-model gate or validation run.
+Two limits recorded with the decision and not fixed by it: the primary
+line number remains part of identity, and two genuinely distinct
+defects of the same class and reason code on the exact same line of one
+surface would collapse to one identity (ADR 0006 §6). Within-call
+emissions differing only in evidence span now collapse before persisted
+scoring; the frozen scorer, answer key and thresholds are unchanged
+(ADR 0006 §7).
+
+**Evidence status — read this before quoting anything above.** The
+correction landed together with its model-free T1–T8 regression suite
+(`tests/test_bounds.py`, `tests/test_lifecycle.py`,
+`tests/test_checks_deterministic.py`). That suite is the **only**
+evidence this correction currently has. **No new real-model gate,
+re-gate or validation run was authorized or performed**; the one
+permitted ADR-0005 re-gate remains consumed. Nothing here claims the
+correction produces a passing gate, and **Phase 3 remains OPEN**. Any
+subsequent validation path is a separate owner-governed decision.
 
 ## 5. Cost and accounting semantics
 

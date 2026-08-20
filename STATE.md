@@ -47,11 +47,18 @@ owner-governed ADR: `adr/0006-judgment-finding-identity.md`, ADOPTED
 2026-08-20, adopting Option C — persistent judgment finding identity is
 separated from descriptive model-selected evidence, with
 `normalized_content = "reason=<reason_code>"` for the two judgment
-classes built through `agents/checker/evidence.py`. That ADR is a
-decision record only: **the correction is not implemented**, and it
-authorizes **no** new real-model gate or validation run. Any subsequent
-validation path remains a separate owner-governed decision, and its
-exact governance form is not decided in these records.
+classes built through `agents/checker/evidence.py`. That correction is
+now **IMPLEMENTED** (2026-08-20), landed together with its required
+model-free T1–T8 regression suite; see the 2026-08-20 (ADR-0006
+implementation) change-log entry below for the exact rule, evidence and
+non-authorizations. **The implementation session made no Sentinel
+checker-agent model call and ran no gate, re-gate, eval or scorer**;
+its only evidence is model-free regression evidence. The one permitted
+re-gate remains **consumed**, no new real-model validation is
+authorized, and **Phase 3 remains OPEN** — passing model-free tests is
+not Phase-3 closure. Any subsequent validation path remains a separate
+owner-governed decision, and its exact governance form is not decided
+in these records.
 Implementation itself (the caged checker
 agent, run-scoped EUR budget, main-ledger audit, `--judgment-mode
 stub|agent` activation, the cage-suite tests, `THREAT_MODEL.md`,
@@ -68,9 +75,9 @@ evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
 success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: see the
-Plan field below — a separate implementation session for the ADR-0006
-correction and its model-free regression suite. The re-gate is spent;
-nothing that follows is another run.
+Plan field below — a separate owner-governed decision about the
+prospective validation path for the now-implemented ADR-0006
+correction. The re-gate is spent; nothing that follows is another run.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -91,12 +98,13 @@ the 2026-08-20 change-log entry below. **Exactly zero re-gates remain**
 — the single permitted re-gate is consumed, and no third gate run is
 authorized under the current BLUEPRINT or ADR 0005. Identity
 remediation ADR ADOPTED 2026-08-20
-(`adr/0006-judgment-finding-identity.md`, Option C) — decision record
-only, no implementation and no new validation authorized. Next action:
-a separate implementation session landing the identity correction
-together with its model-free T1–T8 regression suite; any subsequent
-real-model validation path remains a separate owner-governed decision,
-and nothing here designs, authorizes or implies one. Activating the
+(`adr/0006-judgment-finding-identity.md`, Option C) and **IMPLEMENTED
+2026-08-20** in one dedicated commit containing the identity
+correction, its model-free T1–T8 regression suite and the documentation
+truth repair those changes required. Next action: a separate
+owner-governed decision about the prospective validation path; any
+real-model validation remains that decision's to take, and nothing here
+designs, authorizes or implies one. Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
@@ -105,8 +113,9 @@ name kept). Internal path reference removed from the Visibility line
 otherwise). Fixture final counts → quantization integers: RESOLVED
 2026-08-04 at the Phase 1 freeze (integers stated in
 evals/eval_config.yaml and CI-enforced). Canonical validator does not
-recognize decisions/ (two repos
-now affected: marketing, this one). Canonical patch belongs to the
+recognize decisions/ (this repo is no longer affected — it holds no
+`decisions/` folder since the 2026-08-20 consolidation; the marketing
+repo remains affected). Canonical patch belongs to the
 queued hook-maintenance batch in the private operations OS — not this
 repo's work.
 
@@ -660,3 +669,93 @@ merges every change."
   SHA — that SHA and its exact CI run are recorded in the private
   operations OS's Q-77 annotation. Next action: a separate
   implementation session.
+- 2026-08-20 — ADR-0006 identity remediation IMPLEMENTED (dispatch
+  q77-p3-identity-implement-a). `adr/0006-judgment-finding-identity.md`
+  implemented exactly as adopted, in one dedicated commit, together with
+  the model-free T1–T8 regression suite the ADR requires to land with
+  it. **Exact implemented rule:** in `agents/checker/evidence.py`,
+  `normalized_content = f"reason={reason_code}"` for both judgment
+  classes, replacing `f"{reason_code}|{primary.excerpt}"` and
+  `f"{reason_code}|{primary.excerpt}|{secondary.excerpt}"`. Persistent
+  judgment finding identity is therefore `(surface, check_class,
+  primary location, closed validated reason_code)`. `location`
+  (`path:primary.line`), `detail` (both branches, byte-identical to
+  before), `compute_content_hash`, `compute_fingerprint`, the ledger
+  schema, `schema_version`, lifecycle semantics, the four deterministic
+  checkers, `agents/checker/tools.py`, `prompts.py`, the tool schema,
+  budget configuration, model, fixtures, answer key, clean manifest,
+  scorer, thresholds and `max_regates` are all unchanged. No schema
+  migration and no `schema_version` bump: `normalized_content` is never
+  persisted, only its derived `content_hash` is; the ADR-0006 §8
+  determination was re-verified against current source before the edit.
+  No historical gate artifact, gate database or gate result was touched.
+  **T1–T8, all model-free, all passing (16 tests):** T1 excerpt
+  variation — the consumed re-gate's own two spans of
+  `- Coverage: 85.5 percent` now yield one `normalized_content`, one
+  `content_hash` and one fingerprint, with `detail` still differing as
+  first-seen audit evidence, plus a stronger check that no document text
+  reaches the identity string for either evidence count; T2 distinct
+  defects stay distinct across different primary lines, different
+  surfaces at the same path, and different check classes at the same
+  location; T3 stale-STATE identity is stable across both a different
+  valid secondary anchor line and a different valid span of the same
+  secondary line, while different primary lines stay distinct; T4
+  fail-closed validation is unchanged — fabricated, non-verbatim,
+  empty, out-of-range and wrong-line excerpts are still rejected, the
+  closed reason-code set and per-class evidence count still enforced,
+  the stale-STATE **secondary** item proven still validated exactly as
+  hard as the primary (the specific new risk), and a rejected proposal
+  still records no finding; T5 all four deterministic checkers'
+  `normalized_content` pinned as hand-written literals, unchanged; T6
+  lifecycle rerun proxy — run 2 citing a different valid span of the
+  same defect gives `findings_new = 0`, the finding advances,
+  `findings_resolved = 0`, `findings_still_open = 1`, one ledger row,
+  `detail` not rewritten (the direct regression proof for the two
+  invariants that failed in the consumed re-gate); T7 old-identity
+  compatibility — an OPEN finding created under the old excerpt-bearing
+  rule resolves exactly once while the new fingerprint inserts once,
+  zero rows deleted, no exception, and run 3 stable, with no migration
+  and no historical-DB rewrite; T8 within-call dedup — two accepted
+  emissions of one identity differing only in valid span collapse to one
+  finding, with the widening recorded explicitly as deliberate per ADR
+  0006 §7 (the scorer is NOT changed to compensate), and distinct
+  primary lines proven still to produce two findings.
+  **Full suite: 579 passing, 3 skips** (563 + 16 new); `pip check`
+  clean; Tier-0 artifact validator PASS; Phase-1 freeze guard PASS;
+  pre-push hook PASS without `--no-verify`. Documentation truth repair
+  in this same commit, narrow: `MODEL_CARD.md` §4/§4a and
+  `THREAT_MODEL.md` §4 no longer say the correction is NOT YET
+  IMPLEMENTED, restate the excerpt-in-identity defect as historical
+  (behavior through the consumed re-gate, all re-gate evidence
+  preserved), and record that the correction's only evidence is
+  model-free regression evidence; `DATA_CONTRACT.md`'s judgment
+  evidence-contract bullet corrected under a binding owner instruction
+  this date — its stale claim that no free-form model text reaches
+  `location`, `normalized_content` or `detail` is replaced with the
+  accurate split (host-owned `surface`/`check_class`/`path`;
+  model-selected but host-validated primary line contributing to
+  `location` and identity; model-selected `reason_code` from the closed
+  host-enforced set; no excerpt text in `normalized_content` or the
+  fingerprint; excerpts and the stale-STATE secondary item retained as
+  validated first-seen audit evidence outside identity). No other
+  `DATA_CONTRACT.md` content changed. One stale non-blocking
+  parenthetical in the Open-decisions line above was narrowly corrected:
+  this repo holds no `decisions/` folder since the 2026-08-20
+  consolidation, so it is no longer among the repos affected by the
+  canonical-validator gap; that gap's canonical patch remains routed to
+  the private operations OS's hook-maintenance batch and no
+  hook-maintenance or fleet-standard work was done here. **This session
+  made no Sentinel checker-agent model call, no Haiku or Sonnet call, no
+  gate or re-gate execution, no eval or scorer execution, and no manual
+  Sentinel judgment call.** Model-free tests are not Phase-3 closure and
+  are not claimed as such: no evidence exists that the correction
+  produces a passing gate, and the ADR-0006 §6 residuals stand — the
+  primary line remains in identity, so a defect re-cited at a different
+  line would still fragment, and two distinct same-class, same-reason
+  defects on one line would collapse. The one permitted re-gate remains
+  **CONSUMED**; **no new real-model validation is authorized**.
+  **Phase 3 remains OPEN. Q-77 remains OPEN.** `SentinelDailyRun`
+  unchanged and still stub-mode. No Phase 4 work. This commit does not
+  self-cite its own SHA — that SHA and its exact CI run are recorded in
+  the private operations OS's Q-77 annotation. Next action: a separate
+  owner-governed decision about the prospective validation path.

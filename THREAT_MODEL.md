@@ -100,14 +100,15 @@ range and every excerpt appears verbatim on that line of
 verified data; fabricated prose is rejected outright and never reaches
 the ledger.
 
-**Correction — what "verified" does and does not mean for identity.**
-Verification proves the cited text is real; it does not remove the
-model from the choice of *which* span of the line to cite. Under the
-current implementation that model-selected span participates in
-`normalized_content`, and therefore in `content_hash` and the dedup
-fingerprint. An earlier version of this section implied that no
-model-selected text reaches a fingerprint-relevant field; that was
-inaccurate and is corrected here. The consequence was demonstrated, not
+**Correction — what "verified" does and does not mean for identity
+(historical: behavior through the consumed re-gate).** Verification
+proves the cited text is real; it does not remove the model from the
+choice of *which* span of the line to cite. Through the consumed
+re-gate that model-selected span participated in `normalized_content`,
+and therefore in `content_hash` and the dedup fingerprint. An earlier
+version of this section implied that no model-selected text reaches a
+fingerprint-relevant field; that was inaccurate and was corrected here
+at the ADR-0006 adoption. The consequence was demonstrated, not
 hypothesized: in the one permitted re-gate (2026-08-19) two equally
 valid verbatim spans of the same frozen line —
 `Coverage: 85.5 percent` and `- Coverage: 85.5 percent` on
@@ -115,18 +116,29 @@ valid verbatim spans of the same frozen line —
 produced two different fingerprints for one semantic defect,
 fragmenting its identity across runs and failing the two cross-run
 invariants (`EVAL_RESULTS.md`, "Root cause of the invariant failure").
-This is an identity-stability defect, not a containment failure: no
+This was an identity-stability defect, not a containment failure: no
 unverified text entered the ledger at any point.
 
-**Adopted target (`adr/0006-judgment-finding-identity.md`, 2026-08-20)
-— ADOPTED BUT NOT YET IMPLEMENTED.** Excerpts remain validated audit
-evidence retained in `detail`, but leave persistent identity:
-`normalized_content` becomes `"reason=<reason_code>"` for the two
-judgment classes, making judgment identity `(surface, check_class,
-primary location, closed validated reason_code)`. The
-`compute_content_hash` and `compute_fingerprint` formulas are
-unchanged. Until that correction lands, the behavior described in the
-paragraph above is what the code does.
+**Implemented (`adr/0006-judgment-finding-identity.md`, adopted and
+landed 2026-08-20).** Excerpts remain validated audit evidence
+retained in `detail` as **first-seen** evidence, but no longer
+participate in persistent identity: `normalized_content` is
+`"reason=<reason_code>"` for the two judgment classes, making judgment
+identity `(surface, check_class, primary location, closed validated
+reason_code)`. The `compute_content_hash` and `compute_fingerprint`
+formulas are unchanged.
+
+**The identity change weakens no containment rule.** Every excerpt —
+primary and stale-STATE secondary alike — is still required, still
+checked verbatim against the cited line of `JudgmentRequest.text`, and
+still rejected fail-closed if fabricated, empty, out of range or on the
+wrong line; a rejected proposal still yields no finding at all. That is
+proven directly by the T4 tests in `tests/test_bounds.py`, which
+include the specific risk that a secondary excerpt no longer affecting
+identity might be waved through. **Evidence status:** the correction's
+only evidence is its model-free T1–T8 regression suite. No new
+real-model gate, re-gate or validation run was authorized or performed;
+the ADR-0005 re-gate remains consumed and **Phase 3 remains OPEN**.
 
 **Residual risk**: the model can still *miss* a real defect (false
 negative) or select a technically-verbatim-but-misleading excerpt
@@ -136,7 +148,12 @@ independently judge whether the excerpt actually supports the reason
 code claimed. This is the same class of residual risk any single-pass
 LLM judgment call carries, and is exactly what the frozen eval gate
 (`evals/`) measures empirically (precision/recall against a labeled
-answer key) rather than assumes away.
+answer key) rather than assumes away. A second, narrower residual
+follows from the identity rule itself: the primary line number stays in
+identity, so a defect re-cited at a *different* line still fragments,
+and two genuinely distinct defects of the same class and reason code on
+the exact same line of one surface would collapse to one identity
+(ADR 0006 §6).
 
 ## 5. Usage-accounting failure
 

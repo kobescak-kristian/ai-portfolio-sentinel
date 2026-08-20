@@ -549,6 +549,325 @@ def test_duplicate_tool_emissions_within_one_call_do_not_duplicate_findings():
 
 
 # ---------------------------------------------------------------------
+# adr/0006 judgment finding identity (T1-T4, T8). The correction:
+# normalized_content = f"reason={reason_code}", so persistent judgment
+# identity is (surface, check_class, primary location, closed validated
+# reason_code) and arbitrary valid excerpt-span variation cannot mint a
+# second fingerprint for one semantic defect.
+#
+# T6 (lifecycle rerun proxy) and T7 (old-identity compatibility) live in
+# tests/test_lifecycle.py -- they need the ledger, not the cage. T5
+# (deterministic identity unchanged) lives in
+# tests/test_checks_deterministic.py.
+#
+# Every test here is model-free: no SDK call, no network, no fixture and
+# no answer-key read.
+# ---------------------------------------------------------------------
+
+# The exact line and the two exact spans from the consumed re-gate
+# (2026-08-19, synthetic-05/EVAL_RESULTS.md:14). Reproduced here as
+# plain literals -- no fixture file and no answer-key row is read.
+_REGATE_LINE = "- Coverage: 85.5 percent"
+_REGATE_SPAN_RUN_1 = "Coverage: 85.5 percent"
+_REGATE_SPAN_RUN_2 = "- Coverage: 85.5 percent"
+
+_LABEL_CODE = "FIGURE_WITHOUT_ADJACENT_SYNTHETIC_LABEL"
+_STALE_CODE = "DATED_ENTRY_CONTRADICTS_CURRENT_STATE"
+
+
+def _fingerprint_of(finding):
+    from sentinel.lifecycle import compute_content_and_fingerprint
+
+    return compute_content_and_fingerprint(finding)[1]
+
+
+def _label_finding(*, surface="acme/EVAL_RESULTS.md", path="EVAL_RESULTS.md", text, line, excerpt):
+    req = JudgmentRequest(
+        surface=surface, check_class="missing-synthetic-label", path=path, text=text
+    )
+    return build_observed_finding(
+        req, reason_code=_LABEL_CODE, evidence=[EvidenceItem(line=line, excerpt=excerpt)]
+    )
+
+
+def _stale_finding(*, text, primary, secondary):
+    req = JudgmentRequest(
+        surface="acme/STATE.md", check_class="stale-STATE-marker", path="STATE.md", text=text
+    )
+    return build_observed_finding(
+        req,
+        reason_code=_STALE_CODE,
+        evidence=[EvidenceItem(line=primary[0], excerpt=primary[1]), EvidenceItem(line=secondary[0], excerpt=secondary[1])],
+    )
+
+
+# --- T1: excerpt variation ---------------------------------------------
+
+
+def test_t1_different_valid_excerpt_spans_of_one_line_share_one_identity():
+    """The exact failure the consumed re-gate demonstrated. Two equally
+    valid verbatim spans of one frozen line -- a substring and the full
+    line -- must now produce ONE identity. detail deliberately still
+    differs: it is first-seen audit evidence, never identity."""
+    text = f"intro\n{_REGATE_LINE}\noutro"
+    run_1 = _label_finding(text=text, line=2, excerpt=_REGATE_SPAN_RUN_1)
+    run_2 = _label_finding(text=text, line=2, excerpt=_REGATE_SPAN_RUN_2)
+
+    assert run_1.normalized_content == f"reason={_LABEL_CODE}"
+    assert run_1.normalized_content == run_2.normalized_content
+    assert run_1.location == run_2.location == "EVAL_RESULTS.md:2"
+
+    from sentinel.lifecycle import compute_content_and_fingerprint
+
+    hash_1, fp_1 = compute_content_and_fingerprint(run_1)
+    hash_2, fp_2 = compute_content_and_fingerprint(run_2)
+    assert hash_1 == hash_2
+    assert fp_1 == fp_2
+
+    # Audit evidence still records exactly which span was cited first.
+    assert run_1.detail != run_2.detail
+    assert _REGATE_SPAN_RUN_1 in run_1.detail
+    assert _REGATE_SPAN_RUN_2 in run_2.detail
+
+
+def test_t1_no_excerpt_text_reaches_normalized_content_at_all():
+    """Stronger than span-equality: the identity string must contain no
+    document text whatsoever, for either evidence count."""
+    one = _label_finding(text=f"intro\n{_REGATE_LINE}\noutro", line=2, excerpt=_REGATE_SPAN_RUN_1)
+    two = _stale_finding(
+        text="head\n2026-01-01 shipped v1\nmiddle\nCurrent status: not shipped",
+        primary=(2, "2026-01-01 shipped v1"),
+        secondary=(4, "Current status: not shipped"),
+    )
+    assert one.normalized_content == f"reason={_LABEL_CODE}"
+    assert two.normalized_content == f"reason={_STALE_CODE}"
+    for finding, excerpts in (
+        (one, [_REGATE_SPAN_RUN_1]),
+        (two, ["2026-01-01 shipped v1", "Current status: not shipped"]),
+    ):
+        for excerpt in excerpts:
+            assert excerpt not in finding.normalized_content
+            assert excerpt in finding.detail  # retained as audit evidence
+
+
+# --- T2: distinct defects remain distinct -------------------------------
+
+
+def test_t2_distinct_primary_lines_on_one_surface_stay_distinct():
+    text = f"{_REGATE_LINE}\n{_REGATE_LINE}\n"
+    line_1 = _label_finding(text=text, line=1, excerpt=_REGATE_SPAN_RUN_1)
+    line_2 = _label_finding(text=text, line=2, excerpt=_REGATE_SPAN_RUN_1)
+    assert line_1.normalized_content == line_2.normalized_content  # same reason
+    assert line_1.location != line_2.location
+    assert _fingerprint_of(line_1) != _fingerprint_of(line_2)
+
+
+def test_t2_same_location_on_different_surfaces_stays_distinct():
+    text = f"intro\n{_REGATE_LINE}\n"
+    a = _label_finding(surface="acme/A.md", path="A.md", text=text, line=2, excerpt=_REGATE_SPAN_RUN_1)
+    b = _label_finding(surface="acme/B.md", path="B.md", text=text, line=2, excerpt=_REGATE_SPAN_RUN_1)
+    assert _fingerprint_of(a) != _fingerprint_of(b)
+
+    # And the surface alone is enough: same path, different surface.
+    same_path_a = _label_finding(surface="acme/X.md", path="X.md", text=text, line=2, excerpt=_REGATE_SPAN_RUN_1)
+    same_path_b = _label_finding(surface="other/X.md", path="X.md", text=text, line=2, excerpt=_REGATE_SPAN_RUN_1)
+    assert same_path_a.location == same_path_b.location
+    assert _fingerprint_of(same_path_a) != _fingerprint_of(same_path_b)
+
+
+def test_t2_same_location_under_different_check_classes_stays_distinct():
+    text = "2026-01-01 shipped v1\nCurrent status: not shipped\n"
+    label = _label_finding(surface="acme/STATE.md", path="STATE.md", text=text, line=1, excerpt="2026-01-01 shipped v1")
+    stale = _stale_finding(text=text, primary=(1, "2026-01-01 shipped v1"), secondary=(2, "Current status: not shipped"))
+    assert label.location == stale.location == "STATE.md:1"
+    assert label.normalized_content != stale.normalized_content
+    assert _fingerprint_of(label) != _fingerprint_of(stale)
+
+
+# --- T3: stale-STATE two-evidence stability -----------------------------
+
+
+_STALE_TEXT = (
+    "# STATE\n"
+    "2026-01-01 shipped v1\n"
+    "2026-02-01 shipped v2\n"
+    "filler\n"
+    "Current status: nothing shipped\n"
+    "filler\n"
+    "Status today: pre-release\n"
+)
+
+
+def test_t3_stale_state_identity_ignores_secondary_anchor_choice():
+    """Two different valid current-state anchors contradicting the same
+    dated entry are one continuing finding, not two."""
+    anchor_a = _stale_finding(
+        text=_STALE_TEXT,
+        primary=(2, "2026-01-01 shipped v1"),
+        secondary=(5, "Current status: nothing shipped"),
+    )
+    anchor_b = _stale_finding(
+        text=_STALE_TEXT,
+        primary=(2, "2026-01-01 shipped v1"),
+        secondary=(7, "Status today: pre-release"),
+    )
+    assert anchor_a.normalized_content == anchor_b.normalized_content
+    assert anchor_a.location == anchor_b.location
+    assert _fingerprint_of(anchor_a) == _fingerprint_of(anchor_b)
+    assert anchor_a.detail != anchor_b.detail  # audit evidence differs
+
+
+def test_t3_stale_state_identity_ignores_secondary_excerpt_span():
+    """Same secondary line, different valid span of it -- also one
+    identity. This is the secondary-evidence twin of T1."""
+    full_span = _stale_finding(
+        text=_STALE_TEXT,
+        primary=(2, "2026-01-01 shipped v1"),
+        secondary=(5, "Current status: nothing shipped"),
+    )
+    sub_span = _stale_finding(
+        text=_STALE_TEXT,
+        primary=(2, "2026-01-01 shipped v1"),
+        secondary=(5, "nothing shipped"),
+    )
+    assert _fingerprint_of(full_span) == _fingerprint_of(sub_span)
+
+
+def test_t3_stale_state_distinct_primary_lines_stay_distinct():
+    entry_1 = _stale_finding(
+        text=_STALE_TEXT,
+        primary=(2, "2026-01-01 shipped v1"),
+        secondary=(5, "Current status: nothing shipped"),
+    )
+    entry_2 = _stale_finding(
+        text=_STALE_TEXT,
+        primary=(3, "2026-02-01 shipped v2"),
+        secondary=(5, "Current status: nothing shipped"),
+    )
+    assert _fingerprint_of(entry_1) != _fingerprint_of(entry_2)
+
+
+# --- T4: fail-closed evidence validation --------------------------------
+
+
+def test_t4_evidence_validation_stays_fail_closed_after_identity_change():
+    """Removing excerpt text from identity must not weaken the
+    anti-fabrication contract. Every rejection path still rejects."""
+    text = f"intro\n{_REGATE_LINE}\noutro"
+    req = JudgmentRequest(
+        surface="acme/EVAL_RESULTS.md", check_class="missing-synthetic-label",
+        path="EVAL_RESULTS.md", text=text,
+    )
+    rejected = [
+        # Fabricated / non-verbatim excerpt.
+        dict(reason_code=_LABEL_CODE, evidence=[EvidenceItem(line=2, excerpt="Coverage: 99.9 percent")]),
+        # Verbatim text, but not on the cited line.
+        dict(reason_code=_LABEL_CODE, evidence=[EvidenceItem(line=1, excerpt=_REGATE_SPAN_RUN_1)]),
+        # Empty excerpt.
+        dict(reason_code=_LABEL_CODE, evidence=[EvidenceItem(line=2, excerpt="")]),
+        # Out-of-range / non-positive lines.
+        dict(reason_code=_LABEL_CODE, evidence=[EvidenceItem(line=999, excerpt=_REGATE_SPAN_RUN_1)]),
+        dict(reason_code=_LABEL_CODE, evidence=[EvidenceItem(line=0, excerpt=_REGATE_SPAN_RUN_1)]),
+        # Reason code outside the closed set for this class.
+        dict(reason_code=_STALE_CODE, evidence=[EvidenceItem(line=2, excerpt=_REGATE_SPAN_RUN_1)]),
+        # Wrong evidence count.
+        dict(reason_code=_LABEL_CODE, evidence=[]),
+        dict(
+            reason_code=_LABEL_CODE,
+            evidence=[EvidenceItem(line=2, excerpt=_REGATE_SPAN_RUN_1), EvidenceItem(line=1, excerpt="intro")],
+        ),
+    ]
+    for case in rejected:
+        with pytest.raises(EvidenceRejected):
+            build_observed_finding(req, **case)
+
+
+def test_t4_stale_state_secondary_evidence_is_still_validated():
+    """The specific new risk: the secondary excerpt no longer affects
+    identity, so it must be proven it is still validated exactly as
+    hard as the primary -- not quietly waved through."""
+    req = JudgmentRequest(
+        surface="acme/STATE.md", check_class="stale-STATE-marker", path="STATE.md", text=_STALE_TEXT
+    )
+    valid_primary = EvidenceItem(line=2, excerpt="2026-01-01 shipped v1")
+    for bad_secondary in (
+        EvidenceItem(line=5, excerpt="Current status: everything shipped"),  # fabricated
+        EvidenceItem(line=5, excerpt=""),                                     # empty
+        EvidenceItem(line=999, excerpt="Current status: nothing shipped"),    # out of range
+        EvidenceItem(line=0, excerpt="Current status: nothing shipped"),      # non-positive
+        EvidenceItem(line=6, excerpt="Current status: nothing shipped"),      # right text, wrong line
+    ):
+        with pytest.raises(EvidenceRejected):
+            build_observed_finding(
+                req, reason_code=_STALE_CODE, evidence=[valid_primary, bad_secondary]
+            )
+
+
+def test_t4_a_rejected_proposal_yields_no_finding_through_the_tool():
+    """Fail-closed end to end: the tool returns an error and records
+    nothing, so no partial identity can leak from a rejected proposal."""
+    state = CheckerToolState(
+        request=JudgmentRequest(
+            surface="acme/EVAL_RESULTS.md", check_class="missing-synthetic-label",
+            path="EVAL_RESULTS.md", text=f"intro\n{_REGATE_LINE}\noutro",
+        )
+    )
+    result = state.accept(
+        reason_code=_LABEL_CODE, raw_evidence=[{"line": 2, "excerpt": "Coverage: 99.9 percent"}]
+    )
+    assert result["is_error"] is True
+    assert state.findings == []
+
+
+# --- T8: within-call dedup ----------------------------------------------
+
+
+def test_t8_same_identity_emissions_with_different_spans_collapse_within_one_call():
+    """CheckerToolState's within-call dedup keys on
+    (check_class, location, normalized_content). Because
+    normalized_content no longer carries the excerpt, two emissions of
+    the same identity differing only in span now collapse where they
+    previously did not.
+
+    **This widening is deliberate** (adr/0006 §7): the collapsed
+    emission is no longer separately visible to the frozen
+    duplicate-as-false-positive rule in evals/SCORING.md §1. The ADR
+    records that trade-off narrowly -- the rule stays fully reachable
+    for deterministic classes and for judgment emissions differing in
+    location, class or reason code. The scorer is NOT changed to
+    compensate."""
+    state = CheckerToolState(
+        request=JudgmentRequest(
+            surface="acme/EVAL_RESULTS.md", check_class="missing-synthetic-label",
+            path="EVAL_RESULTS.md", text=f"intro\n{_REGATE_LINE}\noutro",
+        )
+    )
+    first = state.accept(reason_code=_LABEL_CODE, raw_evidence=[{"line": 2, "excerpt": _REGATE_SPAN_RUN_1}])
+    second = state.accept(reason_code=_LABEL_CODE, raw_evidence=[{"line": 2, "excerpt": _REGATE_SPAN_RUN_2}])
+
+    assert first.get("is_error") is not True
+    assert second.get("is_error") is not True
+    assert "Already recorded" in second["content"][0]["text"]
+    assert len(state.findings) == 1
+    # The surviving finding keeps the FIRST-SEEN span as audit evidence.
+    assert _REGATE_SPAN_RUN_1 in state.findings[0].detail
+
+
+def test_t8_genuinely_distinct_lines_still_produce_two_findings_in_one_call():
+    """The widening must not swallow distinct defects: two different
+    primary lines in one call still record two findings."""
+    state = CheckerToolState(
+        request=JudgmentRequest(
+            surface="acme/EVAL_RESULTS.md", check_class="missing-synthetic-label",
+            path="EVAL_RESULTS.md", text=f"{_REGATE_LINE}\n{_REGATE_LINE}\n",
+        )
+    )
+    state.accept(reason_code=_LABEL_CODE, raw_evidence=[{"line": 1, "excerpt": _REGATE_SPAN_RUN_1}])
+    state.accept(reason_code=_LABEL_CODE, raw_evidence=[{"line": 2, "excerpt": _REGATE_SPAN_RUN_2}])
+    assert len(state.findings) == 2
+
+
+# ---------------------------------------------------------------------
 # No write access to monitored repositories; no credential leakage.
 # ---------------------------------------------------------------------
 

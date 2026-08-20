@@ -5,10 +5,20 @@ The model never emits a complete ``ObservedFinding`` — it only
 proposes bounded evidence (a closed reason code plus verbatim
 line/excerpt pairs) through the one custom tool (tools.py). This
 module is what turns that proposal into a validated ``ObservedFinding``,
-or rejects it outright. No free-form model text ever reaches
-``location``, ``normalized_content`` or ``detail`` — those are built
-here, deterministically, from data verified against
-``JudgmentRequest.text``, never from the model's own prose.
+or rejects it outright: ``surface``, ``check_class`` and ``path`` come
+only from ``JudgmentRequest``, and every proposed line and excerpt is
+verified against ``JudgmentRequest.text`` before anything is built.
+
+What the model does and does not influence (adr/0006):
+
+- ``location`` carries the model-selected PRIMARY line number — host
+  range-validated, and part of persistent identity.
+- ``normalized_content`` carries the closed, host-enforced reason code
+  and nothing else. **No model-selected excerpt text ever reaches it,
+  and therefore none reaches ``content_hash`` or the dedup
+  fingerprint.**
+- ``detail`` retains the verbatim, host-validated excerpts as
+  FIRST-SEEN AUDIT EVIDENCE. It is descriptive, never identity.
 """
 
 from __future__ import annotations
@@ -99,14 +109,22 @@ def build_observed_finding(
         _validate_evidence_item(item, lines)
 
     # Deterministic construction from here on — no model prose.
+    #
+    # adr/0006: persistent identity is separated from descriptive
+    # evidence. normalized_content carries the closed, host-validated
+    # reason code ONLY — never a model-selected excerpt span — so two
+    # equally valid verbatim spans of the same line cannot mint two
+    # fingerprints for one semantic defect. Identity is therefore
+    # (surface, check_class, primary location, reason_code). The
+    # `reason=<value>` shape matches the deterministic checkers'
+    # existing house convention (`url=`, `required_path=`, `label=`).
     primary = evidence[0]
     location = f"{request.path}:{primary.line}"
+    normalized_content = f"reason={reason_code}"
     if len(evidence) == 1:
-        normalized_content = f"{reason_code}|{primary.excerpt}"
         detail = f"{reason_code} at line {primary.line}: {primary.excerpt!r}"
     else:
         secondary = evidence[1]
-        normalized_content = f"{reason_code}|{primary.excerpt}|{secondary.excerpt}"
         detail = (
             f"{reason_code}: line {primary.line} ({primary.excerpt!r}) "
             f"contradicts line {secondary.line} ({secondary.excerpt!r})"
