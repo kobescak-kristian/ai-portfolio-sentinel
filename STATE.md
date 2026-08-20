@@ -41,7 +41,10 @@ at commit `f9b7ea4e0762161a2519158ec817288308128584`, blob
 answer-key, scoring, threshold, model, prompt, lifecycle, fingerprint
 or evidence-validation change was made after seeing either result. The
 one permitted re-gate is now **consumed** and no third gate run is
-authorized under the current BLUEPRINT or ADR 0005. The identity
+authorized under ADR 0005; exactly one prospective validation cycle is
+separately authorized by `adr/0007-prospective-validation-protocol.md`
+via BLUEPRINT §11(i) (ADOPTED 2026-08-20 — governance only, not
+implemented, not executed; both historical FAILs stand unrelabeled). The identity
 remediation design decision has since been taken as a separate
 owner-governed ADR: `adr/0006-judgment-finding-identity.md`, ADOPTED
 2026-08-20, adopting Option C — persistent judgment finding identity is
@@ -54,11 +57,12 @@ implementation) change-log entry below for the exact rule, evidence and
 non-authorizations. **The implementation session made no Sentinel
 checker-agent model call and ran no gate, re-gate, eval or scorer**;
 its only evidence is model-free regression evidence. The one permitted
-re-gate remains **consumed**, no new real-model validation is
-authorized, and **Phase 3 remains OPEN** — passing model-free tests is
-not Phase-3 closure. Any subsequent validation path remains a separate
-owner-governed decision, and its exact governance form is not decided
-in these records.
+re-gate remains **consumed** and **Phase 3 remains OPEN** — passing
+model-free tests is not Phase-3 closure. The subsequent validation
+path has now been decided: `adr/0007-prospective-validation-protocol.md`
+(ADOPTED 2026-08-20) authorizes exactly one prospective validation
+cycle via BLUEPRINT §11(i) — governance only; nothing is implemented
+or executed under it yet.
 Implementation itself (the caged checker
 agent, run-scoped EUR budget, main-ledger audit, `--judgment-mode
 stub|agent` activation, the cage-suite tests, `THREAT_MODEL.md`,
@@ -75,9 +79,11 @@ evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
 success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: see the
-Plan field below — a separate owner-governed decision about the
-prospective validation path for the now-implemented ADR-0006
-correction. The re-gate is spent; nothing that follows is another run.
+Plan field below — the prospective validation path for the
+now-implemented ADR-0006 correction is governed by `adr/0007`
+(ADOPTED 2026-08-20). The re-gate is spent; the one authorized
+prospective cycle is a new, separately governed cycle under that ADR's
+protocol, not another re-gate.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -101,10 +107,16 @@ remediation ADR ADOPTED 2026-08-20
 (`adr/0006-judgment-finding-identity.md`, Option C) and **IMPLEMENTED
 2026-08-20** in one dedicated commit containing the identity
 correction, its model-free T1–T8 regression suite and the documentation
-truth repair those changes required. Next action: a separate
-owner-governed decision about the prospective validation path; any
-real-model validation remains that decision's to take, and nothing here
-designs, authorizes or implies one. Activating the
+truth repair those changes required. Prospective-validation governance
+ADOPTED 2026-08-20 (`adr/0007-prospective-validation-protocol.md`,
+BLUEPRINT §11(i)): exactly one prospective validation cycle is
+authorized under that ADR's protocol — governance only, nothing
+implemented or executed under it yet. Next action: ADR-0007 sequence
+step A2 — exact-SHA CI green on the Stage-1 governance-adoption
+commit — then the separate Stage-2 implementation dispatch (step B).
+Stage 2 must not begin before the exact Stage-1 SHA is green; steps
+C–F follow, and nothing executes before the external Stage-2 SHA pin
+and the ADR-0007 §5 preflight. Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
 **Open decisions:** rename window CLOSED 2026-08-03 (expired by date;
@@ -784,3 +796,71 @@ merges every change."
   authorized by this commit.** Phase 3 remains OPEN. Q-77 remains OPEN.
   Next action: a separate owner-governed decision about the prospective
   validation path.
+- 2026-08-20 — Prospective-validation governance ADOPTED (Q-77 Stage-1
+  governance-adoption dispatch; owner-approved, independently
+  red-teamed design). `adr/0007-prospective-validation-protocol.md`
+  created with Status: ADOPTED, and BLUEPRINT amended to v1.3 with the
+  dated §11(i) amendment plus a one-sentence §5 pointer: exactly ONE
+  new prospective Phase-3 validation cycle is authorized for the
+  current Sentinel-v1 lineage, governed entirely by ADR 0007 — its
+  runner-self-validated execution-validity predicates (both runs
+  COMPLETED with gate exit code 0; zero FAILED/DEAD_LETTER tasks;
+  every relevant agent_call COMPLETED with zero
+  FAILED/REJECTED/EXHAUSTED/RESERVED rows; mechanical Run-2 coverage —
+  run 2 must contain >0 relevant COMPLETED agent_calls AND match
+  run 1's relevant COMPLETED count; clean exact-SHA source
+  attestation; frozen metrics/invariants/cost caps unchanged;
+  independent read-only reconstruction for BOTH PASS and FAIL; fresh,
+  non-default, initially nonexistent gate-root/artifact paths), its
+  consumption boundary on C = persisted agent_calls rows with
+  reserved_eur_micros > 0 across the prospective run IDs with exactly
+  four dispositions and no fifth (C==0 → PRE-CALL ABORT, not
+  consumed, same SHA re-attemptable; C>0 + independently verified
+  PASS → PASS, Phase 3 may close, Phase-4 progression becomes
+  permitted, Q-77 stays OPEN for its remaining phases; C>0 + a
+  complete result failing a binding condition or a claimed PASS
+  contradicted by reconstruction → VALID COMPLETED FAIL, terminal for
+  this lineage, Phase 3 stays OPEN, no Phase 4; C>0 + no parseable
+  complete result → CONSUMED-PARTIAL / NO RESULT, consumed, no retry,
+  Phase 3 stays OPEN, no Phase 4, and explicitly NOT evidence of a
+  failed completed gate), its bound sequence A/A2/B/C/D/E/F (Stage-1
+  adoption; exact-SHA CI green on Stage 1 before Stage 2 may begin;
+  separate Stage-2 runner implementation with model-free regression
+  tests and STATE record; exact-SHA CI + freeze green on Stage 2;
+  external SHA pin; only then the one execution; then independent
+  verification), the §5 execution preflight (origin fetched and
+  origin/main == HEAD; HEAD equals the pinned Stage-2 SHA; clean
+  status; the runner receives the mandatory pinned source SHA;
+  Phase-1 freeze guard PASS; fresh nonexistent paths), and the rule
+  that any repository change after the external pin invalidates it
+  and stops execution for reassessment. ADR 0007 also records the
+  binding honest disclosures: consumed re-gate model-selected
+  primary-line stability was 20/20, not 60/60 (the other 40/60
+  findings were deterministic host-computed); the highest re-gate run
+  cost was 636,623 micro-EUR against the 750,000 micro-EUR per-run
+  cap (113,377 micro-EUR = 15.1% headroom); the frozen corpus is
+  remediation-informed acceptance evidence, not unseen-generalization
+  evidence; retrospective application of the ADR-0006 identity to the
+  consumed re-gate removes the fragmentation but does NOT relabel the
+  historical result; and the tailoring/gate-shopping objection is
+  disclosed, not claimed eliminated. `SPEC.md` §3 synchronized
+  (derived spec — BLUEPRINT governs); `MODEL_CARD.md` (§3 end, §4a
+  evidence-status) and `THREAT_MODEL.md` (§4 evidence-status)
+  narrowly truth-repaired so their authorization statements match
+  this HEAD — no other content in either file changed. ADR 0006
+  remains closed and unchanged; both historical gate results remain
+  FAILs; `evals/eval_config.yaml` `max_regates` remains 1; ADRs
+  0002–0006, decisions/0001, the template, `EVAL_RESULTS.md`,
+  `PHASE3_GATE_DIAGNOSIS.md` and `artifacts/` are untouched — no ADR
+  deleted or consolidated. **This session made no Sentinel
+  checker-agent model call, no Haiku or Sonnet call, no gate, re-gate,
+  eval or scorer execution, and no manual Sentinel judgment call; no
+  production code, test, prompt, fixture, answer-key, clean-manifest,
+  scorer, threshold, identity, lifecycle, fingerprint or eval-config
+  change landed here; Stage 2 has NOT begun.** `SentinelDailyRun`
+  unchanged and still stub-mode. No Phase 4 work. **Phase 3 remains
+  OPEN. Q-77 remains OPEN.** This commit does not self-cite its own
+  SHA — that SHA and its exact CI run are recorded in the private
+  operations OS's Q-77 annotation. Next action: sequence step A2
+  (exact-SHA CI green on this commit), then the separate Stage-2
+  implementation dispatch.

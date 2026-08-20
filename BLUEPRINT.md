@@ -1,5 +1,5 @@
 # BLUEPRINT — ai-portfolio-sentinel
-*v1.2 — 2026-08-04 (amendments in §11). Originally v1.0
+*v1.3 — 2026-08-20 (amendments in §11). Originally v1.0
 2026-07-13. Authored Fable-tier inside the closing window
 (~2026-08-07); every phase below is executable by Sonnet + Code from
 this document alone. Judgment is pre-frozen here the way
@@ -234,7 +234,9 @@ does not certify blind class discovery (wording corrected per ADR
 Official gate runs on Sonnet; dev iterations on Haiku (§7 routing).
 Gate result publishes green OR honest FAIL with miss-pattern analysis
 (orchestrator precedent, per the OS principles). One re-gate maximum,
-pre-declared here.
+pre-declared here. That one re-gate was consumed 2026-08-19 with an
+honest FAIL; exactly one prospective validation cycle is separately
+authorized by adr/0007 per §11(i) — `max_regates` unchanged.
 
 ## 6. Phases — gates, learning objectives, artifacts
 
@@ -314,7 +316,7 @@ of cost telemetry under ceiling, committed.
 12. Placement: blueprint lives in this repo from the scaffold commit
     (ruling, 2026-07-13).
 
-## 11. Amendments (v1.1, 2026-08-03; v1.2, 2026-08-04)
+## 11. Amendments (v1.1, 2026-08-03; v1.2, 2026-08-04; v1.3, 2026-08-20)
 
 Dated amendment record and mapping. The operative gate changes live
 in the §6 rows above; this section records what changed and why.
@@ -387,3 +389,28 @@ pooled integers lands before or with the check's code. As a
 backstop, the P6 stop-condition review must decide whether it is
 built and gated post-v1 or moved to §8 out-of-scope by dated
 ruling. It does not survive P6 as pending.
+
+(i) Prospective Phase-3 validation cycle (v1.3, 2026-08-20,
+adr/0007). The §5 one-re-gate maximum was consumed 2026-08-19
+(honest OVERALL FAIL, recorded in EVAL_RESULTS.md and STATE.md),
+and prior records correctly stated that no third gate run was
+authorized under the then-current BLUEPRINT or adr/0005. This
+dated amendment — never an edit to those older records — now
+authorizes exactly ONE new prospective Phase-3 validation cycle,
+governed entirely by adr/0007: its bound sequence A–F (Stage-1
+adoption, exact-SHA CI on Stage 1 before Stage 2, separate
+Stage-2 implementation with model-free tests, exact-SHA CI +
+freeze green, external SHA pin, only then execution, then
+independent verification), its runner-self-validated
+execution-validity predicates, its C-based consumption boundary
+with exactly four dispositions and no fifth (PRE-CALL ABORT not
+consumed; independently verified PASS — Phase 3 may close and
+Phase-4 progression becomes permitted while Q-77 stays open;
+VALID COMPLETED FAIL — terminal for this lineage, Phase 3 stays
+OPEN, no Phase 4; CONSUMED-PARTIAL / NO RESULT — consumed, no
+retry, Phase 3 stays OPEN, no Phase 4), and its external SHA pin
+with the rule that any repository change after pinning
+invalidates the pin and stops execution. The frozen scoring
+contract, model, fixtures, answer key, clean manifest, scorer,
+thresholds and `max_regates: 1` are unchanged; ADR-0005 history
+is not rewritten and both historical FAILs stand.

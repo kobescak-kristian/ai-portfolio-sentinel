@@ -136,9 +136,11 @@ wrong line; a rejected proposal still yields no finding at all. That is
 proven directly by the T4 tests in `tests/test_bounds.py`, which
 include the specific risk that a secondary excerpt no longer affecting
 identity might be waved through. **Evidence status:** the correction's
-only evidence is its model-free T1–T8 regression suite. No new
-real-model gate, re-gate or validation run was authorized or performed;
-the ADR-0005 re-gate remains consumed and **Phase 3 remains OPEN**.
+only evidence is its model-free T1–T8 regression suite. The ADR-0005
+re-gate remains consumed; exactly one prospective validation cycle is
+now authorized by `adr/0007` / BLUEPRINT §11(i) (adopted 2026-08-20),
+not yet implemented or executed, and no real-model run of any kind has
+been performed for this correction. **Phase 3 remains OPEN**.
 
 **Residual risk**: the model can still *miss* a real defect (false
 negative) or select a technically-verbatim-but-misleading excerpt

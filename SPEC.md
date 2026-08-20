@@ -79,7 +79,11 @@ the ratio over actual emitted findings binds). A threshold whose
 integer meaning is unstated is not frozen.
 
 Official gate on Sonnet; dev legs on Haiku. Gate result publishes
-green OR honest FAIL with miss-pattern analysis. One re-gate maximum.
+green OR honest FAIL with miss-pattern analysis. One re-gate maximum —
+consumed 2026-08-19 (honest FAIL). Exactly one prospective validation
+cycle is separately authorized by adr/0007 (BLUEPRINT §11(i)), under
+the unchanged frozen scoring contract and `max_regates: 1`; its
+protocol binds, and BLUEPRINT governs where this file diverges.
 
 ## 4. Injection spec for the P1 answer key (BLUEPRINT §5)
 

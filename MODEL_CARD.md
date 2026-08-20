@@ -78,7 +78,9 @@ per-class recall 10/10 on all six classes, clean false flags 0/166),
 and the failure is isolated to the two cross-run invariants,
 `idempotent_rerun` and `dedup_correct_on_doubled_fixture_run` — see
 §4a and `EVAL_RESULTS.md`. The re-gate is **consumed**; no third gate
-run is authorized under the current BLUEPRINT or `adr/0005`. Phase 3
+run is authorized under `adr/0005`. Exactly one prospective validation
+cycle is separately authorized by `adr/0007` / BLUEPRINT §11(i)
+(adopted 2026-08-20, not yet implemented or executed). Phase 3
 remains OPEN. This document makes no claim that the bounds above
 produce a passing gate.
 
@@ -133,11 +135,12 @@ scoring; the frozen scorer, answer key and thresholds are unchanged
 correction landed together with its model-free T1–T8 regression suite
 (`tests/test_bounds.py`, `tests/test_lifecycle.py`,
 `tests/test_checks_deterministic.py`). That suite is the **only**
-evidence this correction currently has. **No new real-model gate,
-re-gate or validation run was authorized or performed**; the one
-permitted ADR-0005 re-gate remains consumed. Nothing here claims the
-correction produces a passing gate, and **Phase 3 remains OPEN**. Any
-subsequent validation path is a separate owner-governed decision.
+evidence this correction currently has. The one permitted ADR-0005
+re-gate remains consumed. Exactly one prospective validation cycle is
+now authorized by `adr/0007` / BLUEPRINT §11(i) (adopted 2026-08-20)
+— not yet implemented or executed, and no real-model run of any kind
+has been performed for this correction. Nothing here claims the
+correction produces a passing gate, and **Phase 3 remains OPEN**.
 
 ## 5. Cost and accounting semantics
 
