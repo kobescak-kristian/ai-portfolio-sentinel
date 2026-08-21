@@ -176,11 +176,17 @@ prose — with logical judgment-task cross-run coverage, declared
 accounted-consumption acceptance ceilings of 750,000 micro-EUR per run
 and 1,500,000 micro-EUR across two runs, four dispositions with no
 fifth, no retry after a consumed non-PASS, and PARK as the default
-posture thereafter. **ADOPTED, NOT IMPLEMENTED** — only step A of its
-A–F sequence has run, Stage 2 has not begun, and no model call, gate,
-eval, scorer or validation has occurred under it. The frozen quality
-contract and `max_regates: 1` are unchanged and all three historical
-FAILs stand. Next action: independent read of ADR-0009.
+posture thereafter. **ADOPTED, and STAGE-2 IMPLEMENTED — NOT
+VALIDATED.** Its independent read returned PASS, and steps A, A2 and
+B/C of its A–F sequence have now run: the runner self-validates the
+ADR-0009 logical-history execution-validity contract, proven model-free
+(see the 2026-08-21 Stage-2 change-log entry below). Steps D, E and F
+have NOT run — the external Stage-2 validation SHA is NOT YET PINNED,
+and no model call, gate, re-gate, eval, scorer or validation execution
+has occurred under ADR-0009. The frozen quality contract and
+`max_regates: 1` are unchanged and all three historical FAILs stand.
+**Phase 3 remains OPEN. Phase 4 is NOT permitted.** Next action:
+independent review of the Stage-2 implementation commit.
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -1466,3 +1472,107 @@ merges every change."
   run are recorded in the private operations OS's annotation for this
   work item. Next action: independent read of ADR-0009, then a
   separate Stage-2 implementation dispatch if that read is PASS.
+- 2026-08-21 — ADR-0009 STAGE-2 RUNNER IMPLEMENTED, model-free
+  (dispatch q77-p3-adr9-stage2-a; bound-sequence steps B and C).
+  Precondition/history fact: the ADR-0009 independent read returned
+  **PASS** and preceded Stage 2. **This is implementation, not
+  validation** — nothing was validated, executed or claimed to work.
+  **What changed.** `scripts/run_phase3_dev_gate.py` now self-validates
+  the ADR-0009 §2/§3 execution-validity contract instead of ADR-0007
+  §2's failed-call and raw-call-count semantics; `tests/
+  test_phase3_gate_runner.py` carries the deterministic proof package;
+  STATE.md records this. Nothing else changed. ADR-0007 is NOT
+  reinterpreted: its §2 predicates remain historical fact, and the
+  historical implementation remains in git history.
+  **Execution validity is now evaluated over LOGICAL judgment
+  histories**, grouped by the already-proven `(run_id, task_key)`
+  identity with `agent_calls.id` as the deterministic attempt order.
+  Exactly two histories are valid — `[COMPLETED]` (NORMAL) and
+  `[FAILED reconstructed as SDK_BUDGET_CEILING, COMPLETED]` (BOUNDED
+  RECOVERY). Everything else is invalid with a closed structured
+  reason code: `[FAILED]`; `[FAILED, FAILED]`; `[FAILED (other
+  subtype), COMPLETED]`; `[COMPLETED, COMPLETED]`; three or more
+  invocation rows; any REJECTED, EXHAUSTED or RESERVED row.
+  **The mechanized class is reconstructed from durable structured
+  ledger fields only, and no schema was added.** Stage 2's §2A
+  determination is that the existing columns are sufficient: the
+  persisted `agent_tool_attempts` outcomes plus the typed SDK metadata
+  already on the `agent_calls` row reconstruct the class unambiguously,
+  because ADR-0008's tool state increments its attempt counter before
+  recording every proposal, records exactly one bounded audit row per
+  proposal, records `BREAKER_REFUSED` on every actual breaker refusal,
+  and flushes that audit in the SAME transaction that finalizes the
+  call. **A persisted `BREAKER_REFUSED` outcome takes precedence and
+  makes the recovery INVALID even when the row still carries
+  `sdk_subtype = error_max_budget_usd`, `sdk_is_error` true and a
+  positive reservation** — ADR-0008's classifier gives local
+  containment precedence, so subtype alone would promote a contained
+  call into a valid recovery, and it must not. Subtype, `sdk_is_error`
+  and positive reservation are corroboration, never the authorization.
+  **`rejection_reason` prose is not parsed** — not matched, not
+  regexed, not prefix-compared, not compared to any class name — and
+  neither is exception prose; a structural AST proof pins that no
+  executable statement in the runner reads that field at all.
+  **Audit completeness is verified BEFORE the absence of
+  `BREAKER_REFUSED` is trusted**: the persisted attempt rows must
+  number exactly `agent_calls.tool_attempts` with ordinals 1..N in
+  order, otherwise the failure class is not safely reconstructable and
+  the recovery fails closed rather than being inferred from a missing
+  row.
+  **Cross-run coverage counts distinct model-path logical `task_key`s,
+  not raw call rows** (§3): a recovered logical task is two invocation
+  rows but ONE task and counts once. Raw COMPLETED-agent-call-count
+  equality is gone; a global zero-FAILED-rows requirement is gone. A
+  FAILED row is permitted ONLY as the first row of the exact valid
+  bounded-recovery history. Every other ADR-0007 protection is retained
+  unweakened: both designated runs COMPLETED, both exit codes zero,
+  zero FAILED tasks, zero DEAD_LETTER tasks, no REJECTED/EXHAUSTED/
+  RESERVED agent-call row, exact source-SHA attestation, the §5
+  preflight, the clean-tree and origin/main == HEAD requirements, the
+  Phase-1 freeze requirement, fresh non-default nonexistent evidence
+  locations, and every frozen scoring check, threshold and invariant.
+  **Cost.** No numeric value moved: 750,000 micro-EUR per run and
+  1,500,000 micro-EUR across two runs. The correction is semantic and
+  documentary — these are accounted-consumption ACCEPTANCE ceilings,
+  not guaranteed maximum real-model spend. Stale runner wording
+  claiming a guaranteed EUR 1.50 maximum was repaired. Known post-call
+  overshoot is accounted in full, never clamped to obtain a PASS;
+  exceeding either ceiling is a FAIL; overshoot authorizes no further
+  invocation and no further cycle.
+  **Frozen surfaces unchanged, verified by diff.** Zero schema changes;
+  zero `agents/checker/` changes; zero scorer, fixture, answer-key,
+  clean-manifest, threshold or eval changes; zero model or prompt
+  changes; zero retry-taxonomy changes; zero cap increases; zero
+  finding-identity, finding-lifecycle or task-lifecycle changes. The
+  gate scorer still reads LIVE persisted findings, never the
+  tool-attempt audit, and no path converts a failed attempt's tool
+  proposal into a scoring finding. `.publicgate-allow` unmodified.
+  **Proof.** Model-free throughout, seeded through the real ledger
+  writers under the real SQLite schema and evaluated by the real
+  ADR-0009 evaluator over that database — including the load-bearing
+  negative (a `TOOL_BREAKER` row carrying the budget subtype AND
+  deliberately misleading budget-shaped `rejection_reason` prose, which
+  must and does yield INVALID), the incomplete-audit fail-closed cases,
+  the prose-invariance cases, the logical-coverage cases, the cost
+  boundary and honest-overshoot cases, and two end-to-end model-free
+  `run_gate` composition proofs where flipping ONLY the first failed
+  row's structured tool audit to `BREAKER_REFUSED` flips OVERALL from
+  PASS to FAIL through execution validity and never through a relaxed
+  scoring check. Full suite: 741 passed, 3 skipped (the existing
+  intentional Phase-4 stubs only), 91.1% line coverage; ADR-0008
+  R1–R26, ADR-0006 identity and the frozen scoring/invariant suites all
+  green; Tier 0 PASS; Phase-1 freeze guard PASS; repository publication
+  gate PASS.
+  **This session made no Sentinel checker-agent model call, no Haiku or
+  Sonnet call, no Phase-3 gate, re-gate, eval, scorer or validation
+  execution, and no manual Sentinel judgment call.** No Phase-3
+  validation cycle was executed and none is claimed. **The external
+  Stage-2 validation SHA is NOT YET PINNED** (sequence step D has not
+  run), so steps E and F have not begun. `SentinelDailyRun` unchanged
+  and still stub-mode. No Phase 4 work. **Phase 3 remains OPEN. Phase 4
+  is NOT permitted.** The governing task item's status is unchanged by
+  this commit and is tracked in the private operations OS. This commit
+  does not self-cite its own SHA — that SHA and its exact CI run are
+  recorded in the private operations OS's annotation for this work
+  item. Next action: independent review of this Stage-2 implementation
+  commit.

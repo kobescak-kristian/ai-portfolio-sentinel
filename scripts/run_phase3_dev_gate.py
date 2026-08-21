@@ -16,15 +16,20 @@ states. This is the required standalone scorer named by the dispatch;
 
 Cost design (adr/0005-phase3-gate-remediation.md): each designated run
 ID gets its OWN ``RunBudgetCoordinator`` — an independent EUR-0.75
-breaker per run, per agents/checker/config.py — so the maximum real
-model spend for a two-run gate session is EUR 1.50. The earlier single
+breaker per run, per agents/checker/config.py. The earlier single
 shared coordinator made run 2 vacuous: run 1 saturated the one cap,
 run 2 made zero real model calls, and its idempotent-rerun and dedup
 invariants passed on exhaustion containment rather than on real-agent
 re-execution. Run 2 must genuinely exercise the real agent for those
 invariants to count. Three distinct limits are in play and must not be
-conflated: the per-run breaker (EUR 0.75), the gate-session bound
-(EUR 1.50), and the monthly lane ceiling (EUR 50, unchanged).
+conflated: the per-run breaker (EUR 0.75), the two-run
+accounted-consumption ACCEPTANCE ceiling (EUR 1.50), and the monthly
+lane ceiling (EUR 50, unchanged). EUR 1.50 is NOT a guaranteed maximum
+real model spend: adr/0009 §4 and adr/0008 §7 record that the pinned
+SDK enforces its per-call budget after API-call activity, so a call
+already in flight can overshoot before being halted. Detected overshoot
+is accounted in full and never clamped; exceeding either ceiling is a
+gate FAIL.
 
 Passes:
   1. Primary pass — scores against the answer key / clean units.
@@ -32,14 +37,33 @@ Passes:
      run_id. Proves idempotent_rerun and dedup_correct_on_doubled_fixture_run:
      zero new findings, every finding from pass 1 still OPEN.
 
-ADR-0007 Stage 2 (adr/0007-prospective-validation-protocol.md §2/§5,
-§6.B): the runner self-validates the execution-validity predicates —
-OVERALL PASS now requires BOTH the frozen scoring/invariant/cost
-checks above AND a mechanically valid execution (both designated runs
-COMPLETED, zero FAILED/DEAD_LETTER tasks, every agent_call COMPLETED
-with none FAILED/REJECTED/EXHAUSTED/RESERVED, run-2 real-agent
-coverage equal to run 1's, and exact source-SHA attestation). Agent
-mode additionally requires the §5 prospective preflight — pinned
+Execution validity — the CURRENT prospective contract is
+adr/0009-post-adr0008-phase3-validation-protocol.md §2/§3, which
+supersedes ADR-0007 §2's failed-call and raw-call-count semantics for
+this lineage only (ADR-0007's own §2 predicates remain historical fact
+and are NOT reinterpreted). The runner self-validates it: OVERALL PASS
+requires BOTH the frozen scoring/invariant/cost checks above AND a
+mechanically valid execution. Judgment attempts group by
+`(run_id, task_key)` ordered by `agent_calls.id`, and for every logical
+judgment task on the model path exactly ONE history is valid —
+
+    [ COMPLETED ]                                       (NORMAL)
+    [ FAILED classified SDK_BUDGET_CEILING, COMPLETED ] (BOUNDED RECOVERY)
+
+— with cross-run coverage compared as distinct model-path logical
+`task_key` counts rather than raw COMPLETED agent-call counts, since a
+valid recovered history is two invocation rows but ONE logical task.
+The recovery class is reconstructed from durable structured ledger
+fields only (tool-attempt outcomes plus typed SDK metadata); exception
+and `rejection_reason` prose are never parsed, and a TOOL_BREAKER
+containment failure carrying `sdk_subtype = error_max_budget_usd` is
+NOT a valid recovery. Everything else ADR-0007 §2 required is retained
+unweakened: both designated runs COMPLETED, zero FAILED/DEAD_LETTER
+tasks, no REJECTED/EXHAUSTED/RESERVED agent_call row, and exact
+source-SHA attestation.
+
+Agent mode additionally requires the ADR-0007 §5 prospective preflight,
+unchanged and still in force — pinned
 `--require-source-sha`, origin/main == HEAD, clean tree, Phase-1
 freeze guard PASS, and explicit fresh, non-default, initially
 nonexistent gate-root and artifacts-dir — which fails closed BEFORE
@@ -90,10 +114,60 @@ DETERMINISTIC_CLASSES = {"broken-link", "number-mismatch", "missing-required-fil
 # deliberately and NOT imported from agents/checker/config.py: importing
 # the coordinator's own limits would make the cross-check tautological —
 # it would agree with the enforcement mechanism by construction instead
-# of independently checking it. Values per adr/0005: EUR 0.75 per
-# designated run, EUR 1.50 across the two-run gate session.
+# of independently checking it. Values per adr/0005, re-declared for
+# this lineage by adr/0009 §4: EUR 0.75 per designated run, EUR 1.50
+# across the two-run gate session.
+#
+# These are accounted-consumption ACCEPTANCE ceilings, not guaranteed
+# physical pre-spend limits (adr/0009 §4, adr/0008 §7): the pinned SDK
+# enforces its per-call budget after API-call activity, so a call in
+# flight can overshoot before being halted. Known overshoot is accounted
+# in full and NEVER clamped to obtain a PASS.
 PER_RUN_COST_CAP_EUR_MICROS = 750_000
 GATE_SESSION_COST_CAP_EUR_MICROS = 1_500_000
+
+# --- adr/0009 §2: structured logical-history vocabulary ---------------
+#
+# The two values below are restated as local literals rather than
+# imported from agents/checker/*, for the same anti-tautology reason as
+# the cost literals: this evaluator reconstructs the mechanized failure
+# class INDEPENDENTLY from durable ledger rows, so it must not agree
+# with the runtime by construction. Silent drift is prevented instead by
+# tests/test_phase3_gate_runner.py, which pins both against
+# agents.checker.failures / agents.checker.tools.
+
+#: The SDK's typed terminal subtype for its per-call budget ceiling.
+#: Corroboration for a bounded recovery — never the authorization.
+RECOVERY_SDK_SUBTYPE = "error_max_budget_usd"
+
+#: The persisted agent_tool_attempts outcome written for every actual
+#: tool-call circuit-breaker refusal. Its presence is authoritative:
+#: ADR-0008's classifier gives local containment precedence, so a
+#: TOOL_BREAKER call can persist while still carrying the budget
+#: subtype, and that call is never a valid recovery.
+BREAKER_REFUSED_OUTCOME = "BREAKER_REFUSED"
+
+# Valid history classifications.
+NORMAL_HISTORY = "NORMAL"
+BOUNDED_RECOVERY_HISTORY = "BOUNDED_RECOVERY"
+
+# Closed structured invalid-reason vocabulary. Every invalid logical
+# history carries exactly one of these; none of them is derived from
+# prose of any kind.
+INVALID_EMPTY_HISTORY = "EMPTY_HISTORY"
+INVALID_RESERVED_ROW = "RESERVED_ROW_PRESENT"
+INVALID_REJECTED_ROW = "REJECTED_ROW_PRESENT"
+INVALID_EXHAUSTED_ROW = "EXHAUSTED_ROW_PRESENT"
+INVALID_TOO_MANY_ROWS = "MORE_THAN_TWO_INVOCATION_ROWS"
+INVALID_LONE_FAILED_ROW = "LONE_FAILED_ROW_NO_RECOVERY"
+INVALID_FIRST_ROW_NOT_FAILED = "FIRST_ROW_NOT_FAILED"
+INVALID_SECOND_ROW_NOT_COMPLETED = "SECOND_ROW_NOT_COMPLETED"
+INVALID_ROW_IDENTITY_MISMATCH = "RECOVERY_ROW_IDENTITY_MISMATCH"
+INVALID_RECOVERY_AUDIT_INCOMPLETE = "RECOVERY_TOOL_AUDIT_INCOMPLETE"
+INVALID_RECOVERY_TOOL_BREAKER = "RECOVERY_TOOL_BREAKER_CONTAINMENT"
+INVALID_RECOVERY_NOT_SDK_ERROR = "RECOVERY_SDK_IS_ERROR_NOT_TRUE"
+INVALID_RECOVERY_SUBTYPE = "RECOVERY_SUBTYPE_NOT_BUDGET_CEILING"
+INVALID_RECOVERY_NO_RESERVATION = "RECOVERY_RESERVATION_NOT_POSITIVE"
 
 # ADR-0007 §5: prospective evidence paths must be explicit, fresh and
 # non-default. These are the historical/default evidence locations —
@@ -363,9 +437,15 @@ def build_run_deps(
 
 def evaluate_cost_caps(run1_eur_micros: int, run2_eur_micros: int) -> list[tuple[bool, str]]:
     """The gate's own independent cost cross-check: each designated run
-    within its own EUR 0.75 breaker, AND the two-run gate session within
-    EUR 1.50 in aggregate. Both are checked explicitly — a per-run pass
-    is not taken as implying the session bound."""
+    within its own EUR 0.75 accounted-consumption acceptance ceiling,
+    AND the two-run gate session within EUR 1.50 in aggregate. Both are
+    checked explicitly — a per-run pass is not taken as implying the
+    session bound.
+
+    The figures checked are what was ACCOUNTED, including any known
+    post-call overshoot (adr/0008 §7, adr/0009 §4). Nothing here clamps:
+    an accounted amount above a ceiling is a FAIL, never a silently
+    reduced PASS."""
     checks: list[tuple[bool, str]] = []
     for label, charged in (("run1", run1_eur_micros), ("run2", run2_eur_micros)):
         ok = charged <= PER_RUN_COST_CAP_EUR_MICROS
@@ -382,6 +462,130 @@ def evaluate_cost_caps(run1_eur_micros: int, run2_eur_micros: int) -> list[tuple
     return checks
 
 
+def _tool_audit_is_complete(call, attempts) -> bool:
+    """adr/0009 §2A / dispatch §1A: the persisted tool-attempt audit for
+    one invocation is internally complete.
+
+    This is load-bearing and deliberately comes FIRST. The absence of a
+    BREAKER_REFUSED row is evidence that no containment failure occurred
+    ONLY if the audit that would have carried it is known to be whole.
+    ADR-0008 buffers one attempt record per proposal and flushes them in
+    the same transaction that finalizes the call, so a finalized row's
+    audit must have exactly ``tool_attempts`` rows with ordinals
+    1..tool_attempts in order. Anything else means the failure class is
+    not safely reconstructable, and the caller fails closed."""
+    if len(attempts) != call.tool_attempts:
+        return False
+    return [a.ordinal for a in attempts] == list(range(1, call.tool_attempts + 1))
+
+
+def _reconstruct_budget_ceiling(conn, call) -> Optional[str]:
+    """Whether one FAILED row's mechanized failure class reconstructs as
+    SDK_BUDGET_CEILING. Returns ``None`` when it does, otherwise the
+    structured reason it does not.
+
+    Reconstruction uses durable structured fields ONLY: the persisted
+    agent_tool_attempts outcomes plus the typed SDK metadata already on
+    the agent_calls row. ``rejection_reason`` is never read, matched,
+    regexed or compared here — adr/0009 §2 forbids reconstructing the
+    class from prose, and ADR-0008's own reason strings are bounded
+    host-generated text, not an authorization signal."""
+    attempts = ledger.list_tool_attempts_for_call(conn, call.id)
+    if not _tool_audit_is_complete(call, attempts):
+        return INVALID_RECOVERY_AUDIT_INCOMPLETE
+    if any(a.outcome == BREAKER_REFUSED_OUTCOME for a in attempts):
+        # ADR-0008's classify_invocation checks breaker_tripped FIRST, so
+        # this is a TOOL_BREAKER containment failure no matter what
+        # subtype arrived alongside it. Never a valid recovery.
+        return INVALID_RECOVERY_TOOL_BREAKER
+    if call.sdk_is_error is not True:
+        return INVALID_RECOVERY_NOT_SDK_ERROR
+    if call.sdk_subtype != RECOVERY_SDK_SUBTYPE:
+        return INVALID_RECOVERY_SUBTYPE
+    if call.reserved_eur_micros <= 0:
+        return INVALID_RECOVERY_NO_RESERVATION
+    return None
+
+
+def _evaluate_logical_history(conn, task_key: str, calls: list) -> dict:
+    """adr/0009 §2: classify ONE logical judgment task's invocation
+    history. ``calls`` is that task's agent_calls rows in ascending
+    ``id`` order — the deterministic attempt order.
+
+    Exactly two histories are valid; everything else is invalid with a
+    structured reason."""
+    states = [c.state for c in calls]
+    summary = {
+        "task_key": task_key,
+        "call_ids": [c.id for c in calls],
+        "states": states,
+        "model_path": any(c.reserved_eur_micros > 0 for c in calls),
+        "valid": False,
+        "classification": None,
+        "invalid_reason": None,
+    }
+
+    def invalid(reason: str) -> dict:
+        summary["invalid_reason"] = reason
+        return summary
+
+    if not calls:
+        return invalid(INVALID_EMPTY_HISTORY)
+    # A non-terminal or never-invoked row makes the history invalid
+    # outright, before any shape analysis (adr/0009 §2).
+    if "RESERVED" in states:
+        return invalid(INVALID_RESERVED_ROW)
+    if "REJECTED" in states:
+        return invalid(INVALID_REJECTED_ROW)
+    if "EXHAUSTED" in states:
+        return invalid(INVALID_EXHAUSTED_ROW)
+    if len(calls) > 2:
+        return invalid(INVALID_TOO_MANY_ROWS)
+
+    if states == ["COMPLETED"]:
+        summary["valid"] = True
+        summary["classification"] = NORMAL_HISTORY
+        return summary
+    if states == ["FAILED"]:
+        return invalid(INVALID_LONE_FAILED_ROW)
+
+    first, second = calls
+    if first.state != "FAILED":
+        # Covers [COMPLETED, COMPLETED] and [COMPLETED, FAILED].
+        return invalid(INVALID_FIRST_ROW_NOT_FAILED)
+    if second.state != "COMPLETED":
+        return invalid(INVALID_SECOND_ROW_NOT_COMPLETED)
+    # Same run, same logical task, strictly later attempt. Guaranteed by
+    # the grouping and ordering above, re-asserted mechanically so the
+    # artifact records the check rather than assuming it.
+    if not (
+        second.run_id == first.run_id
+        and second.task_key == first.task_key
+        and second.id > first.id
+    ):
+        return invalid(INVALID_ROW_IDENTITY_MISMATCH)
+
+    reason = _reconstruct_budget_ceiling(conn, first)
+    if reason is not None:
+        return invalid(reason)
+
+    summary["valid"] = True
+    summary["classification"] = BOUNDED_RECOVERY_HISTORY
+    return summary
+
+
+def _logical_histories_for_run(conn, run_id: str) -> list[dict]:
+    """Every logical judgment history for one designated run, grouped by
+    ``(run_id, task_key)`` with ``agent_calls.id`` as attempt order."""
+    groups: dict[str, list] = {}
+    for call in ledger.list_agent_calls_for_run(conn, run_id):  # ORDER BY id
+        groups.setdefault(call.task_key, []).append(call)
+    return [
+        _evaluate_logical_history(conn, task_key, calls)
+        for task_key, calls in groups.items()
+    ]
+
+
 def evaluate_execution_validity(
     conn,
     *,
@@ -392,31 +596,58 @@ def evaluate_execution_validity(
     required_source_sha: Optional[str],
     attested_source_sha: Optional[str],
 ) -> dict:
-    """ADR-0007 §2 execution-validity predicates, reconstructed
-    read-only from persisted ledger state so an independent verifier
-    can recompute every one of them from the gate DB alone. "Relevant
+    """adr/0009 §2/§3 execution-validity predicates, reconstructed
+    read-only from persisted ledger state so an independent verifier can
+    recompute every one of them from the gate DB alone. "Relevant
     agent_calls" = every agent_calls row for the two designated run
     IDs — the table is schema-constrained to the two judgment classes,
-    so every row is a checker judgment call by construction. The
-    runner records the reserved_eur_micros > 0 counts (the §3
-    consumption components) but never adjudicates a §3 disposition."""
+    so every row is a checker judgment call by construction.
+
+    ADR-0009 evaluates LOGICAL judgment histories rather than raw call
+    rows, because ADR-0008's adopted bounded recovery makes one logical
+    task two invocation rows. The runner records the
+    reserved_eur_micros > 0 counts (the §5 consumption components,
+    surfaced as ``consumption_count_c``) but never adjudicates a §5
+    disposition."""
     per_run: dict[str, dict] = {}
     for label, run_id in (("run1", run1_id), ("run2", run2_id)):
         run = ledger.get_run(conn, run_id)
         state_counts = {state: 0 for state in AGENT_CALL_STATES}
         reserved_positive = 0
+        rows_total = 0
         for call in ledger.list_agent_calls_for_run(conn, run_id):
+            rows_total += 1
             state_counts[call.state] += 1
             if call.reserved_eur_micros > 0:
                 reserved_positive += 1
+        histories = _logical_histories_for_run(conn, run_id)
+        model_path = [h for h in histories if h["model_path"]]
         per_run[label] = {
             "run_status": run.status if run is not None else None,
             "tasks_total": ledger.count_tasks(conn, run_id),
             "tasks_failed": ledger.count_tasks(conn, run_id, statuses=["FAILED"]),
             "tasks_dead_letter": ledger.count_tasks(conn, run_id, statuses=["DEAD_LETTER"]),
             "agent_call_state_counts": state_counts,
+            "agent_call_rows_total": rows_total,
             "completed_agent_calls": state_counts["COMPLETED"],
+            "failed_agent_calls": state_counts["FAILED"],
+            # A positive reservation is persisted immediately before the
+            # SDK is invoked, so it is the mechanized marker of an ACTUAL
+            # model invocation row. The two keys are equal by
+            # construction and are both surfaced deliberately: one names
+            # the §5 consumption component, the other names the thing it
+            # counts.
             "reserved_positive_calls": reserved_positive,
+            "model_invocation_rows": reserved_positive,
+            "model_path_task_count": len(model_path),
+            "normal_history_count": sum(
+                1 for h in histories if h["classification"] == NORMAL_HISTORY
+            ),
+            "recovered_history_count": sum(
+                1 for h in histories if h["classification"] == BOUNDED_RECOVERY_HISTORY
+            ),
+            "invalid_history_count": sum(1 for h in histories if not h["valid"]),
+            "logical_histories": sorted(histories, key=lambda h: h["task_key"]),
         }
     r1, r2 = per_run["run1"], per_run["run2"]
 
@@ -439,12 +670,13 @@ def evaluate_execution_validity(
         "zero_dead_letter_tasks": (
             r1["tasks_dead_letter"] == 0 and r2["tasks_dead_letter"] == 0
         ),
-        "all_agent_calls_completed": all(
-            sum(run["agent_call_state_counts"].values()) == run["completed_agent_calls"]
-            for run in (r1, r2)
-        ),
-        "zero_agent_calls_failed": all(
-            run["agent_call_state_counts"]["FAILED"] == 0 for run in (r1, r2)
+        # adr/0009 §2. Replaces ADR-0007 §2's "every agent_call
+        # COMPLETED / zero FAILED agent_calls" pair, which cannot
+        # evaluate ADR-0008's adopted bounded recovery. A FAILED row is
+        # permitted ONLY as the first row of the exact valid recovery
+        # history; every other FAILED shape still fails here.
+        "all_logical_histories_valid": all(
+            h["valid"] for run in (r1, r2) for h in run["logical_histories"]
         ),
         "zero_agent_calls_rejected": all(
             run["agent_call_state_counts"]["REJECTED"] == 0 for run in (r1, r2)
@@ -455,9 +687,13 @@ def evaluate_execution_validity(
         "zero_agent_calls_reserved": all(
             run["agent_call_state_counts"]["RESERVED"] == 0 for run in (r1, r2)
         ),
-        "run2_has_completed_calls": r2["completed_agent_calls"] > 0,
-        "run2_call_count_equals_run1": (
-            r2["completed_agent_calls"] == r1["completed_agent_calls"]
+        # adr/0009 §3: coverage is compared as distinct model-path
+        # LOGICAL task_keys, never as raw COMPLETED call counts — a
+        # valid recovered history is two invocation rows but ONE task.
+        "run1_has_model_path_tasks": r1["model_path_task_count"] > 0,
+        "run2_has_model_path_tasks": r2["model_path_task_count"] > 0,
+        "logical_task_coverage_equal": (
+            r2["model_path_task_count"] == r1["model_path_task_count"]
         ),
         "source_sha_attested": source_sha_attested,
     }
@@ -468,11 +704,47 @@ def evaluate_execution_validity(
         "run2": r2,
         "required_source_sha": required_source_sha,
         "attested_source_sha": attested_source_sha,
+        # adr/0009 §5 consumption component, recorded as evidence for a
+        # later INDEPENDENT disposition reconstruction. The runner does
+        # not adjudicate a disposition and never authorizes another
+        # cycle.
+        "consumption_count_c": (
+            r1["reserved_positive_calls"] + r2["reserved_positive_calls"]
+        ),
         "relevant_call_definition": (
             "all persisted agent_calls rows for the two designated run IDs "
             "(the table is schema-constrained to the two judgment classes, "
             "so every row is a checker judgment call)"
         ),
+        "definitions": {
+            "logical_task": (
+                "one (run_id, task_key) group of agent_calls rows, ordered by "
+                "agent_calls.id — the deterministic attempt order"
+            ),
+            "model_path": (
+                "a logical task with at least one invocation row carrying "
+                "reserved_eur_micros > 0; the reservation is persisted "
+                "immediately before the SDK is invoked, so it is the "
+                "mechanized marker of an actual model invocation"
+            ),
+            "valid_histories": [
+                "[COMPLETED]",
+                "[FAILED reconstructed as SDK_BUDGET_CEILING, COMPLETED]",
+            ],
+            "recovery_reconstruction": (
+                "durable structured fields only: a complete agent_tool_attempts "
+                "audit (row count == agent_calls.tool_attempts, ordinals "
+                "1..N in order) with no BREAKER_REFUSED outcome, plus "
+                "sdk_is_error true, sdk_subtype == "
+                f"{RECOVERY_SDK_SUBTYPE!r} and reserved_eur_micros > 0. "
+                "rejection_reason and exception prose are never parsed; an "
+                "incomplete audit fails closed"
+            ),
+            "consumption_count_c": (
+                "agent_calls rows across both designated run IDs with "
+                "reserved_eur_micros > 0 (adr/0009 §5)"
+            ),
+        },
         "check_lines": [
             f"execution_validity[{name}]: {'PASS' if ok else 'FAIL'}"
             for name, ok in predicates.items()
