@@ -149,8 +149,10 @@ recording change-log entry below). The committed fixed-path
 `artifacts/phase3_dev_gate.json` continues to carry the 2026-08-19
 re-gate artifact; the prospective raw evidence remains
 external/local, identified in `EVAL_RESULTS.md` by SHA-256. Next
-action: any subsequent validation path requires a new owner-governed
-decision; none is designed or authorized here. Runtime-reliability
+action: any subsequent validation path required a new owner-governed
+decision; that decision has since been taken as
+`adr/0009-post-adr0008-phase3-validation-protocol.md` (below).
+Runtime-reliability
 ADR ADOPTED 2026-08-20
 (`adr/0008-judgment-call-execution-reliability.md`): bounded
 failed-call observability, a mechanized failure taxonomy, exactly one
@@ -159,7 +161,26 @@ class, and honest overshoot accounting. **IMPLEMENTED 2026-08-21**,
 landed together with the complete model-free R1–R24 proof package the
 ADR requires (see the 2026-08-21 implementation change-log entry
 below). It authorizes no validation cycle, and none has been run: its
-only evidence is model-free regression evidence.
+only evidence is model-free regression evidence; the subsequent
+independent-review remediation added and passed R25–R26 and was
+independently reread PASS (2026-08-21), which are later
+review-remediation proofs and not a restatement of ADR-0008's own
+R1–R24 requirement. Post-ADR-0008 validation governance ADOPTED
+2026-08-21 (`adr/0009-post-adr0008-phase3-validation-protocol.md`,
+BLUEPRINT §11(j)): exactly ONE new prospective Phase-3 validation
+cycle is authorized for the post-ADR-0008 implementation, under a
+prospective logical-history execution-validity rule whose recovery
+authorization is the persisted mechanized failure classification
+`SDK_BUDGET_CEILING` — never the SDK subtype alone and never exception
+prose — with logical judgment-task cross-run coverage, declared
+accounted-consumption acceptance ceilings of 750,000 micro-EUR per run
+and 1,500,000 micro-EUR across two runs, four dispositions with no
+fifth, no retry after a consumed non-PASS, and PARK as the default
+posture thereafter. **ADOPTED, NOT IMPLEMENTED** — only step A of its
+A–F sequence has run, Stage 2 has not begun, and no model call, gate,
+eval, scorer or validation has occurred under it. The frozen quality
+contract and `max_regates: 1` are unchanged and all three historical
+FAILs stand. Next action: independent read of ADR-0009.
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -1332,3 +1353,116 @@ merges every change."
   and its exact CI run are recorded in the private operations OS's
   annotation for this work item. Next action: independent reread of
   this remediation commit before any validation-protocol decision.
+- 2026-08-21 — ADR-0009 ADOPTED (dispatch q77-p3-adr9-adopt-a, with
+  owner corrections A and B; adoption-only commit).
+  `adr/0009-post-adr0008-phase3-validation-protocol.md` created with
+  Status: ADOPTED, owner approved 2026-08-21.
+  **Evidence lineage, stated precisely.** ADR-0008 is IMPLEMENTED
+  (2026-08-21) with the complete model-free **R1–R24** proof package
+  that ADR itself required; the subsequent independent review's
+  remediation added and passed **R25–R26**, and that remediation has
+  now been **independently reread PASS**. R25–R26 are later
+  review-remediation proofs — ADR-0008's own requirement was R1–R24
+  and is not retroactively restated as R1–R26.
+  **Why a new decision record was required at all**, and the only
+  reason: ADR-0007's one prospective cycle is consumed and terminal
+  for that lineage; ADR-0008 authorizes no real-model validation
+  (its §11 firewall); and ADR-0007 §2's execution-validity rule —
+  every relevant `agent_call` COMPLETED, zero FAILED `agent_calls` —
+  cannot evaluate the bounded-recovery sequence
+  `FAILED (SDK budget ceiling) -> COMPLETED` that ADR-0008 already
+  adopted. ADR-0007 is NOT reinterpreted to accommodate it: its §2
+  predicates stay historical fact, and ADR-0008 §11 forbids silently
+  reinterpreting predicates such as `zero_agent_calls_failed`.
+  **Decision.** Exactly ONE new prospective Phase-3 validation cycle
+  is authorized, for the post-ADR-0008 implementation. It is not
+  another re-gate under ADR-0005, not a rerun under ADR-0007, and not
+  a relabeling of any historical result; all three historical FAILs
+  (2026-08-05, 2026-08-19, 2026-08-20) stand unrelabeled and
+  `max_regates` remains 1. The frozen quality contract is unchanged in
+  every part: fixtures, answer key, clean manifest, scorer,
+  thresholds, model, prompts, reason codes, ADR-0006 finding identity,
+  deterministic checks. No cap rises.
+  **The new execution-validity rule is prospective** — defined before
+  any further model call, and binding on ADR-0009's cycle only.
+  Judgment attempts group by the already-proven `(run_id, task_key)`
+  identity ordered by `agent_calls.id`, and for every logical judgment
+  task entering the model path exactly one history is valid: NORMAL
+  `[COMPLETED]`, or BOUNDED RECOVERY `[FAILED, COMPLETED]` where the
+  FAILED row's **persisted mechanized failure classification is
+  `SDK_BUDGET_CEILING`**. Per owner correction A, the authoritative
+  condition is that mechanized classification, **never the SDK subtype
+  alone and never exception prose** — ADR-0008's classifier gives local
+  containment failures precedence, so a `TOOL_BREAKER` call can persist
+  while still carrying `sdk_subtype = error_max_budget_usd`, and
+  `[FAILED classified TOOL_BREAKER carrying that subtype, COMPLETED]`
+  is explicitly INVALID, as is any other non-`SDK_BUDGET_CEILING`
+  class followed by COMPLETED. Subtype `error_max_budget_usd`,
+  `sdk_is_error` true and a positive reservation are required
+  corroboration, not the authorization. Also invalid: `[FAILED]`;
+  `[FAILED, FAILED]`; `[FAILED (other subtype), COMPLETED]`;
+  `[FAILED (SDK_BUDGET_CEILING), FAILED]`; `[COMPLETED, COMPLETED]`;
+  three or more invocation rows; any REJECTED, EXHAUSTED or RESERVED
+  row. First-attempt findings remain audit-only; only the completed
+  logical outcome contributes live findings. Cross-run coverage is
+  compared as distinct model-path logical `task_key`s rather than raw
+  COMPLETED call counts, since a valid recovered history is two call
+  rows but ONE logical task. **No schema was added or changed here**:
+  ADR-0009 §2A binds the semantic requirement only and defers to Stage
+  2 the question of whether the existing durable fields reconstruct the
+  mechanized class unambiguously — if they cannot without ambiguous
+  free-text parsing, Stage 2 STOPS for owner adjudication rather than
+  adding schema or weakening the rule, and Stage 2 must carry a
+  deterministic negative test for TOOL_BREAKER carrying the budget
+  subtype.
+  **Cost.** This lineage declares its own accounted-consumption
+  acceptance ceilings, as ADR-0008 §8 requires: 750,000 micro-EUR per
+  run and 1,500,000 micro-EUR across the two runs. They are acceptance
+  ceilings, not guaranteed pre-spend limits — ADR-0008 §7 permits
+  detected post-call overshoot. All known overshoot is accounted
+  honestly, exceeding either ceiling is a FAIL, cost is never clamped
+  to obtain a PASS, and overshoot never authorizes another invocation
+  or another cycle.
+  **Finality.** ADR-0007's four-disposition structure is reused over
+  `C` = persisted `agent_calls` rows across the two designated run IDs
+  with `reserved_eur_micros > 0`: `C == 0` PRE-CALL ABORT (not
+  consumed); `C > 0` plus complete independently verified PASS (Phase 3
+  may close, Phase 4 becomes permitted); `C > 0` plus a complete result
+  failing any binding condition VALID COMPLETED FAIL (consumed, Phase 3
+  OPEN, no Phase 4); `C > 0` plus no parseable complete result
+  CONSUMED-PARTIAL / NO RESULT (consumed, Phase 3 OPEN, no Phase 4).
+  No fifth disposition. **A consumed non-PASS gets no retry under
+  ADR-0009 and creates no automatic further remediation or validation
+  cycle** — any further path requires a new owner decision, and the
+  default posture is PARK. The strongest case against is recorded in
+  the ADR and not dismissed: this is a further validation opportunity
+  after three failed Phase-3 outcomes, so gate-shopping is a
+  legitimate concern; what is offered against it is that nothing in
+  the scoring, corpus, model, prompts, caps, retry taxonomy or
+  identity changes, that ADR-0008 was adopted and implemented on its
+  own unattended-reliability merits, that the new rule is defined
+  prospectively and is stricter on the recovery path than subtype
+  matching would be, and that one consumed non-PASS ends this
+  authorization.
+  **This is Stage 1 (bound sequence step A) — governance only.
+  ADR-0009 is ADOPTED, NOT IMPLEMENTED.** No runtime, Python, schema,
+  ledger, test, runner, prompt, model, fixture, answer-key, scorer,
+  threshold, identity or lifecycle change landed here; Stage 2 has NOT
+  begun. The BLUEPRINT.md changes in this commit are the new dated
+  §11(j) amendment, the version-line and §11-header version bump, and
+  one descriptive repository-tree line (decision records 0001–0008 ->
+  0001–0009); §11(i) is preserved verbatim. SPEC.md was checked
+  clause by clause against the objectively-false test and left
+  unchanged: its statements are scoped to ADR-0007 and remain true,
+  and BLUEPRINT governs where the two diverge.
+  **This session made no Sentinel checker-agent model call, no Haiku
+  or Sonnet call, no Phase-3 gate, re-gate, eval, scorer or
+  validation execution, and no manual Sentinel judgment call.** The
+  repository publication gate DID run, as the publication control it
+  is; it is not a Phase-3 gate and proves nothing about judgment
+  quality. `SentinelDailyRun` unchanged and still stub-mode. No Phase
+  4 work. **Phase 3 remains OPEN. Phase 4 is NOT permitted.** This
+  commit does not self-cite its own SHA — that SHA and its exact CI
+  run are recorded in the private operations OS's annotation for this
+  work item. Next action: independent read of ADR-0009, then a
+  separate Stage-2 implementation dispatch if that read is PASS.

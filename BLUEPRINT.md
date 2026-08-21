@@ -1,5 +1,5 @@
 # BLUEPRINT — ai-portfolio-sentinel
-*v1.3 — 2026-08-20 (amendments in §11). Originally v1.0
+*v1.4 — 2026-08-21 (amendments in §11). Originally v1.0
 2026-07-13. Authored Fable-tier inside the closing window
 (~2026-08-07); every phase below is executable by Sonnet + Code from
 this document alone. Judgment is pre-frozen here the way
@@ -170,7 +170,7 @@ runner (v2 pattern) · live-inventory derivation (no static lists).
 ```
 ai-portfolio-sentinel/
 ├── BLUEPRINT.md / SPEC.md / README.md / CLAUDE.md / STATE.md
-├── adr/                        # decision records 0001–0008
+├── adr/                        # decision records 0001–0009
 ├── contracts/schemas.py        # CheckTask, Finding, RunRecord, CostRow
 ├── sentinel/                   # control plane: inventory, scheduler entry,
 │                               # dedup, lifecycle, aggregation, breakers
@@ -315,7 +315,7 @@ of cost telemetry under ceiling, committed.
 12. Placement: blueprint lives in this repo from the scaffold commit
     (ruling, 2026-07-13).
 
-## 11. Amendments (v1.1, 2026-08-03; v1.2, 2026-08-04; v1.3, 2026-08-20)
+## 11. Amendments (v1.1, 2026-08-03; v1.2, 2026-08-04; v1.3, 2026-08-20; v1.4, 2026-08-21)
 
 Dated amendment record and mapping. The operative gate changes live
 in the §6 rows above; this section records what changed and why.
@@ -413,3 +413,37 @@ invalidates the pin and stops execution. The frozen scoring
 contract, model, fixtures, answer key, clean manifest, scorer,
 thresholds and `max_regates: 1` are unchanged; ADR-0005 history
 is not rewritten and both historical FAILs stand.
+
+(j) Post-ADR-0008 Phase-3 validation cycle (v1.4, 2026-08-21,
+adr/0009). Amendment (i) above is preserved verbatim and is not
+edited. The one cycle it authorized ran 2026-08-20 and reached VALID
+COMPLETED FAIL — consumed and terminal for that lineage. Since then
+adr/0008 has been IMPLEMENTED (2026-08-21) with the complete
+model-free R1–R24 proof package that ADR required; the subsequent
+independent review's remediation added and passed R25–R26, and that
+remediation was independently reread PASS. R25–R26 are later
+review-remediation proofs, not a restatement of ADR-0008's own R1–R24
+requirement. adr/0008 authorizes no real-model validation, and
+adr/0007's execution-validity rule (every relevant `agent_call`
+COMPLETED, zero FAILED) cannot evaluate the bounded-recovery sequence
+adr/0008 already adopted. This dated amendment therefore authorizes
+exactly ONE new prospective Phase-3 validation cycle for the
+post-ADR-0008 implementation, governed entirely by adr/0009: its
+prospective logical-history execution-validity rule, in which a valid
+recovery is authorized by the persisted mechanized failure
+classification `SDK_BUDGET_CEILING` — never by the SDK subtype alone
+and never by parsing exception prose, so a `TOOL_BREAKER` call
+carrying that subtype stays invalid; its logical judgment-task
+cross-run coverage rule replacing raw COMPLETED call-count
+comparison; its accounted-consumption acceptance ceilings of 750,000
+micro-EUR per run and 1,500,000 micro-EUR across the two runs, with
+all known overshoot accounted honestly and never clamped to obtain a
+PASS; its four-disposition consumption boundary with no fifth, no
+retry after a consumed non-PASS and PARK as the default posture
+thereafter; and its bound A–F sequence. adr/0007 is unchanged and its
+predicates are not reinterpreted. The frozen scoring contract, model,
+prompts, fixtures, answer key, clean manifest, scorer, thresholds,
+reason codes, ADR-0006 identity, deterministic checks and
+`max_regates: 1` are all unchanged; no cap rises; ADR-0005 and
+ADR-0007 history is not rewritten and all three historical FAILs
+stand.
