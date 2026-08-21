@@ -3,8 +3,12 @@
 
 Every test here is model-free and network-free: conftest.py's autouse
 ``block_network`` fixture fails any test that reaches a real socket, and
-the caged harness is always driven through its injected ``query_fn``
-seam, never through ``claude_agent_sdk.query``.
+the caged harness is driven through its injected ``query_fn`` seam,
+never through the real ``claude_agent_sdk.query``. Section R25 (added by
+dispatch q77-p3-adr8-impl-review-remed-a) executes the production
+``run_query`` body itself, with ``claude_agent_sdk.query`` patched to a
+local deterministic stream — still no socket, no subprocess and no
+model.
 
 Section R10 is the PRE-WRITE proof: it pins the production uniqueness
 invariant that lets ADR-0008 reuse ``(run_id, task_key)`` as the logical
@@ -28,7 +32,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agents.checker import auth, failures
+from agents.checker import auth, failures, harness
 from agents.checker.budget import BudgetExhausted, RunBudgetCoordinator, usd_to_charged_eur_micros
 from agents.checker.config import (
     MAX_MODEL_ATTEMPTS_PER_TASK,
@@ -41,7 +45,7 @@ from agents.checker.config import (
 )
 from agents.checker.failures import QueryOutcome
 from agents.checker.fx import FxRate
-from agents.checker.harness import CagedCheckerStub, CheckerAgentError
+from agents.checker.harness import CagedCheckerStub, CheckerAgentError, TerminalAccountingError
 from agents.checker.tools import (
     ACCEPTED,
     BREAKER_REFUSED,
@@ -1506,6 +1510,322 @@ def test_r22_block_network_guard_is_active():
 
     with pytest.raises(AssertionError):
         socket.socket().connect(("127.0.0.1", 9))
+
+
+# =====================================================================
+# R25 - the REAL run_query capture body, driven model-free
+# =====================================================================
+#
+# Everything above drives the harness through its injected query_fn
+# seam and manufactures a QueryOutcome AFTER the capture boundary. That
+# proves the classifier and the accounting, but it never executes the
+# production function whose job IS the capture:
+# agents.checker.harness.run_query. The historical defect lived exactly
+# there - a terminal typed ResultMessage observed inside the stream,
+# then a trailing ordinary exception, and the typed signal lost before
+# return - so it needs a direct test of that body.
+#
+# Only claude_agent_sdk.query is faked. create_sdk_mcp_server,
+# build_emit_finding_tool, build_options and ClaudeAgentOptions all run
+# for real; the SDK's in-process MCP server construction touches no
+# socket and no subprocess. conftest.py's autouse block_network fixture
+# stays fully armed.
+
+
+class _FakeStream:
+    """A deterministic stand-in for the SDK's message stream.
+
+    Hand-written rather than an async generator so it has no event-loop
+    or asyncgen-hook dependency at all: every __anext__ returns without
+    awaiting anything, which is what lets _drive() below run the real
+    coroutine with no event loop.
+    """
+
+    def __init__(self, *messages, raises: BaseException | None = None):
+        self.messages = list(messages)
+        self.raises = raises
+        self.index = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.index < len(self.messages):
+            self.index += 1
+            return self.messages[self.index - 1]
+        if self.raises is not None:
+            raise self.raises
+        raise StopAsyncIteration
+
+
+def _drive(coro):
+    """Run a coroutine that never awaits real I/O, WITHOUT an event loop.
+
+    run_query is async, but with a local fake stream it suspends
+    nowhere, so a single send() runs it to completion. Going through
+    anyio.run()/asyncio.run() instead would build an event loop whose
+    Windows self-pipe socketpair trips conftest.py's blanket
+    block_network guard - the same interaction CagedCheckerStub._invoke
+    documents. Driving the coroutine directly keeps that guard fully
+    armed and keeps production's no-network guarantee untouched: if the
+    body ever did await real I/O, this fails loudly instead of skipping.
+    """
+    try:
+        coro.send(None)
+    except StopIteration as stop:
+        return stop.value
+    coro.close()
+    raise AssertionError("run_query suspended: the fake stream must not await real I/O")
+
+
+def _sdk_result_message(**overrides):
+    """A REAL claude_agent_sdk.ResultMessage, so run_query's own
+    isinstance(message, ResultMessage) branch is what fires.
+
+    The type is reached through ``harness`` rather than imported here:
+    tests/test_dependency_surface.py keeps the Agent SDK importable
+    only from agents/, and this is the exact class object the
+    production body compares against."""
+    defaults = dict(
+        subtype="success",
+        duration_ms=1234,
+        duration_api_ms=1000,
+        is_error=False,
+        num_turns=2,
+        session_id="s-1",
+        total_cost_usd=0.001,
+        usage={"input_tokens": 100, "output_tokens": 20},
+        result="done",
+    )
+    defaults.update(overrides)
+    return harness.ResultMessage(**defaults)
+
+
+def _sdk_budget_ceiling_message():
+    """The exact terminal shape the pinned SDK emits when it halts a
+    call at max_budget_usd, as a real typed ResultMessage."""
+    return _sdk_result_message(
+        subtype=failures.SDK_BUDGET_CEILING_SUBTYPE,
+        is_error=True,
+        num_turns=3,
+        total_cost_usd=0.1226,
+        usage={"input_tokens": 900, "output_tokens": 40},
+        result=None,
+    )
+
+
+def _run_real_run_query(stream):
+    """Execute the ACTUAL harness.run_query against a fake SDK stream."""
+    reservation = _coordinator().reserve()
+    state = CheckerToolState(request=_request())
+    with patch("agents.checker.harness.query", return_value=stream) as fake_query:
+        outcome = _drive(
+            harness.run_query("missing-synthetic-label", reservation, state, "prompt text")
+        )
+    assert fake_query.call_count == 1
+    return outcome
+
+
+def test_r25_typed_terminal_result_survives_a_trailing_stream_exception():
+    """The historical defect, reproduced against the production body:
+    a typed terminal ResultMessage arrives inside the stream and the
+    stream THEN raises a plain untyped Exception whose prose quotes the
+    CLI's maximum-budget text.
+
+    run_query must RETURN both halves rather than raise, and the typed
+    half - subtype, cost, usage, turns - must survive intact."""
+    terminal = _sdk_budget_ceiling_message()
+    stream = _FakeStream(
+        SimpleNamespace(text="a non-terminal message the capture must ignore"),
+        terminal,
+        raises=_TRAILING_BUDGET_EXCEPTION,
+    )
+
+    outcome = _run_real_run_query(stream)
+
+    # Returned, not raised, and both halves are the exact objects.
+    assert isinstance(outcome, QueryOutcome)
+    assert outcome.result is terminal
+    assert outcome.error is _TRAILING_BUDGET_EXCEPTION
+    # Everything the old code path destroyed is still recoverable.
+    assert outcome.subtype == failures.SDK_BUDGET_CEILING_SUBTYPE
+    assert outcome.is_error is True
+    assert outcome.result.total_cost_usd == 0.1226
+    assert outcome.result.usage == {"input_tokens": 900, "output_tokens": 40}
+    assert outcome.result.num_turns == 3
+    # And the captured typed subtype is what authorizes the one retry.
+    klass = failures.classify_invocation(outcome, breaker_tripped=False)
+    assert klass == failures.SDK_BUDGET_CEILING
+    assert failures.is_retryable(klass)
+
+
+def test_r25_same_prose_without_a_typed_result_stays_non_retryable():
+    """The complementary production adapter case, same real body: the
+    identical plain exception, raised BEFORE any typed ResultMessage.
+
+    Nothing typed was captured, so this is insufficient evidence for a
+    retry - whatever the prose says. No exception text is parsed."""
+    stream = _FakeStream(raises=_TRAILING_BUDGET_EXCEPTION)
+
+    outcome = _run_real_run_query(stream)
+
+    assert outcome.result is None
+    assert outcome.error is _TRAILING_BUDGET_EXCEPTION
+    klass = failures.classify_invocation(outcome, breaker_tripped=False)
+    assert klass == failures.TRANSPORT_PROCESS_SDK_EXCEPTION_WITHOUT_CAPTURED_TYPED_RESULT
+    assert not failures.is_retryable(klass)
+    # The decisive point: the two cases differ ONLY in the captured
+    # typed result. The exception object is literally the same one.
+    assert "Reached maximum budget" in str(_TRAILING_BUDGET_EXCEPTION)
+
+
+def test_r25_clean_stream_returns_the_terminal_result_with_no_error():
+    """The ordinary path through the same body: the stream ends
+    normally after its terminal message."""
+    terminal = _sdk_result_message()
+    stream = _FakeStream(SimpleNamespace(text="assistant chatter"), terminal)
+
+    outcome = _run_real_run_query(stream)
+
+    assert outcome.result is terminal
+    assert outcome.error is None
+    assert failures.classify_invocation(outcome, breaker_tripped=False) is None
+
+
+def test_r25_run_query_is_the_production_default_query_fn(ledger_conn):
+    """The body proven above is the one production actually uses: no
+    test-only indirection stands between CagedCheckerStub and it."""
+    stub = CagedCheckerStub(
+        run_id="r-1", conn=ledger_conn, coordinator=_coordinator(), clock=lambda: T0
+    )
+    assert stub.query_fn is harness.run_query
+
+
+# =====================================================================
+# R26 - a coordinator accounting fault poisons the rest of the run
+# =====================================================================
+#
+# Distinct from R23. R23 injects INSIDE the ledger transaction, so
+# nothing was made durable and the row stays RESERVED. Here the durable
+# terminal transaction COMMITS and the in-memory accounting then fails,
+# which leaves the coordinator's figures known-wrong for the rest of
+# the run. The invariant: no further model invocation starts.
+
+
+class InjectedAccountingFailure(Exception):
+    pass
+
+
+def test_r26_post_durable_accounting_fault_blocks_every_later_model_call(ledger_conn):
+    """One stub = one run.
+
+    First judgment: one real query_fn invocation, terminal SQLite
+    evidence and tool audit commit, then coordinator.commit fails.
+    Second judgment on the SAME stub must fail closed before reserve()
+    and before query_fn, making ZERO further model invocations, and
+    must not touch the first call's durable evidence."""
+    coordinator = _coordinator()
+    real_commit = coordinator.commit
+    durable_at_commit = {}
+    reserve_calls = []
+    real_reserve = coordinator.reserve
+
+    def _failing_commit(reservation, *, charged_eur_micros):
+        # Prove the terminal evidence really is durable at this point,
+        # so the fault is genuinely POST-durable and not an R23 rollback.
+        row = _rows(ledger_conn)[0]
+        durable_at_commit["state"] = row.state
+        durable_at_commit["charged"] = row.charged_eur_micros
+        durable_at_commit["attempts"] = len(
+            ledger.list_tool_attempts_for_call(ledger_conn, row.id)
+        )
+        raise InjectedAccountingFailure("coordinator accounting failed after durable commit")
+
+    def _counting_reserve():
+        reservation = real_reserve()
+        reserve_calls.append(reservation)
+        return reservation
+
+    coordinator.commit = _failing_commit
+    coordinator.reserve = _counting_reserve
+
+    # Exactly ONE scripted step: a second invocation raises
+    # TooManyInvocations, a BaseException the harness cannot absorb.
+    query = ScriptedQuery(_step(_result(total_cost_usd=0.05), emits=["Coverage: 85.5 percent"]))
+    stub = _stub(ledger_conn, query, coordinator=coordinator)
+
+    with pytest.raises(TerminalAccountingError):
+        _judge(stub)
+
+    assert durable_at_commit["state"] == "COMPLETED"
+    assert durable_at_commit["charged"] == _converted(0.05)
+    assert durable_at_commit["attempts"] == 1
+    assert query.invocations == 1
+    assert len(reserve_calls) == 1
+
+    first_rows = _rows(ledger_conn)
+    assert len(first_rows) == 1
+    first = first_rows[0]
+    first_attempts = ledger.list_tool_attempts_for_call(ledger_conn, first.id)
+
+    # A SECOND, different, non-absent judgment through the same stub.
+    coordinator.commit = real_commit  # accounting itself is healthy again
+    with pytest.raises(TerminalAccountingError):
+        _judge(stub, _request(check_class="stale-STATE-marker"))
+
+    # Zero further model invocations, and reserve() was never reached.
+    assert query.invocations == 1
+    assert len(reserve_calls) == 1
+
+    # The first call's durable evidence is untouched: no new row, no
+    # rewrite, no deletion, no extra audit row.
+    after = _rows(ledger_conn)
+    assert len(after) == 1
+    assert (after[0].id, after[0].state, after[0].charged_eur_micros) == (
+        first.id,
+        first.state,
+        first.charged_eur_micros,
+    )
+    assert after[0].finished_at_utc == first.finished_at_utc
+    assert ledger.list_tool_attempts_for_call(ledger_conn, first.id) == first_attempts
+
+
+def test_r26_latch_leaves_the_deterministic_absent_short_circuit_intact(ledger_conn):
+    """The invariant is NO FURTHER MODEL INVOCATION, not a hard stop:
+    a confirmed-absent request never enters the model path at all, so
+    it keeps its deterministic empty return."""
+    coordinator = _coordinator()
+
+    def _failing_commit(reservation, *, charged_eur_micros):
+        raise InjectedAccountingFailure("coordinator accounting failed after durable commit")
+
+    coordinator.commit = _failing_commit
+    query = ScriptedQuery(_step(_result(), emits=["Coverage: 85.5 percent"]))
+    stub = _stub(ledger_conn, query, coordinator=coordinator)
+
+    with pytest.raises(TerminalAccountingError):
+        _judge(stub)
+
+    assert _judge(stub, _request(text=None)) == ()
+    assert query.invocations == 1
+    assert len(_rows(ledger_conn)) == 1
+
+
+def test_r26_an_unfaulted_stub_keeps_serving_later_judgments(ledger_conn):
+    """The latch is set by an accounting fault, never by an ordinary
+    judgment: two clean judgments on one stub still both run."""
+    query = ScriptedQuery(
+        _step(_result(), emits=["Coverage: 85.5 percent"]),
+        _step(_result(), emits=["Coverage: 85.5 percent"]),
+    )
+    stub = _stub(ledger_conn, query)
+    assert len(_judge(stub)) == 1
+    # A second, different logical task on the same stub still reaches
+    # the model path (its proposal is rejected on class mismatch, which
+    # is an ordinary COMPLETED no-finding outcome, not a latched stop).
+    assert _judge(stub, _request(check_class="stale-STATE-marker")) == ()
+    assert query.invocations == 2
+    assert [r.state for r in _rows(ledger_conn)] == ["COMPLETED", "COMPLETED"]
 
 
 # =====================================================================

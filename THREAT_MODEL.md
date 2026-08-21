@@ -244,11 +244,18 @@ nothing for real spend) or silently drop a task without a trace.
 
 **Mitigation**: every call is durably recorded `RESERVED` (audit row
 written) *before* the SDK is invoked. An in-process catchable failure
-finalizes the row to `FAILED`, charged at the full reservation (never
-zero). A true process crash leaves the row `RESERVED` — visibly
-unresolved, never silently rewritten — and reconciliation
-(`sentinel/costs.py::build_agent_cost_row`) charges its reservation
-into the run's aggregate CostRow without touching the row itself.
+finalizes the row to `FAILED`, charged per
+`adr/0008-judgment-call-execution-reliability` §6: with a recoverable
+SDK cost estimate, `max(reservation, converted estimate)` — so
+re-execution can never make a failed call cheaper, and a known estimate
+above the reservation is never understated; with no recoverable
+estimate, the full reservation. Never zero either way. That SDK figure
+remains an estimate / model-equivalent consumption signal, never
+authoritative provider billing (§5). A true process crash leaves the
+row `RESERVED` — visibly unresolved, never silently rewritten — and
+reconciliation (`sentinel/costs.py::build_agent_cost_row`) charges its
+reservation into the run's aggregate CostRow without touching the row
+itself.
 Either way the affected task dead-letters (never a silent "nothing
 wrong" for a call that didn't actually complete).
 

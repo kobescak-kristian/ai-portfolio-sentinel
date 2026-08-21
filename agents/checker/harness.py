@@ -27,7 +27,10 @@ ADR-0008 additions (dispatch q77-p3-adr8-impl-a):
 * each invocation gets FRESH tool state, so a failed attempt's findings
   are audit evidence only and never become live findings;
 * terminal evidence is made durable BEFORE in-memory budget accounting
-  advances, and known cost overshoot is accounted instead of clamped.
+  advances, and known cost overshoot is accounted instead of clamped;
+* if that in-memory accounting then fails, a run-lifetime latch on the
+  stub fails every later judgment closed, so no further model
+  invocation starts in the run on budget state known to be wrong.
 """
 
 from __future__ import annotations
@@ -157,6 +160,13 @@ class CagedCheckerStub:
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     query_fn: Callable = field(default=run_query)
 
+    #: Run-lifetime fail-closed latch. Set once ``_advance_budget``
+    #: catches a coordinator accounting failure, i.e. after this call's
+    #: terminal evidence was already durably committed. From that point
+    #: the in-memory budget state is known to be wrong, so no further
+    #: model invocation may start in this run.
+    _terminal_accounting_faulted: bool = field(default=False, init=False)
+
     def judge(self, request: JudgmentRequest) -> Sequence[ObservedFinding]:
         # Deterministic absent-file short-circuit (adr/0005). A
         # confirmed-absent file is already established deterministically
@@ -172,6 +182,20 @@ class CagedCheckerStub:
         # call below keeps its unchanged fail-closed behavior.
         if request.text is None:
             return ()
+
+        # Run-wide fail-closed latch. An earlier call in this run
+        # committed its terminal evidence durably and then failed to
+        # account it, so the coordinator's in-memory figures no longer
+        # describe what was actually spent. Detected here — before the
+        # auth check, before reserve(), before query_fn — so this
+        # judgment makes ZERO model invocations. Nothing is written:
+        # the faulted call's own terminal row is already durable and is
+        # never rewritten to make the two layers agree.
+        if self._terminal_accounting_faulted:
+            raise TerminalAccountingError(
+                "run-budget accounting faulted on an earlier judgment call in this run; "
+                "no further model invocation is started"
+            )
 
         now = self.clock()
         task_key = f"{request.surface}::{request.check_class}"
@@ -316,6 +340,9 @@ class CagedCheckerStub:
         try:
             self.coordinator.commit(reservation, charged_eur_micros=charged_eur_micros)
         except Exception as exc:  # noqa: BLE001 - must not be swallowed
+            # Latch BEFORE raising: this stub must not start another
+            # model invocation for any later task in the same run.
+            self._terminal_accounting_faulted = True
             raise TerminalAccountingError(
                 "terminal evidence was durably recorded but run-budget accounting failed: "
                 f"{type(exc).__name__}"

@@ -1261,3 +1261,74 @@ merges every change."
   operations OS's annotation for this work item. Next action:
   independent post-implementation review of the exact implementation
   commit and its R1–R24 proof. No real-model validation is authorized.
+
+- 2026-08-21 — ADR-0008 implementation-review gaps CLOSED (dispatch
+  `q77-p3-adr8-impl-review-remed-a`). The independent
+  post-implementation review of the ADR-0008 implementation commit
+  found two narrow implementation/proof gaps and one documentation
+  truth defect. The ADR-0008 decision itself was NOT reopened and is
+  unchanged. **Gap A — the production capture path had no direct
+  proof.** The R1–R24 package drives the harness through its injected
+  `query_fn` seam and manufactures a `QueryOutcome` *after* the capture
+  boundary, so `agents/checker/harness.py::run_query` — the function
+  whose entire job is capturing the terminal typed `ResultMessage` out
+  of the stream — was never executed by any test, and its body showed
+  as unexecuted in the coverage report. That is precisely where the
+  historical defect lived. New section R25 executes the REAL
+  `run_query` body with only `claude_agent_sdk.query` replaced by a
+  local deterministic stream: a real typed `ResultMessage`
+  (`subtype = error_max_budget_usd`, `is_error`, cost, usage, turns)
+  is yielded, the stream THEN raises the plain untyped exception whose
+  prose quotes the CLI's maximum-budget text, and `run_query` is proven
+  to RETURN both halves rather than raise, with subtype, cost, usage and
+  turn count all still recoverable and the classification
+  `SDK_BUDGET_CEILING` retryable *only* because of the captured typed
+  subtype. The complementary case — the identical exception object
+  raised BEFORE any typed result — is proven to yield
+  `result is None`,
+  `TRANSPORT_PROCESS_SDK_EXCEPTION_WITHOUT_CAPTURED_TYPED_RESULT` and
+  NON-retryable; no exception prose is parsed anywhere. The clean-stream
+  case is covered too. `run_query` itself needed no change: the
+  implementation was correct, only unproven. The async body is driven
+  without an event loop, so conftest's blanket no-network guard stays
+  fully armed and no proof is skipped. **Gap B — a post-durable
+  accounting fault did not stop the run.** `TerminalAccountingError`
+  claimed that no further model invocation is started, but nothing
+  enforced it: if `coordinator.commit()` failed AFTER the terminal
+  SQLite transaction had committed, the pipeline dead-lettered that one
+  task and the same judgment stub kept serving later tasks in the same
+  run on in-memory budget figures known to be wrong. `CagedCheckerStub`
+  now carries a private run-lifetime latch, set before
+  `TerminalAccountingError` is raised, and every later non-absent
+  judgment on that stub fails closed ahead of the auth check, ahead of
+  `reserve()` and ahead of `query_fn` — zero further model invocations.
+  Nothing is written to make the two layers agree: the faulted call's
+  durable terminal row and its tool-attempt audit are proven untouched,
+  unrewritten and undeleted. The deterministic confirmed-absent
+  short-circuit stays ahead of the latch, since the invariant enforced
+  is no further MODEL INVOCATION. New section R26 proves all of it,
+  distinct from R23 (which injects inside the ledger transaction, where
+  nothing becomes durable and the row stays RESERVED). No pipeline,
+  task-lifecycle, schema, retry-taxonomy, budget-reset or
+  second-coordinator change was made. **Gap C — stale documentation.**
+  `THREAT_MODEL.md` §6 still said an in-process catchable failure is
+  charged at the full reservation; it now states the truthful adopted
+  rule — recoverable estimate `max(reservation, converted estimate)`,
+  no recoverable estimate the full reservation, never zero, the SDK
+  figure never authoritative billing — with process-crash `RESERVED`
+  reconciliation unchanged. The other documents touched by the
+  implementation commit were searched for a directly equivalent stale
+  claim and none was found; no general prose cleanup was done. The
+  historical implementation entry above is untouched and unrelabeled.
+  **No Sentinel checker-agent model call, Haiku or Sonnet judgment
+  call, Phase-3 gate, Phase-3 re-gate, eval, scorer, or real-model
+  validation occurred in this session.** The repository publication
+  gate DID run, as the publication control it is; it is not a Phase-3
+  gate and proves nothing about judgment quality. Passing model-free
+  tests is not Phase-3 closure. `SentinelDailyRun` unchanged and still
+  stub-mode. No Phase 4 work. **Phase 3 remains OPEN. Phase 4 is not
+  permitted under the current lineage. No real-model validation is
+  authorized.** This commit does not self-cite its own SHA — that SHA
+  and its exact CI run are recorded in the private operations OS's
+  annotation for this work item. Next action: independent reread of
+  this remediation commit before any validation-protocol decision.
