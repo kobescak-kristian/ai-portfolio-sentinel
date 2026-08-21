@@ -1474,9 +1474,20 @@ merges every change."
   separate Stage-2 implementation dispatch if that read is PASS.
 - 2026-08-21 — ADR-0009 STAGE-2 RUNNER IMPLEMENTED, model-free
   (dispatch q77-p3-adr9-stage2-a; bound-sequence steps B and C).
-  Precondition/history fact: the ADR-0009 independent read returned
-  **PASS** and preceded Stage 2. **This is implementation, not
-  validation** — nothing was validated, executed or claimed to work.
+  **Missing transition recorded here prospectively, rather than by
+  editing any historical entry.** After the Stage-1 adoption commit
+  and BEFORE this Stage-2 implementation, the independent read of
+  `adr/0009-post-adr0008-phase3-validation-protocol.md` was performed
+  and returned **PASS**. That read found **no substantive ADR defect
+  requiring amendment**: ADR-0009 stands exactly as adopted on
+  2026-08-21, unamended, and Stage 2 then proceeded under the adopted
+  ADR-0009 protocol as written. The earlier change-log entries whose
+  recorded next action was that read are preserved byte-for-byte and
+  were NOT rewritten to reflect its completion — a historical "next
+  action" is evidence of what was true when written, not a
+  current-state assertion needing retroactive repair. **This is
+  implementation, not validation** — nothing was validated, executed
+  or claimed to work.
   **What changed.** `scripts/run_phase3_dev_gate.py` now self-validates
   the ADR-0009 §2/§3 execution-validity contract instead of ADR-0007
   §2's failed-call and raw-call-count semantics; `tests/
