@@ -86,6 +86,17 @@ through the back door) exists specifically to keep that overshoot
 inside the coordinator's own reservation ceiling in the common case; it
 is a margin, not a hard guarantee for every conceivable single call.
 
+**Observed once (ADR-0009 real-model validation, 2026-08-21/22).** The
+documented SDK per-call budget-ceiling failure mode materialized once.
+The first invocation reached the SDK budget ceiling and failed;
+ADR-0008's bounded re-execution then completed the same logical task
+successfully. This is one observed recovery, not a guarantee that all
+future budget-ceiling events recover. The residual risk above is not
+weakened by it: the SDK check is still post-call, overshoot above a
+reservation remains a documented possibility, and any known overshoot
+must be accounted in full. That cycle's evidence does **not** establish
+that an overshoot actually occurred.
+
 ## 4. Model-output fabrication
 
 **Threat**: the model reports a defect that doesn't exist, or cites
@@ -147,8 +158,19 @@ disposition is **VALID COMPLETED FAIL** on execution validity — one
 run-1 call failed at the SDK per-call budget ceiling and its scope
 dead-lettered fail-closed, failing `idempotent_rerun` through that
 execution gap, not through identity instability (`EVAL_RESULTS.md`,
-prospective section). That result is terminal for the current
-Sentinel-v1 Phase-3 validation lineage. **Phase 3 remains OPEN**.
+prospective section). That result is terminal for the ADR-0007
+Sentinel-v1 Phase-3 validation lineage. The one further cycle
+authorized by `adr/0009` / BLUEPRINT §11(j) then executed 2026-08-21/22
+and was independently verified **PASS**: both designated runs
+COMPLETED; every logical judgment history was valid (22 NORMAL plus
+exactly one BOUNDED_RECOVERY in run 1, 23 NORMAL in run 2, zero
+invalid); **zero `BREAKER_REFUSED` outcomes were persisted**; and
+identity and dedup held again across a fully completed two-run cycle
+(60 persisted finding rows, 60 distinct fingerprints; run 2
+`findings_new = 0` and `findings_resolved = 0`; both cross-run
+invariants PASS). **Phase 3 is CLOSED (2026-08-22).** The overall
+production-readiness program remains open and this system stays in
+development toward production-ready.
 
 **Residual risk**: the model can still *miss* a real defect (false
 negative) or select a technically-verbatim-but-misleading excerpt
@@ -202,6 +224,21 @@ no further call starts. A negative remaining figure is truthful
 DETECTED OVERSHOOT, not an accounting failure and not permission for
 further spend. Proven model-free in `tests/test_adr0008.py`
 (R11–R18).
+
+**Exercised once under real-model validation.** In the ADR-0009
+prospective validation cycle (2026-08-21/22) exactly one logical
+judgment task took the bounded re-execution path. Its first invocation
+reached the SDK budget ceiling and failed, and was charged its full
+150,000-micro-EUR reservation because its final SDK usage was not
+recoverable; ADR-0008's bounded re-execution then completed the same
+logical task for 20,634 micro-EUR, drawn as an ordinary reservation
+from that same single run pool. Charging the full reservation is the
+§6 accounting path for an unrecoverable estimate — it is **not** a
+measured overshoot, and no spend above a reservation or above either
+declared acceptance ceiling is established by that evidence. Run
+totals were 645,883 and 575,877 micro-EUR against a 750,000 per-run
+accounted-consumption acceptance ceiling. One observed recovery is not
+a guarantee that all future budget-ceiling events recover.
 
 Three amendments from `adr/0005-phase3-gate-remediation.md` bear
 directly on this threat:

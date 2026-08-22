@@ -104,10 +104,22 @@ and nothing beyond it:
 - **Caps do not move.** EUR 0.75, 150,000 micro-EUR, 0.70, 10 and 5 are
   all unchanged by ADR-0008.
 
-Its evidence is model-free only: the R1–R24 proof suite in
-`tests/test_adr0008.py`, plus the pre-write R10 uniqueness proof. **No
-real-model validation is authorized, and none has been run against this
-behaviour.** Passing model-free tests is not Phase-3 closure.
+Its implementation evidence is model-free: the R1–R24 proof suite in
+`tests/test_adr0008.py`, plus the pre-write R10 uniqueness proof.
+Real-model validation was subsequently authorized by
+`adr/0009-post-adr0008-phase3-validation-protocol.md`, and it has now
+run. **The ADR-0009 prospective validation cycle executed 2026-08-21/22
+and was independently verified PASS**, and it exercised this bounded
+recovery for real: exactly one recovered logical judgment history
+occurred across its two runs — one FAILED invocation whose mechanized
+class reconstructed as `SDK_BUDGET_CEILING` (`sdk_subtype`
+`error_max_budget_usd`, `sdk_is_error` true, a positive reservation,
+and zero persisted `BREAKER_REFUSED` outcomes) followed by one
+COMPLETED invocation for the same logical task. That is the exact
+ADR-0009-valid `BOUNDED_RECOVERY` history, not an invalid failed call.
+Zero invalid logical histories were observed in either run. Full
+figures: `EVAL_RESULTS.md`, ADR-0009 section. One observed recovery is
+not a guarantee that every future budget-ceiling event recovers.
 
 These are the settings the one permitted re-gate ran under. That
 re-gate ran 2026-08-19 and recorded an honest **OVERALL FAIL**: every
@@ -119,11 +131,15 @@ and the failure is isolated to the two cross-run invariants,
 run is authorized under `adr/0005`. The one prospective validation
 cycle separately authorized by `adr/0007` / BLUEPRINT §11(i) (adopted
 2026-08-20) executed 2026-08-20 under these same bounds and reached
-**VALID COMPLETED FAIL** — consumed, terminal for the current
+**VALID COMPLETED FAIL** — consumed, terminal for the ADR-0007
 Sentinel-v1 Phase-3 validation lineage; see `EVAL_RESULTS.md`,
-prospective section. Phase 3
-remains OPEN. This document makes no claim that the bounds above
-produce a passing gate.
+prospective section. The one further cycle authorized by `adr/0009`
+then executed 2026-08-21/22 under these same unchanged bounds and was
+independently verified **PASS**; it too is consumed. **Phase 3 is
+CLOSED (2026-08-22); Phase 4 is permitted but NOT STARTED.** No cap,
+margin or turn/tool ceiling moved to obtain that result — EUR 0.75,
+150,000 micro-EUR, 0.70, 10 and 5 are the same figures the two earlier
+failed gates ran under.
 
 ## 4. Deterministic host canonicalization (evidence contract)
 
@@ -188,9 +204,17 @@ an execution-validity reason: one run-1 model call failed at the SDK
 per-call budget ceiling and its scope dead-lettered fail-closed, so
 `idempotent_rerun` failed on the resulting execution gap, not on
 identity instability (`EVAL_RESULTS.md`, prospective section). That
-result is terminal for the current Sentinel-v1 Phase-3 validation
-lineage. Nothing here claims the
-correction produces a passing gate, and **Phase 3 remains OPEN**.
+result is terminal for the ADR-0007 Sentinel-v1 Phase-3
+validation lineage. The correction was then re-tested across a fully
+completed two-run cycle: the ADR-0009 prospective validation cycle
+(2026-08-21/22, independently verified **PASS**) persisted 60 finding
+rows carrying 60 distinct fingerprints, and run 2 recorded
+`findings_new = 0`, `findings_still_open = 60` and
+`findings_resolved = 0` — `dedup_correct_on_doubled_fixture_run` and
+`idempotent_rerun` both PASS, zero identity fragmentation and zero
+spurious resolutions. **Phase 3 is CLOSED (2026-08-22).** The two
+limits recorded with ADR 0006 above are not fixed by that result, and
+n=1 remains n=1.
 
 ## 5. Cost and accounting semantics
 
@@ -217,11 +241,17 @@ recall, clean false-flag rate, and each run's real cost/token evidence
 — are recorded in `EVAL_RESULTS.md` for the designated
 2026-08-05 dev gate (honest FAIL), the one permitted 2026-08-19
 re-gate (honest OVERALL FAIL: scoring thresholds all PASS, two
-cross-run invariants FAIL) and the one 2026-08-20 ADR-0007
+cross-run invariants FAIL), the one 2026-08-20 ADR-0007
 prospective validation cycle (honest VALID COMPLETED FAIL: all
 scoring thresholds PASS; execution validity and `idempotent_rerun`
-FAIL). This document transcribes no figure it does
-not take from that record.**
+FAIL) and the one 2026-08-22 ADR-0009 prospective validation cycle
+(**PASS**: 60 emitted, 60 true positives, 0 false positives, 0
+misses, pooled precision and recall 1.0000, all six per-class recalls
+10/10, 0/166 clean false flags, every frozen invariant PASS, every
+ADR-0009 execution-validity predicate PASS, and accounted consumption
+645,883 + 575,877 = 1,221,760 micro-EUR inside the declared per-run
+and two-run acceptance ceilings). This document transcribes no figure
+it does not take from that record.**
 
 ## 7. Known limitations and failure modes
 

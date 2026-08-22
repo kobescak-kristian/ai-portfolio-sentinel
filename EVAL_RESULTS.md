@@ -1,9 +1,10 @@
 <!-- Records the Phase-3 Haiku validation results (BLUEPRINT §6 P3):
 the original designated gate (dispatch q77-p3-a), the one permitted
 re-gate under adr/0005 (recording dispatch
-q77-p3-remediation-regate-record-a), and the one prospective
-validation cycle under adr/0007 (Step-F recording). REAL DATA in all
-three: real Haiku model calls under the operator's subscription
+q77-p3-remediation-regate-record-a), the one prospective validation
+cycle under adr/0007 (Step-F recording), and the one prospective
+validation cycle under adr/0009 (Step-F recording). REAL DATA in all
+four: real Haiku model calls under the operator's subscription
 authentication, scored against the frozen SYNTHETIC fixture bed
 (fixtures/, evals/) and its frozen answer key. Status: in development
 toward production-ready. No production claim is made in this document.
@@ -21,16 +22,22 @@ the evidence-parent basename and the artifact's SHA-256); that raw
 artifact is not committed here because its byte-verbatim machine
 output contains absolute local paths prohibited by this repo's
 public-live writing rule, and editing evidence to strip them would
-break evidence verbatimness. No section recomputes or restates any
+break evidence verbatimness. The PROSPECTIVE VALIDATION CYCLE
+(ADR-0009) section transcribes that cycle's runner artifact, likewise
+persisted locally OUTSIDE the repository for the same reason and
+identified by its SHA-256; neither prospective cycle overwrote the
+committed fixed path, which still carries the 2026-08-19 re-gate
+artifact. No section recomputes or restates any
 figure differently from the artifact it transcribes. -->
 
 # EVAL_RESULTS — Phase 3 Haiku dev gate
 
-This file records THREE results, in order: the original designated
+This file records FOUR results, in order: the original designated
 gate (2026-08-05, FAIL), the one permitted re-gate (2026-08-19,
-OVERALL FAIL), and the one prospective validation cycle under
-`adr/0007` (2026-08-20, VALID COMPLETED FAIL). None replaces another;
-each earlier record below is preserved unchanged.
+OVERALL FAIL), the one prospective validation cycle under `adr/0007`
+(2026-08-20, VALID COMPLETED FAIL), and the one prospective validation
+cycle under `adr/0009` (2026-08-22, PASS). None replaces another; each
+earlier record below is preserved unchanged.
 
 # ORIGINAL DESIGNATED GATE — 2026-08-05
 
@@ -518,6 +525,210 @@ individual call consumed unusually high model budget.
   call, no Haiku or Sonnet call, no manual Sentinel judgment call and
   no additional evaluation execution occurred in this recording
   session.
+
+## Labels
+
+Synthetic fixture bed (`fixtures/`, `evals/`) — **SYNTHETIC**, frozen,
+unchanged since `4d46c1d4fc3c4f485a83f44fa54afa6b04b1f541`. The model
+calls that scored against it were **REAL** — real Haiku 4.5 calls under
+the operator's own subscription authentication, not simulated.
+
+# PROSPECTIVE VALIDATION CYCLE (ADR-0009) — 2026-08-22
+
+Recorded 2026-08-22 local; execution window 2026-08-21T23:13Z–23:40Z.
+
+## Result: PASS
+
+Phase 3 is **CLOSED**. This is the §5 disposition of
+`adr/0009-post-adr0008-phase3-validation-protocol.md`: `C = 47 > 0`
+together with a complete, independently verified PASS. The one
+authorized ADR-0009 cycle is **consumed and complete**. Phase 4 is
+**permitted but NOT STARTED**. The governing task item remains
+**OPEN**. `SentinelDailyRun` is unchanged and remains stub-mode.
+
+This closes Phase 3 only. The overall production-readiness program
+remains OPEN, Phases 4–6 and the remaining program gates are open, and
+the permitted public status is unchanged: **in development toward
+production-ready**. No production-ready claim is made here.
+
+## Identification
+
+| Field | Value |
+|---|---|
+| Validated source commit | `54f5ce3d0e066417104b47fecbc49d05b5303859` |
+| Source pin | `source_commit`, `required_source_sha` and `attested_source_sha` in the gate artifact are all equal to the validated source commit above |
+| Pre-execution external pin (sequence step D) | `bd41f211905288e143746f2237ff02a4cf85790a`, recorded in the private operations OS's annotation for this work item |
+| Model | `claude-haiku-4-5-20251001` |
+| Auth mode | `operator-subscription-oauth-assumed` (subscription OAuth; not API-key billing — `cost_eur_micros` below is estimated model-equivalent consumption, never a literal invoice) |
+| Judgment mode | `agent` (explicit) |
+| Run 1 (primary/scoring pass) | `r-cce0280d1a824ca6a12ac8faf42a30e1` (run status COMPLETED) |
+| Run 2 (doubled-fixture pass) | `r-e68b8878b62b453eaf6cf5fe2544a6bb` (run status COMPLETED) |
+| Persisted evidence parent | fresh local directories outside the repository, basenames `q77-adr9-step-e-a-20260821T231307Z-gate` and `q77-adr9-step-e-a-20260821T231307Z-artifacts` (fresh per the §5 preflight; retained locally) |
+| Transport package | `q77-adr9-step-e-a-evidence.zip` (retained locally, not committed) |
+
+Evidence integrity — SHA-256 of the persisted raw evidence, as verified
+in the independent Step-F check:
+
+| File | SHA-256 |
+|---|---|
+| `gate.sqlite3` | `e965dc9d6311e558631a145d8999b574820ef2ae77c5ab7df1d57f12ffc7a5ec` |
+| `gate.sqlite3-wal` | **ABSENT** (clean SQLite close) |
+| `gate.sqlite3-shm` | **ABSENT** (clean SQLite close) |
+| `gate.jsonl` | `2585a8922fd88d87b491a893c43882f4569f9c6b8d5bbf2db374bbf0c4b46b8b` |
+| `cost_ledger.jsonl` | `eb636b1738b05fc59af8668a7e1f10a2bf64b8c9f0b30085e863b5dfcb6e9b36` |
+| `FINDINGS.md` | `07a6680646800515f7e348f2063a5bc25e34c0fdcc6cc7c1bd3afe78ea66c175` |
+| `phase3_dev_gate.json` (runner artifact) | `c3dc96acf42a983d908e75255537754f0797596ec98f3d15586bb1704db80845` |
+| terminal transcript | `fc692e43cae681b06d907c49dba57a3f86cc6c87d761f63bd93bb7971b090a6f` |
+| SHA-256 manifest | `c54b08c563d2664dfbbc2e1c70cbc74ea36cfd8ffa4af406a89ab39190e8a6c1` |
+| transport ZIP | `8b3d178dcd522cd0efa98ba74c19f801f350f5b853bd2a01a1d5004fc0281a5b` |
+
+The raw evidence is retained **externally and locally; none of it is
+committed to this repository** — for the same reason as the ADR-0007
+cycle, its byte-verbatim machine output contains absolute local paths
+that this repo's public-live writing rule prohibits, and editing
+evidence to strip them would break evidence verbatimness. The committed
+fixed-path `artifacts/phase3_dev_gate.json` is **untouched** by this
+cycle and continues to represent its historical 2026-08-19 re-gate
+artifact.
+
+Independent Step-F evidence-integrity result: the ZIP hash matched;
+every packaged raw file matched its manifest hash; WAL and SHM were
+absent after a clean SQLite close; `C` was independently reconstructed
+from SQLite as 47; the bounded recovery was independently reconstructed
+from durable structured rows; the cost rows independently sum to
+1,221,760 micro-EUR; and no binding disagreement with the runner
+artifact was found.
+
+## Metrics (against the frozen answer key, 60 positives / 166 clean units)
+
+| Metric | Result | Threshold | Outcome |
+|---|---|---|---|
+| Pooled precision | 60/60 = 1.0000 | ≥ 0.90 | PASS |
+| Pooled recall | 60/60 = 1.0000 | ≥ 0.85 | PASS |
+| Per-class recall — broken-link | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — missing-required-file | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — missing-synthetic-label | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — number-mismatch | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — readme-structure | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Per-class recall — stale-STATE-marker | 10/10 = 1.0000 | ≥ 0.80 | PASS |
+| Clean false-flag rate | 0/166 flagged | ≤ 16 flagged | PASS |
+
+Positives total: 60. Emitted findings: 60. True positives: 60. False
+positives: 0. Misses: 0.
+
+## Execution validity (ADR-0009 §2 — logical judgment histories)
+
+Every ADR-0009 execution-validity predicate PASSES.
+
+| Run | Status | Tasks | Model-invocation rows | Logical model-path tasks | `agent_calls` | Logical histories |
+|---|---|---|---|---|---|---|
+| Run 1 | COMPLETED | 80/80 terminal, all DONE | 24 | 23 | 23 COMPLETED, 1 FAILED | 22 NORMAL, 1 BOUNDED_RECOVERY, 0 invalid |
+| Run 2 | COMPLETED | 80/80 terminal, all DONE | 23 | 23 | 23 COMPLETED, 0 FAILED | 23 NORMAL, 0 recovered, 0 invalid |
+
+Cross-run logical coverage — compared as distinct model-path logical
+`task_key`s, never as raw call rows: **23 == 23, PASS**. Run 1's 24
+invocation rows are 23 logical tasks precisely because exactly one
+logical task is a two-row bounded recovery.
+
+## The one bounded recovery (ADR-0008 behaviour, ADR-0009 validity)
+
+Exactly one recovered logical history exists across both runs:
+
+| Field | Value |
+|---|---|
+| `task_key` | `synthetic-01/EVAL_RESULTS.md::missing-synthetic-label` |
+| Ordered `agent_calls` ids | `[1, 2]` |
+| States | `FAILED` -> `COMPLETED` |
+
+First row — the failed invocation:
+
+| Field | Value |
+|---|---|
+| `sdk_is_error` | true |
+| `sdk_subtype` | `error_max_budget_usd` |
+| `reserved_eur_micros` | 150000 |
+| `charged_eur_micros` | 150000 |
+| `tool_attempts` | 2 |
+| Persisted tool attempts | ordinal 1 ACCEPTED, ordinal 2 ACCEPTED |
+| `BREAKER_REFUSED` count | 0 |
+
+Second row — the completing invocation: same `run_id`, same `task_key`,
+a later `agent_calls.id`, state `COMPLETED`, `reserved_eur_micros`
+150000, `charged_eur_micros` 20634.
+
+This is therefore the exact ADR-0009-valid `BOUNDED_RECOVERY` history —
+`[FAILED reconstructed as SDK_BUDGET_CEILING, COMPLETED]` — and not an
+invalid failed call. The zero `BREAKER_REFUSED` count is load-bearing,
+not decoration: ADR-0008's classifier gives local containment
+precedence, so a persisted `BREAKER_REFUSED` outcome would have made
+this recovery INVALID even while the row still carried the same SDK
+subtype, `sdk_is_error` true and a positive reservation. The failed
+invocation is charged its full reservation because its final SDK usage
+was not recoverable — that is the ADR-0008 §6 accounting path, **not** a
+measured overshoot above the reservation.
+
+## Invariants
+
+| Invariant | Result |
+|---|---|
+| every_task_terminal | PASS |
+| zero_lost_tasks | PASS |
+| idempotent_rerun | PASS |
+| dedup_correct_on_doubled_fixture_run | PASS |
+
+## Persistent finding identity (ADR-0006)
+
+60 persisted finding rows carrying 60 distinct fingerprints. Run 2's
+lifecycle counters: `findings_new = 0`, `findings_still_open = 60`,
+`findings_resolved = 0` — zero identity fragmentation, zero spurious
+resolutions. The ADR-0006 identity correction held across a fully
+completed two-run cycle.
+
+## Cost
+
+| | Micro-EUR | Acceptance ceiling | Outcome |
+|---|---|---|---|
+| Run 1 accounted | 645,883 | 750,000 per run | PASS |
+| Run 2 accounted | 575,877 | 750,000 per run | PASS |
+| **Total accounted** | **1,221,760** | 1,500,000 across two runs | PASS |
+
+These are **accounted-consumption acceptance ceilings, not guaranteed
+physical or provider-spend maxima** (ADR-0008 §7; ADR-0009). No
+overshoot above a reservation or above either ceiling is claimed here,
+and none is established by this evidence.
+
+## Auth-environment note and its adjudication
+
+`ANTHROPIC_BASE_URL` held the value `https://api.anthropic.com` in the
+orchestration environment, and was unset **for the runner subprocess
+only** before execution.
+
+Adjudicated **ACCEPTABLE / NON-BLOCKING**: the committed fail-closed
+auth control (`agents/checker/auth.py`) explicitly requires
+override-capable variables — `ANTHROPIC_BASE_URL` among them — to be
+unset before agent mode. No alternate URL was substituted, no routing
+was changed, and no credential, config or code file was changed.
+
+## Disposition
+
+- ADR-0009 §5 disposition: **PASS** (`C = 47 > 0`, plus a complete,
+  independently verified PASS).
+- The one authorized ADR-0009 cycle is **consumed and complete**.
+- **Phase 3 is CLOSED** (2026-08-22).
+- **Phase 4 is permitted but NOT STARTED.**
+- The governing task item remains **OPEN**.
+- `SentinelDailyRun` is unchanged and remains stub-mode.
+- The overall production-readiness program remains **OPEN**. No
+  production-ready claim is made, and the permitted public status is
+  unchanged: in development toward production-ready.
+- The three historical results above stand exactly as recorded. No
+  historical FAIL is relabeled, softened or superseded by this PASS.
+- No fixture, label, answer-key, scoring, threshold, model, prompt,
+  budget, lifecycle, fingerprint or evidence-validation change was made
+  after seeing this result. **No Sentinel checker-agent model call, no
+  Haiku or Sonnet call, no manual Sentinel judgment call, and no gate,
+  re-gate, eval, scorer or validation execution occurred in this
+  recording session.**
 
 ## Labels
 

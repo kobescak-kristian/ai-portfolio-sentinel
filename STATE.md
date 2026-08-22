@@ -12,8 +12,9 @@ pre-registered, BLUEPRINT §0).
 **Visibility:** PUBLIC BY DESIGN from day one, permanent — ruling
 2026-07-15, canonical record in the private operations OS (same
 date). Public-while-dormant is intended; do not flag.
-**Phase status:** Phase 3 remains **OPEN** after **three** recorded
-results, none of which replaces another. (1) The designated Haiku
+**Phase status:** Phase 3 is **CLOSED — 2026-08-22**, after
+**four** recorded results, none of which replaces another and none of
+which is relabeled or softened by a later one. (1) The designated Haiku
 dev gate ran 2026-08-05 at source commit
 `cf713649bc1aaf31f1494112921d7741493533b0` and recorded an honest
 **FAIL** (BLUEPRINT §6 P3: "Dev gate leg green on fixtures" was not
@@ -49,13 +50,38 @@ execution-validity failure — one run-1 Haiku call failed at the SDK
 per-call budget ceiling, dead-lettering its scope fail-closed, so run
 1 FAILED and `idempotent_rerun` failed on the resulting execution gap
 (run 2 `findings_new = 2`, both in that exact scope), not on identity
-instability. Full figures, invariant predicates, cost evidence and
-the root-cause record for **all three** results: `EVAL_RESULTS.md`.
+instability. (4) The one prospective validation cycle under
+`adr/0009-post-adr0008-phase3-validation-protocol.md` ran 2026-08-21/22
+at validated source commit
+`54f5ce3d0e066417104b47fecbc49d05b5303859` (run IDs
+`r-cce0280d1a824ca6a12ac8faf42a30e1`,
+`r-e68b8878b62b453eaf6cf5fe2544a6bb`, both COMPLETED with 80/80 tasks
+terminal and all DONE) and, after independent Step-F verification,
+recorded **PASS** — `C = 47 > 0` together with a complete,
+independently verified PASS, which is the ADR-0009 §5 PASS
+disposition. Every scoring threshold PASSED there (60 emitted, 60 true
+positives, 0 false positives, 0 misses; pooled precision and recall
+1.0000; all six classes 10/10; clean false flags 0/166); all four
+frozen invariants PASSED, including both cross-run invariants; every
+ADR-0009 execution-validity predicate PASSED, with cross-run logical
+judgment-task coverage 23 == 23 and zero invalid logical histories;
+persistent identity held (60 finding rows, 60 distinct fingerprints;
+run 2 `findings_new = 0`, `findings_still_open = 60`,
+`findings_resolved = 0`); and exactly one valid `BOUNDED_RECOVERY`
+logical history occurred — one FAILED invocation whose mechanized
+class reconstructed as `SDK_BUDGET_CEILING` followed by one COMPLETED
+invocation for the same logical task, with zero `BREAKER_REFUSED`
+outcomes persisted. Accounted consumption was 645,883 and 575,877
+micro-EUR per run and 1,221,760 micro-EUR combined, inside the
+declared 750,000 / 1,500,000 accounted-consumption acceptance
+ceilings. Full figures, invariant predicates, cost evidence, evidence
+hashes and the root-cause records for **all four** results:
+`EVAL_RESULTS.md`.
 Note that `artifacts/phase3_dev_gate.json` continues to carry the
-2026-08-19 re-gate artifact — the prospective cycle wrote its
+2026-08-19 re-gate artifact — each prospective cycle wrote its
 artifact to a fresh external evidence parent and the committed file
-is untouched; the prospective raw evidence remains external/local and
-is identified in `EVAL_RESULTS.md` by SHA-256. The original gate's
+is untouched; both prospective cycles' raw evidence remains
+external/local and is identified in `EVAL_RESULTS.md` by SHA-256. The original gate's
 artifact is preserved
 at commit `f9b7ea4e0762161a2519158ec817288308128584`, blob
 `2b34e31e13ab8c6dd4e59fd9110e40159b48bcb4`. No fixture, label,
@@ -80,13 +106,26 @@ implementation) change-log entry below for the exact rule, evidence and
 non-authorizations. **The implementation session made no Sentinel
 checker-agent model call and ran no gate, re-gate, eval or scorer**;
 its only evidence is model-free regression evidence. The one permitted
-re-gate remains **consumed** and **Phase 3 remains OPEN** — passing
-model-free tests is not Phase-3 closure. The subsequent validation
+re-gate remains **consumed**, and passing model-free tests was never
+Phase-3 closure — closure came only from the independently verified
+ADR-0009 validated PASS recorded as result (4) above. The subsequent validation
 path decided by `adr/0007-prospective-validation-protocol.md`
 (ADOPTED 2026-08-20) has now run to completion: its one prospective
 cycle executed 2026-08-20 and reached **VALID COMPLETED FAIL**
-(terminal for this lineage; see result (3) above and
-`EVAL_RESULTS.md`).
+(terminal for that lineage; see result (3) above and
+`EVAL_RESULTS.md`). The further validation path decided by
+`adr/0009-post-adr0008-phase3-validation-protocol.md` has since run to
+completion as well: its full A–F bound sequence is complete, its one
+authorized cycle executed 2026-08-21/22, and independent Step-F
+verification recorded **PASS** (result (4) above). That cycle is
+**consumed and complete**. **Phase 3 is therefore CLOSED (2026-08-22)
+and Phase 4 is PERMITTED but NOT STARTED** — no Phase-4 work has
+begun in this repository. The governing task item remains **OPEN** and
+is tracked in the private operations OS. `SentinelDailyRun` remains
+stub-mode, unedited. The overall production-readiness program remains
+**OPEN**: Phases 4–6 and the remaining program gates are open, no
+production or production-ready claim is permitted yet, and the status
+language is unchanged — in development toward production-ready.
 Implementation itself (the caged checker
 agent, run-scoped EUR budget, main-ledger audit, `--judgment-mode
 stub|agent` activation, the cage-suite tests, `THREAT_MODEL.md`,
@@ -102,10 +141,8 @@ review evidence committed; see the 2026-08-04 change-log entry and
 evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
-success; 36/36 tests, ubuntu-latest, Python 3.12). Next action: none
-in this repo under ADR-0007 — its A–F sequence is complete, its one
-cycle is consumed, and any subsequent validation path requires a new
-owner-governed decision; see the Plan field below.
+success; 36/36 tests, ubuntu-latest, Python 3.12). Next action in this
+repo: a separate Phase-4 dispatch; see the Plan field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -176,17 +213,26 @@ prose — with logical judgment-task cross-run coverage, declared
 accounted-consumption acceptance ceilings of 750,000 micro-EUR per run
 and 1,500,000 micro-EUR across two runs, four dispositions with no
 fifth, no retry after a consumed non-PASS, and PARK as the default
-posture thereafter. **ADOPTED, and STAGE-2 IMPLEMENTED — NOT
-VALIDATED.** Its independent read returned PASS, and steps A, A2 and
-B/C of its A–F sequence have now run: the runner self-validates the
-ADR-0009 logical-history execution-validity contract, proven model-free
-(see the 2026-08-21 Stage-2 change-log entry below). Steps D, E and F
-have NOT run — the external Stage-2 validation SHA is NOT YET PINNED,
-and no model call, gate, re-gate, eval, scorer or validation execution
-has occurred under ADR-0009. The frozen quality contract and
-`max_regates: 1` are unchanged and all three historical FAILs stand.
-**Phase 3 remains OPEN. Phase 4 is NOT permitted.** Next action:
-independent review of the Stage-2 implementation commit.
+posture thereafter. **ADOPTED, IMPLEMENTED and now VALIDATED.** Its
+independent read returned PASS, and its full A–F bound sequence has
+run: steps A and A2 (adoption plus exact-SHA CI); steps B and C (the
+Stage-2 runner, which self-validates the ADR-0009 logical-history
+execution-validity contract, proven model-free — see the 2026-08-21
+Stage-2 change-log entry below — with exact-SHA CI and freeze green);
+step D (the external Stage-2 validation SHA pinned before execution,
+outside this repository, in the private operations OS annotation for
+this work item); step E (the one authorized cycle executed
+2026-08-21/22 under the §5 preflight at validated source commit
+`54f5ce3d0e066417104b47fecbc49d05b5303859`); and step F (independent
+verification of the runner artifact against the raw persisted
+evidence). The independent Step-F disposition is **PASS**, and the one
+ADR-0009 cycle is **consumed and complete**. Nothing in the frozen
+quality contract moved to reach it: the scoring corpus, answer key,
+thresholds, model, prompts, caps, retry taxonomy, identity rule and
+`max_regates: 1` are all unchanged, and all three historical FAILs
+stand unrelabeled. **Phase 3 is CLOSED (2026-08-22). Phase 4 is
+PERMITTED but NOT STARTED** — no Phase-4 work has begun here. Next
+action: a separate Phase-4 dispatch.
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -1587,3 +1633,130 @@ merges every change."
   recorded in the private operations OS's annotation for this work
   item. Next action: independent review of this Stage-2 implementation
   commit.
+- 2026-08-22 — ADR-0009 STEP-F PUBLIC RECORD: independently verified
+  **PASS**, **Phase 3 CLOSED** (dispatch q77-adr0009-stepf-record-a;
+  bound-sequence steps D, E and F). **This is a recording session, not
+  a validation session.** No Sentinel checker-agent model call, no
+  Haiku or Sonnet call, no manual Sentinel judgment call, and no
+  Phase-3 gate, re-gate, eval, scorer or validation execution occurred
+  here; `scripts/run_phase3_dev_gate.py` was not invoked. The
+  validation itself ran earlier, under step E, and was verified
+  earlier, under step F; this entry records that completed result.
+  **Step D (external pin).** The Stage-2 validation SHA was pinned
+  before execution, outside this repository, in the private operations
+  OS annotation for this work item: commit
+  `bd41f211905288e143746f2237ff02a4cf85790a`.
+  **Step E (execution).** The one authorized ADR-0009 prospective
+  validation cycle executed 2026-08-21/22 (window
+  2026-08-21T23:13Z–23:40Z) under the §5 preflight at validated source
+  commit `54f5ce3d0e066417104b47fecbc49d05b5303859`, with
+  `source_commit`, `required_source_sha` and `attested_source_sha` all
+  equal to it. Model `claude-haiku-4-5-20251001`, auth mode
+  `operator-subscription-oauth-assumed`, judgment mode `agent`. Run 1
+  `r-cce0280d1a824ca6a12ac8faf42a30e1` and run 2
+  `r-e68b8878b62b453eaf6cf5fe2544a6bb`, both COMPLETED, 80/80 tasks
+  terminal and all DONE in each.
+  **Step F (independent verification).** Disposition **PASS** under
+  ADR-0009 §5: `C = 47 > 0` — independently reconstructed from the
+  persisted SQLite ledger — together with a complete, independently
+  verified PASS. The one authorized cycle is **consumed and complete**;
+  ADR-0009's A–F bound sequence is complete.
+  **Scoring (SYNTHETIC fixture bed, REAL model calls).** 60 frozen
+  positives, 60 emitted, 60 true positives, 0 false positives, 0
+  misses; pooled precision 60/60 = 1.0000; pooled recall 60/60 =
+  1.0000; per-class recall 10/10 on all six classes (broken-link,
+  missing-required-file, missing-synthetic-label, number-mismatch,
+  readme-structure, stale-STATE-marker); clean false flags 0/166. All
+  four frozen invariants PASS (`every_task_terminal`,
+  `zero_lost_tasks`, `idempotent_rerun`,
+  `dedup_correct_on_doubled_fixture_run`). Every ADR-0009
+  execution-validity predicate PASS, with cross-run logical
+  judgment-task coverage 23 == 23 and zero invalid logical histories:
+  run 1 carried 24 model-invocation rows over 23 logical model-path
+  tasks (22 NORMAL histories plus exactly one BOUNDED_RECOVERY), run 2
+  carried 23 rows over 23 logical tasks (23 NORMAL, zero recovered).
+  Persistent finding identity held: 60 finding rows carrying 60
+  distinct fingerprints, run 2 `findings_new = 0`,
+  `findings_still_open = 60`, `findings_resolved = 0`.
+  **Bounded recovery (the ADR-0008 seam, exercised for real).** Exactly
+  one recovered logical history exists across both runs: `task_key`
+  `synthetic-01/EVAL_RESULTS.md::missing-synthetic-label`, ordered
+  `agent_calls` ids `[1, 2]`, states FAILED -> COMPLETED. The first row
+  carries `sdk_is_error` true, `sdk_subtype` `error_max_budget_usd`,
+  `reserved_eur_micros` 150000, `charged_eur_micros` 150000 and
+  `tool_attempts` 2, with both persisted tool attempts ACCEPTED at
+  ordinals 1 and 2 and a `BREAKER_REFUSED` count of 0; the second row
+  is the same run and the same `task_key` at a later `agent_calls.id`,
+  state COMPLETED, `reserved_eur_micros` 150000, `charged_eur_micros`
+  20634. That is the exact ADR-0009-valid `BOUNDED_RECOVERY` history,
+  not an invalid failed call — and the zero `BREAKER_REFUSED` count is
+  load-bearing, since a persisted containment refusal would have made
+  the recovery INVALID even carrying the same SDK subtype. Charging the
+  first row its full reservation is the ADR-0008 §6 accounting path for
+  an unrecoverable final estimate; **no overshoot above a reservation
+  or above any acceptance ceiling is claimed here, and none is
+  established by this evidence.** One observed recovery is not a
+  guarantee that every future budget-ceiling event recovers.
+  **Cost.** Accounted consumption 645,883 micro-EUR (run 1) and 575,877
+  micro-EUR (run 2), 1,221,760 micro-EUR combined, against the declared
+  accounted-consumption acceptance ceilings of 750,000 per run and
+  1,500,000 across two runs — all PASS. These are acceptance ceilings,
+  not guaranteed physical or provider-spend maxima.
+  **Auth environment, adjudicated.** `ANTHROPIC_BASE_URL` held the
+  value `https://api.anthropic.com` in the orchestration environment
+  and was unset for the runner subprocess only, before execution.
+  Adjudicated ACCEPTABLE / NON-BLOCKING: the committed fail-closed auth
+  control explicitly requires override-capable variables, that one
+  included, to be unset before agent mode; no alternate URL was
+  substituted, no routing was changed, and no credential, config or
+  code file was changed.
+  **Raw evidence provenance.** The raw evidence is retained externally
+  and locally and is **not committed** to this repository:
+  `gate.sqlite3`
+  `e965dc9d6311e558631a145d8999b574820ef2ae77c5ab7df1d57f12ffc7a5ec`;
+  `gate.jsonl`
+  `2585a8922fd88d87b491a893c43882f4569f9c6b8d5bbf2db374bbf0c4b46b8b`;
+  `cost_ledger.jsonl`
+  `eb636b1738b05fc59af8668a7e1f10a2bf64b8c9f0b30085e863b5dfcb6e9b36`;
+  `FINDINGS.md`
+  `07a6680646800515f7e348f2063a5bc25e34c0fdcc6cc7c1bd3afe78ea66c175`;
+  the runner artifact
+  `c3dc96acf42a983d908e75255537754f0797596ec98f3d15586bb1704db80845`;
+  the terminal transcript
+  `fc692e43cae681b06d907c49dba57a3f86cc6c87d761f63bd93bb7971b090a6f`;
+  the SHA-256 manifest
+  `c54b08c563d2664dfbbc2e1c70cbc74ea36cfd8ffa4af406a89ab39190e8a6c1`;
+  and the transport ZIP
+  `8b3d178dcd522cd0efa98ba74c19f801f350f5b853bd2a01a1d5004fc0281a5b`.
+  `gate.sqlite3-wal` and `gate.sqlite3-shm` were **ABSENT** after a
+  clean SQLite close. Independent Step-F integrity result: the ZIP hash
+  matched, every packaged raw file matched its manifest hash, `C` was
+  independently reconstructed as 47, the bounded recovery was
+  independently reconstructed from durable structured rows, the cost
+  rows independently summed to 1,221,760 micro-EUR, and no binding
+  disagreement with the runner artifact was found. The committed
+  fixed-path `artifacts/phase3_dev_gate.json` is untouched and
+  continues to carry the 2026-08-19 re-gate artifact.
+  **What changed in this repository.** Exactly six recording and
+  truth-repair files: `EVAL_RESULTS.md` (the fourth result appended,
+  the three historical records preserved and unrelabeled), `STATE.md`,
+  `MODEL_CARD.md`, `THREAT_MODEL.md`, `SPEC.md` and `README.md`. No
+  ADR, BLUEPRINT, runtime, test, schema, fixture, answer-key,
+  clean-manifest, scorer, threshold, prompt, model, retry, cost,
+  identity or lifecycle change; `.publicgate-allow` unmodified; no new
+  post; no raw evidence committed. Local verification in this recording
+  session: 741 tests passing, 3 skipped (the existing intentional
+  Phase-4 stubs only), 91.1% coverage, `pip check` clean, Tier 0 PASS,
+  Phase-1 freeze guard PASS, repository publication gate PASS.
+  **Disposition.** **Phase 3 CLOSED 2026-08-22. Phase 4 PERMITTED but
+  NOT STARTED** — no Phase-4 work has begun. The governing task item
+  remains OPEN and is tracked in the private operations OS.
+  `SentinelDailyRun` unchanged and still stub-mode. The overall
+  production-readiness program remains OPEN: Phases 4–6 and the
+  remaining program gates are open, no production or production-ready
+  claim is permitted yet, and the status language is unchanged — in
+  development toward production-ready. This commit does not self-cite
+  its own SHA; that SHA and its exact CI run are recorded in the
+  private operations OS annotation for this work item. Next action:
+  independent read-only review of this public recording commit and its
+  exact-SHA CI, then a separate Phase-4 dispatch.

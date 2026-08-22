@@ -85,7 +85,14 @@ cycle separately authorized by adr/0007 (BLUEPRINT §11(i)) ran under
 the unchanged frozen scoring contract and `max_regates: 1` — consumed
 2026-08-20 (VALID COMPLETED FAIL; terminal for the Sentinel-v1
 Phase-3 lineage; no further validation cycle authorized by that ADR).
-BLUEPRINT governs where this file diverges.
+The one further prospective validation cycle separately authorized by
+adr/0009 (BLUEPRINT §11(j)) likewise ran under the unchanged frozen
+scoring contract and `max_regates: 1` — consumed 2026-08-22
+(independent disposition PASS; C = 47; every frozen scoring threshold,
+invariant, execution-validity predicate and accounted-consumption cost
+acceptance ceiling passed). Phase 3 is CLOSED; Phase 4 is permitted but
+NOT STARTED. `max_regates: 1` and every historical re-gate fact above
+are unchanged. BLUEPRINT governs where this file diverges.
 
 ## 4. Injection spec for the P1 answer key (BLUEPRINT §5)
 
