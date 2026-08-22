@@ -132,8 +132,14 @@ the durable `planned_run_id` iteration-intent invariant, the cost
 breaker, the consecutive-failure breaker, crash/recovery mechanics for
 ADR-0010 §4 cases A–D, model-free allowance propagation into the
 existing `RunBudgetCoordinator`, and the logging, read-only-boundary
-and coverage wiring. **Still NOT done: the three Phase-4
-fault-injection stubs in `tests/test_failures.py` remain SKIPPED; the
+and coverage wiring. The **Phase-4 BREAKER FAULT INJECTION is
+ACTIVATED — 2026-08-22** (dispatch `q77-p4-fi-a`): the seeded
+cost-breaker FI and the seeded consecutive-failure-breaker FI both
+exercise the real `run_loop` supervisor over durable loop state, and
+both **PASS**. **Still NOT done: exactly ONE Phase-4 fault-injection
+stub in `tests/test_failures.py` remains SKIPPED —
+`test_seeded_breaker_trip_produces_failure_alert`, because full
+ADR-0010 §5 alert proof requires `ITERATION_LOG.md`; the
 technical Phase-4 gate script has NOT landed and the technical gate
 has NOT run; `ITERATION_LOG.md` has NOT landed;
 `artifacts/phase4_loop_gate.json` has NOT landed; and the four
@@ -168,8 +174,9 @@ evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
 success; 36/36 tests, ubuntu-latest, Python 3.12). Next action in this
-repo: `q77-p4-fi-a` — activation of the three Phase-4 fault-injection
-stubs; see the Plan field below.
+repo: `q77-p4-gate-a` — the technical Phase-4 gate script,
+`ITERATION_LOG.md` support and the one remaining full-alert
+fault-injection stub; see the Plan field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -272,15 +279,19 @@ versus remaining-`<= 0` asymmetry; a crash-safe durable
 `planned_run_id` iteration-intent invariant; a four-part alert
 contract that introduces no new notification channel; a closed
 stop-reason vocabulary; and a MODEL-FREE technical gate frozen before
-implementation. **Phase 4 is IN PROGRESS — 2026-08-22.
-Implementation has NOT yet landed, the technical Phase-4 gate has NOT
-run, and the four ADR-0003 P4 closure artifacts have NOT yet landed;
-Phase 4 remains OPEN**, and per ADR-0010 §8 a technical-gate PASS
-alone does not close it. That implementation has since **LANDED
-2026-08-22** under dispatch `q77-p4-runner-a` — core loop only; the
-technical gate, `ITERATION_LOG.md` and the four mapped P4 closure
-artifacts remain outstanding and Phase 4 remains OPEN. Next action:
-`q77-p4-fi-a`.
+implementation. **Phase 4 is IN PROGRESS — 2026-08-22.** Its core
+loop implementation **LANDED 2026-08-22** under dispatch
+`q77-p4-runner-a`, and both seeded breaker fault injections were
+**ACTIVATED and recorded PASS 2026-08-22** under dispatch
+`q77-p4-fi-a`. **Still OPEN: the full four-part ADR-0010 §5
+failure-alert proof — its labeled `ITERATION_LOG.md` evidence line
+does not exist, so one fault-injection stub stays deliberately skipped
+rather than weaken the four-part definition; the technical Phase-4
+gate script and the gate run itself; `ITERATION_LOG.md`;
+`artifacts/phase4_loop_gate.json`; and the four ADR-0003 P4 closure
+artifacts. Phase 4 remains OPEN**, and per ADR-0010 §8 a
+technical-gate PASS alone does not close it. Next action:
+`q77-p4-gate-a`.
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -2064,3 +2075,86 @@ merges every change."
   been validated: these are implemented controls with model-free
   regression evidence, not a gate result. Next action: exact-SHA CI
   success, then `q77-p4-fi-a`.
+- 2026-08-22 — Phase-4 BREAKER FAULT INJECTION ACTIVATED (dispatch
+  q77-p4-fi-a). Source parent
+  `e46dd2d00e174232f19473aaecce94022f1f0e75` (the `q77-p4-runner-a` core
+  loop implementation commit); this commit does not self-cite its own
+  SHA — that SHA and its exact CI run are recorded in the private
+  operations OS annotation for this work item. Exactly two files
+  changed: `tests/test_failures.py` and `STATE.md`. **Two of the three
+  Phase-4 fault-injection stubs are activated with real seeded,
+  model-free bodies.** (1) `test_cost_breaker_trips_on_seeded_overspend`
+  seeds one legitimate finalized iteration — durable intent, a real
+  terminal `runs` row, a real `CostRow`, a real finalize binding the two
+  through the landed `SqliteLoopStateStore` — whose committed cost puts
+  accounted loop consumption at **750,001 micro-EUR**, exactly one above
+  the frozen 750,000 ceiling, then resumes the real `run_loop`
+  supervisor with N = 3 not yet exhausted. Proven: `stop_reason ==
+  COST_BREAKER_TRIPPED`; nonzero exit; the overshoot **accounted in full
+  at 750,001 and never clamped**, both in the returned outcome and in
+  the durable `loop_runs` row; the durable `loop_runs.stop_reason`; an
+  ERROR-severity `breaker.cost_tripped` record read back from the real
+  JSONL loop log on disk; and that **no next iteration begins** — no
+  second `loop_iterations` INTENT row, no second underlying `runs` row,
+  and the seeded executor's execute-count still zero — with the
+  already-finalized iteration's identity (`planned_run_id`,
+  `bound_run_id`, `run_status`, `FINALIZED`) unchanged by the trip.
+  (2) `test_consecutive_failure_breaker_trips_on_seeded_failures` drives
+  the actual supervisor with N = 4 — high enough that iteration-cap
+  completion cannot pre-empt the streak — against a seeded executor
+  whose every iteration ends FAILED at deterministic **zero** cost, so
+  the cost breaker cannot mask the streak breaker. Proven: exactly 3
+  iterations start and exactly 3 finalize; every underlying run status
+  FAILED; `consecutive_failures == 3`; `stop_reason ==
+  CONSECUTIVE_FAILURE_BREAKER_TRIPPED`; nonzero exit; the durable
+  `loop_runs.stop_reason`; an ERROR-severity
+  `breaker.consecutive_failure_tripped` record in the real loop log; and
+  that the **fourth iteration never starts** — no fourth INTENT row, no
+  fourth `runs` row, executor call count exactly 3. Both tests exercise
+  the REAL landed supervisory path — `runner.loop.run_loop`, the real
+  SQLite loop tables, real `runs` rows so the `bound_run_id` foreign key
+  stays active, real durable `CostRow` evidence and the real
+  `RunLogger` — not a predicate re-run; the boundary matrices and reset
+  sequences already pinned in `tests/test_breakers.py` and
+  `tests/test_loop_runner.py` are deliberately not duplicated. **The
+  third stub is deliberately NOT activated.** ADR-0010 §5 defines a
+  proven breaker/failure alert as ALL FOUR of a structured ERROR event,
+  a durable `stop_reason`, a nonzero exit **and** a labeled
+  `ITERATION_LOG.md` evidence line. Parts 1–3 are now proven for both
+  breakers; part 4's surface has not landed and its evidence format
+  belongs to the Phase-4 gate dispatch, so
+  `test_seeded_breaker_trip_produces_failure_alert` stays skipped with a
+  reason naming `ITERATION_LOG.md` and `q77-p4-gate-a`. No
+  ITERATION_LOG line was manufactured inside a test, no temporary
+  substitute format was introduced, and the definition of "failure
+  alert" was not weakened to reach zero skips early. The
+  `tests/test_failures.py` self-guard was updated to the current truth
+  and now requires the skipped set to be exactly that one function with
+  a reason containing both `Phase 4` and `ITERATION_LOG`. **The full
+  four-part ADR-0010 §5 alert therefore remains NOT PROVEN.** Evidence:
+  **891 tests passing, exactly 1 skipped** (baseline at the source SHA
+  was 889 passing / 3 skipped), `python -m pip check` clean, **92.6%
+  coverage**, Tier 0 artifact validator PASS, Phase-1 freeze guard PASS,
+  repository publication gate PASS. **Model-free: ZERO model calls** —
+  no Claude SDK query, no provider process, no network call, no Haiku or
+  Sonnet call, no gate, re-gate, eval or scorer run. **NOT done in this
+  session, and not claimed:** no ADR was created or amended; no
+  `runner/*`, `sentinel/*`, `agents/*`, `contracts/*` or `telemetry/*`
+  file was modified — the landed runner was the system under test and
+  was validated, not repaired; no technical Phase-4 gate script landed
+  and the technical gate has NOT run; `ITERATION_LOG.md`,
+  `artifacts/phase4_loop_gate.json`, `TEST_MATRIX.md`,
+  `INCIDENT_RESPONSE.md`, `MONITORING.md` and `RUNBOOK.md` did not land.
+  **Phase 4 remains OPEN**, and per ADR-0010 §8 a technical-gate PASS
+  alone would not close it. Unchanged and preserved: Phase 3 CLOSED; the
+  ADR-0009 cycle PASS, consumed and complete; no Phase-3 gate reopening;
+  no fixture, answer-key, clean-manifest, scorer, threshold, model or
+  prompt change; no ADR-0008 retry-taxonomy change; the EUR 0.75 per-run
+  cap and the 750,000 micro-EUR loop ceiling, neither raised; no Phase-5
+  work of any kind and no Q-83 work; no Task Scheduler operation —
+  `SentinelDailyRun` unchanged and still stub-mode. No production or
+  production-ready claim is made or implied; status stays "in
+  development toward production-ready." Nothing here claims the bounded
+  loop has been gated: these are seeded fault-injection proofs of two
+  breakers, not a Phase-4 gate result. Next action: exact-SHA CI
+  success, then `q77-p4-gate-a`.

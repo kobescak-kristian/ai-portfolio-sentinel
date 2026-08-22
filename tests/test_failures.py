@@ -2,7 +2,11 @@
 
 Phase 2 activates the 8 deterministic-control-plane stubs below with
 real bodies, plus 2 crash-consistency legs (C4) and a self-guard that
-the remaining Phase-3/4 stubs stay skipped. Cage and no-write-access
+the remaining later-phase stubs stay skipped. Phase 3 activated the
+per-run cost-cap leg; Phase 4 (dispatch q77-p4-fi-a) activates the two
+seeded BREAKER legs. Exactly one stub is still skipped, deliberately:
+the full ADR-0010 section 5 four-part failure alert needs a labeled
+``ITERATION_LOG.md`` evidence line, and that surface has not landed. Cage and no-write-access
 tests are NOT stubbed here: the full cage suite lands in
 tests/test_bounds.py at Phase 3. Phase 2's own narrower boundary
 tests (zero-model-call invariant, no-write-access-by-construction)
@@ -13,13 +17,29 @@ narrower file, not a re-run of the Phase-3 gate.
 from __future__ import annotations
 
 import ast
+import json
+from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
+from typing import Sequence
 
 import pytest
 
 from checks.judgment.stubs import ScriptedJudgmentStub
+from contracts.schemas import CostRow, RunRecord
+from runner.breakers import (
+    CONSECUTIVE_FAILURE_BREAKER_TRIPPED,
+    COST_BREAKER_TRIPPED,
+    LOOP_BUDGET_EUR_MICROS,
+)
+from runner.loop import FINALIZED, LoopConfig, LoopSummary, RunProbe, run_loop
+from runner.sentinel_adapter import durable_accounted_cost
+from runner.state import SqliteLoopStateStore, open_loop_state
 from sentinel import ledger, lifecycle
+from sentinel.ids import FrozenClock
+from sentinel.logs import RunLogger
 from sentinel.pipeline import Deps, execute_run
+from telemetry.cost_ledger import append_cost_row
 
 from tests.conftest import (
     ListSurfaceProvider,
@@ -512,13 +532,18 @@ def test_only_phase_3_and_4_stubs_remain_skipped():
                     reason = kw.value.value
             skipped[node.name] = reason
 
-    assert set(skipped) == {
-        "test_cost_breaker_trips_on_seeded_overspend",
-        "test_consecutive_failure_breaker_trips_on_seeded_failures",
-        "test_seeded_breaker_trip_produces_failure_alert",
-    }
+    # Current truth after dispatch q77-p4-fi-a: both seeded BREAKER legs
+    # are activated, and exactly ONE stub remains. It is not skipped for
+    # convenience - ADR-0010 section 5 defines a proven failure alert as
+    # ALL FOUR of a structured ERROR event, a durable stop_reason, a
+    # nonzero exit and a labeled ITERATION_LOG.md evidence line. Three
+    # are implemented and proven by the two tests below; the fourth
+    # surface has not landed, and the definition is not weakened to
+    # reach zero skips early.
+    assert set(skipped) == {"test_seeded_breaker_trip_produces_failure_alert"}
     for name, reason in skipped.items():
         assert reason is not None and "Phase 4" in reason, (name, reason)
+        assert "ITERATION_LOG" in reason, (name, reason)
 
 
 # --- Phase 3: caged checker agent (dispatch q77-p3-a) -----------------------
@@ -611,20 +636,378 @@ def test_per_run_cost_cap_halts_checker(tmp_path, make_config, make_deps, fixed_
 
 
 # --- Phase 4: breakers and bounded loop -------------------------------------
+#
+# Seeded, MODEL-FREE fault injection against the landed ADR-0010
+# supervisor (dispatch q77-p4-fi-a).
+#
+# These are deliberately NOT another set of pure predicate cases.
+# tests/test_breakers.py already pins the boundary arithmetic and
+# tests/test_loop_runner.py already pins the reset sequence, the
+# terminal-precedence matrix and every section-3A boundary consequence;
+# repeating those here would add volume, not evidence. What these two
+# tests prove is the other thing: the REAL supervisory path under a
+# seeded fault — runner.loop.run_loop driving the real
+# SqliteLoopStateStore over a real ledger, with real ``runs`` rows, real
+# durable ``CostRow``s and the real RunLogger — with the breaker's
+# consequences read back from committed state and from the log file on
+# disk rather than from an in-memory double.
+#
+# Nothing below contacts the network, imports claude_agent_sdk, calls a
+# provider, or bypasses the supervisor or its durable loop state.
+
+PHASE4_LOOP_ID = "loop-fi"
+
+# The existing per-run cap, injected rather than imported: runner.loop is
+# domain-free and its caller supplies this figure.
+PHASE4_PER_RUN_CAP_MICROS = 750_000
 
 
-@pytest.mark.skip(reason="FI stub — activates at Phase 4: cost breaker (seeded)")
-def test_cost_breaker_trips_on_seeded_overspend():
-    raise NotImplementedError
+def _seed_run(conn, run_id: str, status: str) -> None:
+    """A REAL ``runs`` row, opened and closed through the ledger's own
+    primitives. ``loop_iterations.bound_run_id`` is foreign-keyed to
+    ``runs(run_id)`` and constrained equal to ``planned_run_id``, so a
+    dictionary stand-in would side-step the integrity the schema
+    actually enforces — every iteration these tests finalize binds to a
+    run SQLite has verified exists."""
+    with ledger.unit_of_work(conn):
+        ledger.insert_run(
+            conn,
+            RunRecord(
+                schema_version=1,
+                run_id=run_id,
+                run_kind="dev",
+                status="RUNNING",
+                started_at_utc=T0,
+                tasks_created=0,
+                tasks_terminal=0,
+                findings_new=0,
+                findings_still_open=0,
+                findings_resolved=0,
+            ),
+        )
+        ledger.close_run(
+            conn,
+            run_id,
+            status=status,
+            finished_at_utc=T0 + timedelta(hours=1),
+            counts=ledger.RunCounts(0, 0, 0, 0),
+        )
 
 
+def _write_cost_row(path: Path, run_id: str, micros: int) -> None:
+    """A REAL durable CostRow — ADR-0010 §2's accounting source. Seeding
+    cost here rather than in a counter is the point: §2 says accounted
+    consumption is reconstructed from committed cost records, so this is
+    the one place where a seeded overspend is indistinguishable from a
+    real one as far as the loop is concerned."""
+    append_cost_row(
+        path,
+        CostRow(
+            schema_version=1,
+            run_id=run_id,
+            recorded_at_utc=T0,
+            run_kind="dev",
+            model="none-deterministic",
+            input_tokens=0,
+            output_tokens=0,
+            cost_eur_micros=micros,
+        ),
+    )
+
+
+@dataclass
+class SeededIterationExecutor:
+    """A test-only ``runner.loop.IterationExecutor`` with a seeded
+    terminal outcome.
+
+    Deliberately minimal: it exists to inject a fault, not to simulate
+    Sentinel (``tests/test_loop_runner.py`` already drives the real
+    adapter end to end). It still writes a real terminal ``runs`` row
+    and a real ``CostRow`` per iteration and answers every probe and
+    cost query from that durable state, so "no further run started" is
+    observable as a fact about persisted data plus a call log.
+
+    Model-free by construction: no network, no ``claude_agent_sdk``, no
+    provider, no query surface, and no path around the supervisor or the
+    durable loop state."""
+
+    conn: object
+    cost_ledger_path: Path
+    seeded_status: str = "FAILED"
+    seeded_cost_eur_micros: int = 0
+    execute_calls: list[str] = field(default_factory=list)
+    allowances_seen: list[int] = field(default_factory=list)
+
+    def probe(self, planned_run_id: str) -> RunProbe:
+        run = ledger.get_run(self.conn, planned_run_id)
+        if run is None:
+            return RunProbe(status=None, outputs_complete=False)
+        if run.status == "RUNNING":
+            return RunProbe(status="RUNNING", outputs_complete=False)
+        return RunProbe(status=run.status, outputs_complete=True)
+
+    def execute(self, planned_run_id: str, *, allowance_eur_micros: int) -> str:
+        self.execute_calls.append(planned_run_id)
+        self.allowances_seen.append(allowance_eur_micros)
+        _seed_run(self.conn, planned_run_id, self.seeded_status)
+        _write_cost_row(
+            self.cost_ledger_path, planned_run_id, self.seeded_cost_eur_micros
+        )
+        return self.seeded_status
+
+    def recover_interrupted(self, planned_run_id: str) -> str:
+        raise AssertionError("no interrupted run is seeded by these FI cases")
+
+    def reconcile_outputs(self, planned_run_id: str) -> None:
+        raise AssertionError("no incomplete-output run is seeded by these FI cases")
+
+    def accounted_cost(self, run_ids: Sequence[str]) -> int:
+        return durable_accounted_cost(self.cost_ledger_path, run_ids)
+
+
+class SeededPlannedRunIds:
+    """Deterministic ``planned_run_id``s, so assertions can name exactly
+    which runs were and were not created."""
+
+    def __init__(self, prefix: str):
+        self.prefix = prefix
+        self.issued: list[str] = []
+
+    def new_run_id(self) -> str:
+        value = f"{self.prefix}-{len(self.issued):03d}"
+        self.issued.append(value)
+        return value
+
+
+def _severities_for(log_path: Path, event: str) -> list[str]:
+    """Severity of every record for one event, read back from the REAL
+    JSONL the loop wrote.
+
+    Reading the file rather than an in-memory recorder is what makes
+    this ADR-0010 §5 part 1 evidence: the event had to pass
+    ``RunLogger``'s closed-vocabulary check and land on disk, so a
+    breaker event that was merely constructed in memory would not appear
+    here."""
+    records = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    return [r["severity"] for r in records if r["event"] == event]
+
+
+def _phase4_loop_config(n: int) -> LoopConfig:
+    return LoopConfig(
+        loop_id=PHASE4_LOOP_ID,
+        max_iterations=n,
+        per_run_cap_eur_micros=PHASE4_PER_RUN_CAP_MICROS,
+        loop_budget_eur_micros=LOOP_BUDGET_EUR_MICROS,
+    )
+
+
+def test_cost_breaker_trips_on_seeded_overspend(tmp_path):
+    """FI (activated at Phase 4, dispatch q77-p4-fi-a): the ADR-0010 §2
+    cost breaker under a SEEDED durable overspend.
+
+    One completed iteration is seeded whose durable CostRow puts
+    accounted loop consumption at 750001 micro-EUR — exactly one above
+    the frozen 750000 ceiling. The real supervisor is then resumed with
+    N NOT yet exhausted, so normal iteration-cap completion cannot
+    intervene and the breaker is the only thing that can stop the loop.
+
+    It must trip on §3 leg A's strict ``>``, account the overshoot in
+    full without clamping, emit the ERROR-severity breaker event,
+    persist the stop reason, exit nonzero, and start nothing further.
+
+    Model-free: the fault is a committed cost row, which is precisely
+    where §2 says the loop reads its accounting from. No provider, no
+    SDK, no network."""
+    db_path = tmp_path / "loop.sqlite3"
+    cost_ledger_path = tmp_path / "cost_ledger.jsonl"
+    log_path = tmp_path / "loop.jsonl"
+    seeded_run_id = "r-fi-cost-000"
+    seeded_overshoot = 750_001  # exactly one micro-EUR above the frozen ceiling
+
+    conn = open_loop_state(db_path)
+    logger = RunLogger(log_path)
+    executor = SeededIterationExecutor(conn=conn, cost_ledger_path=cost_ledger_path)
+    try:
+        store = SqliteLoopStateStore(conn)
+        # Seed a legitimate finalized iteration through the REAL store:
+        # durable intent, a real terminal run row, a real CostRow, then a
+        # real finalize binding the two. No row is hand-written, and no
+        # in-memory loop total is faked.
+        store.begin_or_load_loop(
+            loop_id=PHASE4_LOOP_ID,
+            max_iterations=3,
+            loop_budget_eur_micros=LOOP_BUDGET_EUR_MICROS,
+            failure_threshold=3,
+            now=T0,
+        )
+        store.record_intent(
+            loop_id=PHASE4_LOOP_ID,
+            iteration_index=0,
+            planned_run_id=seeded_run_id,
+            now=T0,
+        )
+        _seed_run(conn, seeded_run_id, "COMPLETED")
+        _write_cost_row(cost_ledger_path, seeded_run_id, seeded_overshoot)
+        store.finalize_iteration(
+            loop_id=PHASE4_LOOP_ID,
+            iteration_index=0,
+            bound_run_id=seeded_run_id,
+            run_status="COMPLETED",
+            accounted_cost_eur_micros=seeded_overshoot,
+            consecutive_failures_after=0,
+            summary=LoopSummary(1, 1, 0, seeded_overshoot),
+            now=T1,
+        )
+
+        outcome = run_loop(
+            _phase4_loop_config(n=3),
+            store=store,
+            executor=executor,
+            clock=FrozenClock(ticks=[T2 + timedelta(seconds=i) for i in range(50)]),
+            ids=SeededPlannedRunIds("r-fi-cost-next"),
+            logger=logger,
+        )
+    finally:
+        logger.close()
+        conn.close()
+
+    assert outcome.stop_reason == COST_BREAKER_TRIPPED
+    assert outcome.exit_code != 0
+    # The known overshoot is accounted in full, never clamped to the
+    # ceiling (ADR-0010 §2), and N was genuinely not exhausted.
+    assert outcome.accounted_cost_eur_micros == seeded_overshoot == 750_001
+    assert outcome.iterations_completed == 1 < 3
+
+    # The seeded executor was never asked to run anything: the refusal
+    # landed before any work, not after it.
+    assert executor.execute_calls == []
+
+    # ADR-0010 §5 part 1 — a structured ERROR-severity event from the
+    # closed vocabulary, read back from the real loop log on disk.
+    assert _severities_for(log_path, "breaker.cost_tripped") == ["ERROR"]
+
+    conn = open_loop_state(db_path)
+    try:
+        store = SqliteLoopStateStore(conn)
+        record = store.loop_record(PHASE4_LOOP_ID)
+        # §5 part 2 — the stop reason and the un-clamped figure are DURABLE.
+        assert record["status"] == "FINISHED"
+        assert record["stop_reason"] == COST_BREAKER_TRIPPED
+        assert record["accounted_cost_eur_micros"] == 750_001
+
+        rows = store.list_iterations(PHASE4_LOOP_ID)
+        # No next iteration began: no second INTENT row, and no second
+        # underlying run anywhere in the ledger.
+        assert len(rows) == 1
+        assert [r.run_id for r in ledger.list_runs(conn)] == [seeded_run_id]
+
+        # The already-finalized iteration's identity is untouched by the trip.
+        assert rows[0].iteration_index == 0
+        assert rows[0].iteration_state == FINALIZED
+        assert rows[0].planned_run_id == seeded_run_id
+        assert rows[0].bound_run_id == seeded_run_id
+        assert rows[0].run_status == "COMPLETED"
+    finally:
+        conn.close()
+
+
+def test_consecutive_failure_breaker_trips_on_seeded_failures(tmp_path):
+    """FI (activated at Phase 4, dispatch q77-p4-fi-a): the ADR-0010 §1
+    consecutive-failure breaker under SEEDED iteration failures.
+
+    The real supervisor is driven with N = 4 — high enough that normal
+    iteration-cap completion cannot pre-empt the streak — against an
+    executor whose every iteration ends FAILED at deterministic ZERO
+    cost, so the cost breaker cannot mask the streak breaker. Exactly
+    three iterations must start and finalize; the fourth must never
+    start, because §1 refuses the NEXT iteration rather than aborting
+    one already underway.
+
+    Model-free: the seeded executor makes no provider call and imports
+    no SDK, yet each iteration still leaves a real terminal ``runs`` row
+    and a real CostRow and finalizes through the real store."""
+    db_path = tmp_path / "loop.sqlite3"
+    cost_ledger_path = tmp_path / "cost_ledger.jsonl"
+    log_path = tmp_path / "loop.jsonl"
+
+    conn = open_loop_state(db_path)
+    logger = RunLogger(log_path)
+    ids = SeededPlannedRunIds("r-fi-fail")
+    executor = SeededIterationExecutor(
+        conn=conn,
+        cost_ledger_path=cost_ledger_path,
+        seeded_status="FAILED",
+        seeded_cost_eur_micros=0,
+    )
+    try:
+        outcome = run_loop(
+            _phase4_loop_config(n=4),
+            store=SqliteLoopStateStore(conn),
+            executor=executor,
+            clock=FrozenClock(ticks=[T0 + timedelta(seconds=i) for i in range(200)]),
+            ids=ids,
+            logger=logger,
+        )
+    finally:
+        logger.close()
+        conn.close()
+
+    # Exactly three iterations started and exactly three finalized.
+    assert outcome.iterations_started == 3
+    assert outcome.iterations_completed == 3
+    # The streak stopped it at exactly the threshold, with a nonzero exit.
+    assert outcome.consecutive_failures == 3
+    assert outcome.stop_reason == CONSECUTIVE_FAILURE_BREAKER_TRIPPED
+    assert outcome.exit_code != 0
+    # Cost never came near the ceiling, so nothing masked the streak.
+    assert outcome.accounted_cost_eur_micros == 0
+
+    # The fourth iteration never started: the executor was called exactly
+    # three times, for exactly the three ids the loop committed to.
+    assert executor.execute_calls == ids.issued
+    assert len(executor.execute_calls) == 3
+
+    # ADR-0010 §5 part 1, from the real loop log on disk.
+    assert _severities_for(log_path, "breaker.consecutive_failure_tripped") == ["ERROR"]
+
+    conn = open_loop_state(db_path)
+    try:
+        store = SqliteLoopStateStore(conn)
+        record = store.loop_record(PHASE4_LOOP_ID)
+        # §5 part 2 — the durable stop reason and the durable streak.
+        assert record["status"] == "FINISHED"
+        assert record["stop_reason"] == CONSECUTIVE_FAILURE_BREAKER_TRIPPED
+        assert record["iterations_started"] == 3
+        assert record["iterations_completed"] == 3
+        assert record["consecutive_failures"] == 3
+
+        rows = store.list_iterations(PHASE4_LOOP_ID)
+        assert [r.iteration_index for r in rows] == [0, 1, 2]  # no fourth INTENT row
+        assert all(r.iteration_state == FINALIZED for r in rows)
+        assert [r.run_status for r in rows] == ["FAILED", "FAILED", "FAILED"]
+        assert [r.bound_run_id for r in rows] == ids.issued
+        # And no fourth underlying run was created either.
+        assert sorted(r.run_id for r in ledger.list_runs(conn)) == sorted(ids.issued)
+    finally:
+        conn.close()
+
+
+# The full four-part ADR-0010 §5 alert is NOT proven by this session.
+# Parts 1-3 (structured ERROR event, durable stop_reason, nonzero exit)
+# are proven above for both breakers. Part 4 is a labeled
+# ITERATION_LOG.md evidence line, and that surface has not landed; its
+# format belongs to the Phase-4 gate dispatch. No substitute format is
+# invented here, and the definition of "failure alert" is not weakened
+# in order to reach zero skips early.
 @pytest.mark.skip(
-    reason="FI stub — activates at Phase 4: consecutive-failure breaker (seeded)"
+    reason=(
+        "FI stub — Phase 4 full alert requires ITERATION_LOG.md; "
+        "activates in q77-p4-gate-a"
+    )
 )
-def test_consecutive_failure_breaker_trips_on_seeded_failures():
-    raise NotImplementedError
-
-
-@pytest.mark.skip(reason="FI stub — activates at Phase 4: failure alerting (seeded)")
 def test_seeded_breaker_trip_produces_failure_alert():
     raise NotImplementedError
