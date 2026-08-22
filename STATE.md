@@ -136,21 +136,29 @@ and coverage wiring. The **Phase-4 BREAKER FAULT INJECTION is
 ACTIVATED — 2026-08-22** (dispatch `q77-p4-fi-a`): the seeded
 cost-breaker FI and the seeded consecutive-failure-breaker FI both
 exercise the real `run_loop` supervisor over durable loop state, and
-both **PASS**. **Still NOT done: exactly ONE Phase-4 fault-injection
-stub in `tests/test_failures.py` remains SKIPPED —
-`test_seeded_breaker_trip_produces_failure_alert`, because full
-ADR-0010 §5 alert proof requires `ITERATION_LOG.md`; the
-technical Phase-4 gate script has NOT landed and the technical gate
-has NOT run; `ITERATION_LOG.md` has NOT landed;
-`artifacts/phase4_loop_gate.json` has NOT landed; and the four
+both **PASS**. The **Phase-4 TECHNICAL GATE is FROZEN — 2026-08-23**
+(dispatch `q77-p4-gate-a`): `runner/iteration_log.py` lands the public
+derived-evidence surface (deterministic render, idempotent
+crash-consistent append, closed-schema public hygiene, reparse from
+written bytes) and `scripts/run_phase4_loop_gate.py` lands the
+model-free ADR-0010 §7 gate runner with a CLOSED 33-predicate set,
+frozen before the judged gate runs. The **full four-part ADR-0010 §5
+failure-alert FI is ACTIVATED and PASSES model-free**, so **ALL
+Phase-4 fault-injection skips are now ZERO** — the whole suite runs
+with zero skipped tests. **Still NOT done: the designated technical
+Phase-4 gate has NOT been EXECUTED; the official repository-root
+`ITERATION_LOG.md` has NOT been generated;
+`artifacts/phase4_loop_gate.json` has NOT been generated; and the four
 ADR-0003 P4 closure artifacts (`TEST_MATRIX.md`,
 `INCIDENT_RESPONSE.md`, `MONITORING.md` draft, `RUNBOOK.md` draft)
 have NOT yet landed. Phase 4 remains OPEN** — passing the technical
 gate alone would not close it (ADR-0010 §8), and that gate has not
-been run. Because `ITERATION_LOG.md` does not exist, the four-part
-ADR-0010 §5 failure-alert contract is **NOT yet proven**; three of its
-four parts (structured ERROR event, durable `stop_reason`, nonzero
-exit) are implemented, the labeled evidence line is not. The governing
+been run. One distinction is load-bearing and must not be collapsed:
+the four-part §5 alert is now proven **as an implementation /
+fault-injection test**, and the ITERATION_LOG machinery is proven by
+model-free tests, but **no ADR-0010 §7 predicate has been recorded by
+a designated technical-gate execution**. No TECHNICAL GATE PASS is
+claimed and Phase 4 is not closed. The governing
 task item remains **OPEN** and is tracked in the private operations
 OS. `SentinelDailyRun` remains stub-mode, unedited, and the bounded
 loop's own entry point (`python -m runner`) is stub-only, with
@@ -174,9 +182,11 @@ evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
 success; 36/36 tests, ubuntu-latest, Python 3.12). Next action in this
-repo: `q77-p4-gate-a` — the technical Phase-4 gate script,
-`ITERATION_LOG.md` support and the one remaining full-alert
-fault-injection stub; see the Plan field below.
+repo: `q77-p4-gate-exec-a` — the designated ADR-0010 §7 technical-gate
+EXECUTION, run from the exact CI-green source SHA of the
+`q77-p4-gate-a` gate-implementation commit, producing the official
+`ITERATION_LOG.md` and `artifacts/phase4_loop_gate.json`; see the Plan
+field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -283,15 +293,18 @@ implementation. **Phase 4 is IN PROGRESS — 2026-08-22.** Its core
 loop implementation **LANDED 2026-08-22** under dispatch
 `q77-p4-runner-a`, and both seeded breaker fault injections were
 **ACTIVATED and recorded PASS 2026-08-22** under dispatch
-`q77-p4-fi-a`. **Still OPEN: the full four-part ADR-0010 §5
-failure-alert proof — its labeled `ITERATION_LOG.md` evidence line
-does not exist, so one fault-injection stub stays deliberately skipped
-rather than weaken the four-part definition; the technical Phase-4
-gate script and the gate run itself; `ITERATION_LOG.md`;
+`q77-p4-fi-a`. The technical gate was then **FROZEN 2026-08-23** under
+dispatch `q77-p4-gate-a`: the ITERATION_LOG derived-evidence surface
+and the model-free ADR-0010 §7 gate runner landed with a closed
+predicate set, the full four-part §5 failure-alert fault injection was
+activated and passes, and pytest skips reached **zero**. That session
+deliberately did NOT run the judged gate — freezing the judge before
+running the judged gate is the point of the split. **Still OPEN: the
+designated technical-gate EXECUTION; the official `ITERATION_LOG.md`;
 `artifacts/phase4_loop_gate.json`; and the four ADR-0003 P4 closure
 artifacts. Phase 4 remains OPEN**, and per ADR-0010 §8 a
 technical-gate PASS alone does not close it. Next action:
-`q77-p4-gate-a`.
+`q77-p4-gate-exec-a`.
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -2158,3 +2171,190 @@ merges every change."
   loop has been gated: these are seeded fault-injection proofs of two
   breakers, not a Phase-4 gate result. Next action: exact-SHA CI
   success, then `q77-p4-gate-a`.
+- 2026-08-23 — Phase-4 TECHNICAL GATE FROZEN (dispatch q77-p4-gate-a).
+  Source parent `31f254f78afa3aad6d8055e1aa9baee2ed71d80f` (the
+  `q77-p4-fi-a` breaker fault-injection commit); this commit does not
+  self-cite its own SHA — that SHA and its exact CI run are recorded in
+  the private operations OS annotation for this work item. Exactly five
+  files changed: `runner/iteration_log.py`,
+  `scripts/run_phase4_loop_gate.py`, `tests/test_phase4_gate.py`,
+  `tests/test_failures.py` and `STATE.md`. **The judge is frozen; the
+  judged gate was NOT run.** That separation is the whole point of the
+  split dispatch: the official `ITERATION_LOG.md` and
+  `artifacts/phase4_loop_gate.json` are produced only by
+  `q77-p4-gate-exec-a`, from the exact CI-green source SHA this commit
+  creates. **(1) ITERATION_LOG derived-evidence support LANDED.**
+  `runner/iteration_log.py` renders and appends public bounded-loop
+  evidence and is explicit that it is **NOT authoritative loop state** —
+  the durable SQLite ledger and the durable `CostRow`s are, and the
+  file's own header says so. Import boundary: **zero third-party
+  imports**; the standard library plus ONE narrow first-party import
+  (`runner.breakers`, for the closed ADR-0010 §6 stop-reason vocabulary,
+  so a second copy cannot drift); no `sentinel.*`, `agents.*`,
+  `checks.*`, `telemetry.*` or provider/network surface. Append
+  semantics mirror the proven `sentinel/report.py` discipline **without
+  modifying that file**: complete open/close markers with the closing
+  marker as the section's final line, idempotent no-op on a complete
+  section, temp-file + atomic-replace repair of a crash-truncated
+  TRAILING fragment only, earlier complete sections byte-preserved,
+  UTF-8, newline-normalized, flush + fsync. Section identity is
+  deterministic (`loop_id::gate_case`) and never derived from display
+  text. **Public hygiene is a property of the closed input schema, not
+  of a cleanup pass:** the module accepts NO caller-supplied free prose
+  at all — its one human paragraph per section is GENERATED from
+  already-validated metadata, which is what makes "no numerical fact
+  appears only in prose" true by construction — and every value it
+  accepts is validated (identifier charset, closed enums, 40-hex source
+  SHA, ledger-shaped timestamps, non-negative counters). The identifier
+  charset excludes the underscore deliberately; that is a charset
+  restriction, not a second secret taxonomy, and it makes `ghp_` and
+  `github_pat_` unrepresentable while `Bearer <token>` dies on the space
+  and `token=`/`key=` on the `=`. Machine rows carry NULL where a seeded
+  precondition genuinely has no executed value; values are never
+  invented to make rows look uniform. **(2) The frozen ADR-0010 §7 gate
+  runner LANDED.** `scripts/run_phase4_loop_gate.py` is MODEL-FREE,
+  provider-free, network-free and agent-mode-free, reads the frozen
+  fixture tree read-only, works inside an internal temporary root whose
+  path never reaches public output, and exposes exactly three inputs
+  (`--source-sha`, 40 lowercase hex and never silently substituted;
+  `--iteration-log`; `--artifact`) — **no flag changes the loop ceiling,
+  the failure threshold, the predicate set or the model/provider mode**,
+  which ADR-0010 §2 forbids. The ceiling, threshold and exit-code map
+  are restated as LOCAL literals rather than imported from
+  `runner.breakers`, for the anti-tautology reason
+  `scripts/run_phase3_dev_gate.py` already established; a test pins both
+  copies together so they cannot drift. The predicate set is a CLOSED
+  33-entry tuple: an unknown id is refused, a duplicate id is refused, a
+  never-recorded predicate is reported as FAIL rather than omitted, a
+  leg that raises records ITS OWN predicates FAIL while the remaining
+  legs still run, and **overall PASS requires every frozen predicate to
+  PASS** (exit 0 only then; exit 1 on any FAIL, execution error,
+  evidence mismatch or hygiene failure). It is more granular than
+  ADR-0010 §7's prose in two places and nowhere less complete.
+  **Frozen legs.** Leg 1 drives N = 10 through the REAL landed
+  integration (`run_loop` + `SqliteLoopStateStore` +
+  `SentinelIterationExecutor`, `source=fixtures`, `judgment_mode=stub`)
+  and proves iteration count, index contiguity, all-FINALIZED,
+  identity uniqueness with `planned_run_id == bound_run_id`, terminal
+  runs, `tasks_created == tasks_terminal`, exactly one `CostRow` per
+  run, continuity (`findings_new == 0` for iterations 2–10),
+  cumulative accounted cost within the ceiling, `COMPLETED_ITERATION_CAP`
+  and exit 0 — continuity demonstrated only, with **no new cross-run
+  dedup acceptance gate** introduced (ADR-0009 already supplied the
+  stronger real-model identity evidence). Leg 2 covers all five cost
+  cases against the fixed 750,000 micro-EUR ceiling — 749,999 mid-loop
+  continues with the next effective allowance reduced to exactly **1**
+  and never restored to 750,000 (proven both at the executor seam and by
+  constructing the real `RunBudgetCoordinator` through
+  `build_iteration_budget` with an injected deterministic FX object);
+  exactly 750,000 mid-loop refuses the next iteration with no second
+  INTENT and no second `runs` row; 750,001 mid-loop trips with the
+  overshoot accounted in full and never clamped; N reached at exactly
+  750,000 is normal completion at exit 0; N reached at 750,001 trips
+  nonzero — together satisfying §7 leg 2 a–g and preserving the
+  deliberate strict-`>` versus remaining-`<= 0` asymmetry. Leg 3 covers
+  the trip at exactly three with no fourth iteration, the
+  fail/fail/success/fail/fail reset sequence reaching the iteration cap
+  at exit 0, terminal-boundary precedence where the streak outranks
+  normal completion, and **all four ADR-0010 §5 alert parts** with part
+  4 verified by rereading the written file. Leg 4 covers the primary
+  seam (run terminal and durable, finalization not yet committed →
+  restart adopts the existing terminal run, same `loop_id`, same index,
+  same `planned_run_id`, `execute_run` not re-invoked, no duplicate run,
+  no skipped iteration, loop completes), case A (intent committed, no
+  run yet → the exact `planned_run_id` is reused, exactly one run
+  starts) and case D (terminal run with incomplete derived outputs →
+  reconciled without a rerun, exactly one `CostRow`, exactly one
+  complete FINDINGS section). All three use a gate-local
+  `BaseException`-derived simulated process loss — deliberately not
+  `RuntimeError`/`Exception`, which `run_loop` and `execute_run` both
+  contain — and case D is injected at the EXISTING
+  `RunHooks.before_report_append` pipeline seam, so **`sentinel/pipeline.py`
+  was not modified to create a fault**. **(3) Durable-state self-check.**
+  Every gate case writes an ITERATION_LOG section and then checks it
+  back: the written BYTES are reread from disk, reparsed, and compared
+  field by field against a freshly re-queried durable snapshot
+  (iteration count, indexes, `planned_run_id`, `bound_run_id`,
+  `iteration_state`, `run_status`, task counts, finding counts,
+  iteration and cumulative cost, `consecutive_failures_after`, plus the
+  section's `stop_reason` and `exit_code`). The in-memory render object
+  is never consulted, and a test deliberately corrupts one machine
+  figure in a tmp ITERATION_LOG and proves the self-check catches it.
+  **(4) Public-output hygiene is field-aware, not a token sweep.** An
+  earlier design that ran `sentinel.logs.redact` over every
+  whitespace-token was rejected during review as invalid: `redact` also
+  truncates at 200 characters, so a legitimate compact JSON machine-row
+  line would have failed hygiene purely for being long. The landed check
+  instead requires all four of — structured reparse and per-field
+  revalidation of the FINAL ITERATION_LOG bytes; recursive closed-schema
+  validation of the artifact; stability of each sanitized diagnostic,
+  where `redact` is applied per diagnostic string BEFORE insertion and
+  never to a whole serialized object; and raw-byte backstops on BOTH
+  outputs (temporary gate-root path absent, no traceback block, no
+  environment dump, no raw provider/auth material). Tests inject a
+  Windows absolute path, a POSIX absolute path, a `ghp_`-shaped token, a
+  `github_pat_`-shaped token, a bearer credential and a temporary
+  gate-root value — every canary BUILT AT RUNTIME from fragments so the
+  tracked test source itself carries no complete secret or absolute path
+  — and prove none survives unchanged. No allowlist exemption was added
+  for any of them. **(5) The full four-part §5 failure-alert FI is
+  ACTIVATED and PASSES.** `test_seeded_breaker_trip_produces_failure_alert`
+  in `tests/test_failures.py` lost its skip and its
+  `NotImplementedError` and now drives a real
+  `CONSECUTIVE_FAILURE_BREAKER_TRIPPED` through the real supervisor over
+  real durable loop state, real `runs` rows, real `CostRow`s and the
+  real `RunLogger`, then proves the ERROR-severity breaker event from
+  the JSONL on disk, the durable `stop_reason`, the nonzero exit, and a
+  labeled `PHASE4_FAILURE_ALERT` section for the same `loop_id` and
+  `stop_reason` **reread from a written `ITERATION_LOG.md` file**, not
+  from an in-memory render string. No new notification channel exists —
+  no email, Slack, webhook, push notification or dashboard — and no loop
+  operational failure is appended into FINDINGS.md to manufacture an
+  alert. **(6) Zero skips.** The self-guard was kept and updated to
+  `assert set(skipped) == set()`; it was renamed from
+  `test_only_phase_3_and_4_stubs_remain_skipped` to
+  `test_no_fault_injection_stub_remains_skipped` because the old name
+  would now read as a contradiction — the AST-scan body is unchanged and
+  the guard was NOT deleted, and no skip was introduced elsewhere to
+  preserve a count. Evidence: **984 tests passing, exactly 0 skipped**
+  (baseline at the source SHA was 891 passing / 1 skipped),
+  `python -m pip check` clean, **93.1% coverage** (baseline 92.6%) with
+  `runner/iteration_log.py` measured at **99.2%** — its single uncovered
+  line is a defensive round-trip-mismatch guard that is unreachable
+  while every field validator returns its input unchanged, disclosed
+  rather than papered over — `runner/loop.py`, `runner/breakers.py` and
+  `runner/state.py` still 100%, Tier 0 artifact validator PASS, Phase-1
+  freeze guard PASS, repository publication gate PASS. **Model-free:
+  ZERO model calls** — no Claude SDK query, no provider process, no
+  network call, no Haiku or Sonnet call, no gate, re-gate, eval or
+  scorer run; the one budget assertion uses an injected deterministic FX
+  object and proves the downward construction seam only. **NOT done in
+  this session, and not claimed:** the designated ADR-0010 §7
+  technical-gate EXECUTION did not happen; no official
+  repository-root `ITERATION_LOG.md` and no official
+  `artifacts/phase4_loop_gate.json` were created — the end-to-end gate
+  invocation in the test suite writes exclusively to `tmp_path` and a
+  test asserts both repository-root paths remain absent; **no ADR-0010
+  §7 predicate has been recorded by a designated gate execution**, so
+  the frozen Leg-3 predicate in particular is NOT satisfied merely
+  because the fault-injection test passes; no ADR was created or
+  amended; no `runner/loop.py`, `runner/breakers.py`, `runner/state.py`,
+  `runner/sentinel_adapter.py`, `runner/__main__.py`, `sentinel/*`,
+  `agents/*`, `checks/*`, `contracts/*`, `telemetry/*` or `.coveragerc`
+  change — the landed runner was the system under gate and was NOT
+  repaired to make the new gate pass; `TEST_MATRIX.md`,
+  `INCIDENT_RESPONSE.md`, `MONITORING.md` and `RUNBOOK.md` did not land.
+  **No TECHNICAL GATE PASS is claimed. Phase 4 remains OPEN**, and per
+  ADR-0010 §8 a technical-gate PASS alone would not close it. Unchanged
+  and preserved: Phase 3 CLOSED; the ADR-0009 cycle PASS, consumed and
+  complete; no Phase-3 gate reopening; no fixture, answer-key,
+  clean-manifest, scorer, threshold, model or prompt change; no ADR-0008
+  retry-taxonomy change; the EUR 0.75 per-run cap and the 750,000
+  micro-EUR loop ceiling, neither raised; no Phase-5 work of any kind
+  and no Q-83 work; no Task Scheduler operation — `SentinelDailyRun`
+  unchanged and still stub-mode. No production or production-ready claim
+  is made or implied; status stays "in development toward
+  production-ready." Nothing here claims the bounded loop has been
+  gated: this is a frozen judge plus model-free evidence that the judge
+  works, not a Phase-4 gate result. Next action: exact-SHA CI success,
+  then `q77-p4-gate-exec-a`.

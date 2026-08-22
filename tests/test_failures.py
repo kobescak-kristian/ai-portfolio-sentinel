@@ -1,12 +1,14 @@
 """Failure-injection suite (BLUEPRINT §3, §5, §6; ADR 0002).
 
 Phase 2 activates the 8 deterministic-control-plane stubs below with
-real bodies, plus 2 crash-consistency legs (C4) and a self-guard that
-the remaining later-phase stubs stay skipped. Phase 3 activated the
-per-run cost-cap leg; Phase 4 (dispatch q77-p4-fi-a) activates the two
-seeded BREAKER legs. Exactly one stub is still skipped, deliberately:
-the full ADR-0010 section 5 four-part failure alert needs a labeled
-``ITERATION_LOG.md`` evidence line, and that surface has not landed. Cage and no-write-access
+real bodies, plus 2 crash-consistency legs (C4) and a self-guard over
+which stubs stay skipped. Phase 3 activated the per-run cost-cap leg;
+Phase 4 (dispatch q77-p4-fi-a) activated the two seeded BREAKER legs,
+and dispatch q77-p4-gate-a activates the last one — the full ADR-0010
+section 5 four-part failure alert, which became provable once the
+``ITERATION_LOG`` derived-evidence surface landed. **No stub in this
+file is skipped any more**, and the self-guard below now asserts exactly
+that. Cage and no-write-access
 tests are NOT stubbed here: the full cage suite lands in
 tests/test_bounds.py at Phase 3. Phase 2's own narrower boundary
 tests (zero-model-call invariant, no-write-access-by-construction)
@@ -510,7 +512,11 @@ def test_crash_after_close_repaired_by_next_invocation(
 # --- self-guard: only later-phase stubs remain skipped ----------------------
 
 
-def test_only_phase_3_and_4_stubs_remain_skipped():
+def test_no_fault_injection_stub_remains_skipped():
+    """Renamed from ``test_only_phase_3_and_4_stubs_remain_skipped`` at
+    dispatch q77-p4-gate-a. The guard itself is unchanged and is NOT
+    deleted — the same AST scan runs — but the old name would now read as a
+    contradiction: after this commit the skipped set is EMPTY."""
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
     skipped = {}
     for node in ast.walk(tree):
@@ -532,18 +538,18 @@ def test_only_phase_3_and_4_stubs_remain_skipped():
                     reason = kw.value.value
             skipped[node.name] = reason
 
-    # Current truth after dispatch q77-p4-fi-a: both seeded BREAKER legs
-    # are activated, and exactly ONE stub remains. It is not skipped for
-    # convenience - ADR-0010 section 5 defines a proven failure alert as
-    # ALL FOUR of a structured ERROR event, a durable stop_reason, a
-    # nonzero exit and a labeled ITERATION_LOG.md evidence line. Three
-    # are implemented and proven by the two tests below; the fourth
-    # surface has not landed, and the definition is not weakened to
-    # reach zero skips early.
-    assert set(skipped) == {"test_seeded_breaker_trip_produces_failure_alert"}
-    for name, reason in skipped.items():
-        assert reason is not None and "Phase 4" in reason, (name, reason)
-        assert "ITERATION_LOG" in reason, (name, reason)
+    # Current truth after dispatch q77-p4-gate-a: ZERO skips remain in this
+    # file. The last stub,
+    # ``test_seeded_breaker_trip_produces_failure_alert``, was activated
+    # once the ITERATION_LOG derived-evidence surface landed, so all four
+    # ADR-0010 section 5 alert parts can now be proven for a real seeded
+    # trip. Nothing was weakened to get here: the four-part definition is
+    # unchanged, and no substitute evidence format was invented.
+    #
+    # This assertion is deliberately an equality against the empty set. A
+    # later session that needs to skip something must come back here and
+    # say so explicitly, in a commit that can be read as such.
+    assert set(skipped) == set()
 
 
 # --- Phase 3: caged checker agent (dispatch q77-p3-a) -----------------------
@@ -996,18 +1002,148 @@ def test_consecutive_failure_breaker_trips_on_seeded_failures(tmp_path):
         conn.close()
 
 
-# The full four-part ADR-0010 §5 alert is NOT proven by this session.
-# Parts 1-3 (structured ERROR event, durable stop_reason, nonzero exit)
-# are proven above for both breakers. Part 4 is a labeled
-# ITERATION_LOG.md evidence line, and that surface has not landed; its
-# format belongs to the Phase-4 gate dispatch. No substitute format is
-# invented here, and the definition of "failure alert" is not weakened
-# in order to reach zero skips early.
-@pytest.mark.skip(
-    reason=(
-        "FI stub — Phase 4 full alert requires ITERATION_LOG.md; "
-        "activates in q77-p4-gate-a"
+# The COMPLETE four-part ADR-0010 §5 alert, activated at dispatch
+# q77-p4-gate-a now that the ITERATION_LOG derived-evidence surface has
+# landed. Parts 1-3 were already proven above for both breakers; part 4
+# is the labeled ITERATION_LOG.md section, and it is checked by REREADING
+# the written file rather than by inspecting an in-memory render string.
+#: A deliberately synthetic 40-hex value. This is a fault-injection test,
+#: not a gate execution: nothing here attests a source commit, and the
+#: field exists only because the section schema requires it.
+FI_SYNTHETIC_SOURCE_SHA = "0" * 40
+
+
+def test_seeded_breaker_trip_produces_failure_alert(tmp_path):
+    """FI (activated at Phase 4, dispatch q77-p4-gate-a): the COMPLETE
+    ADR-0010 §5 four-part failure alert under a SEEDED breaker trip.
+
+    The two tests above prove parts 1-3. This one proves all four at once
+    for a single real trip, which is what §5 actually defines as a proven
+    alert: a structured ERROR-severity event from the closed vocabulary, a
+    durable ``stop_reason``, a nonzero process exit, AND a labeled
+    ``ITERATION_LOG.md`` evidence section carrying
+    ``PHASE4_FAILURE_ALERT`` for that same loop and stop reason.
+
+    Part 4 is verified from DISK. The section is rendered from durable loop
+    state, appended, and then read back and reparsed — an in-memory render
+    string would prove only that the renderer ran, not that public evidence
+    exists.
+
+    No new notification channel is introduced: no email, Slack, webhook,
+    push notification or dashboard, and no loop failure is appended into
+    FINDINGS.md to manufacture an alert. Model-free throughout."""
+    from runner.iteration_log import (
+        PHASE4_FAILURE_ALERT,
+        SEEDED_FAULT,
+        IterationMachineRow,
+        SectionMeta,
+        append_section,
+        parse_sections,
+        render_section,
     )
-)
-def test_seeded_breaker_trip_produces_failure_alert():
-    raise NotImplementedError
+
+    db_path = tmp_path / "loop.sqlite3"
+    cost_ledger_path = tmp_path / "cost_ledger.jsonl"
+    log_path = tmp_path / "loop.jsonl"
+
+    conn = open_loop_state(db_path)
+    logger = RunLogger(log_path)
+    ids = SeededPlannedRunIds("r-fi-alert")
+    executor = SeededIterationExecutor(
+        conn=conn,
+        cost_ledger_path=cost_ledger_path,
+        seeded_status="FAILED",
+        seeded_cost_eur_micros=0,
+    )
+    try:
+        outcome = run_loop(
+            _phase4_loop_config(n=4),
+            store=SqliteLoopStateStore(conn),
+            executor=executor,
+            clock=FrozenClock(ticks=[T0 + timedelta(seconds=i) for i in range(200)]),
+            ids=ids,
+            logger=logger,
+        )
+    finally:
+        logger.close()
+        conn.close()
+
+    assert outcome.stop_reason == CONSECUTIVE_FAILURE_BREAKER_TRIPPED
+
+    # §5 part 1 — a structured ERROR-severity event from the closed logging
+    # vocabulary, read back from the real JSONL on disk.
+    assert _severities_for(log_path, "breaker.consecutive_failure_tripped") == ["ERROR"]
+
+    # §5 part 3 — a nonzero process exit.
+    assert outcome.exit_code != 0
+
+    conn = open_loop_state(db_path)
+    try:
+        store = SqliteLoopStateStore(conn)
+        record = store.loop_record(PHASE4_LOOP_ID)
+        # §5 part 2 — a durable stop_reason on loop state.
+        assert record["status"] == "FINISHED"
+        assert record["stop_reason"] == CONSECUTIVE_FAILURE_BREAKER_TRIPPED
+
+        rows = store.list_iterations(PHASE4_LOOP_ID)
+        streaks = [
+            row["consecutive_failures_after"]
+            for row in conn.execute(
+                "SELECT consecutive_failures_after FROM loop_iterations "
+                "WHERE loop_id = ? ORDER BY iteration_index",
+                (PHASE4_LOOP_ID,),
+            )
+        ]
+    finally:
+        conn.close()
+
+    assert [r.iteration_index for r in rows] == [0, 1, 2]
+    assert streaks == [1, 2, 3]
+
+    # §5 part 4 — the labeled ITERATION_LOG.md evidence section, rendered
+    # from the durable rows just read, never from values invented here.
+    meta = SectionMeta(
+        loop_id=PHASE4_LOOP_ID,
+        gate_leg="FI",
+        gate_case="seeded-breaker-trip",
+        classification=SEEDED_FAULT,
+        source_sha=FI_SYNTHETIC_SOURCE_SHA,
+        max_iterations=4,
+        loop_budget_eur_micros=LOOP_BUDGET_EUR_MICROS,
+        failure_threshold=3,
+        stop_reason=outcome.stop_reason,
+        exit_code=outcome.exit_code,
+        iterations_recorded=len(rows),
+        alert_label=PHASE4_FAILURE_ALERT,
+    )
+    machine_rows = [
+        IterationMachineRow(
+            iteration_index=row.iteration_index,
+            planned_run_id=row.planned_run_id,
+            iteration_state=row.iteration_state,
+            bound_run_id=row.bound_run_id,
+            run_status=row.run_status,
+            iteration_cost_eur_micros=0,
+            cumulative_cost_eur_micros=0,
+            consecutive_failures_after=streaks[index],
+            breaker=outcome.stop_reason if index == len(rows) - 1 else None,
+        )
+        for index, row in enumerate(rows)
+    ]
+    iteration_log = tmp_path / "ITERATION_LOG.md"
+    assert iteration_log.name == "ITERATION_LOG.md"
+    assert append_section(iteration_log, meta.section_id, render_section(meta, machine_rows))
+
+    # Reread from disk. Everything below is a fact about written bytes.
+    text = iteration_log.read_text(encoding="utf-8")
+    assert PHASE4_FAILURE_ALERT in text
+    section = parse_sections(text)[meta.section_id]
+    assert section.metadata["alert_label"] == PHASE4_FAILURE_ALERT
+    assert section.metadata["loop_id"] == PHASE4_LOOP_ID
+    assert section.metadata["stop_reason"] == CONSECUTIVE_FAILURE_BREAKER_TRIPPED
+    assert section.metadata["exit_code"] != 0
+    assert [r["consecutive_failures_after"] for r in section.rows] == [1, 2, 3]
+    assert [r["run_status"] for r in section.rows] == ["FAILED", "FAILED", "FAILED"]
+
+    # No new channel, and no loop failure smuggled into the findings surface.
+    assert not (tmp_path / "FINDINGS.md").exists()
