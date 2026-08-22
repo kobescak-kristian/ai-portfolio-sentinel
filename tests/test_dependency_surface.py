@@ -29,6 +29,14 @@ PER_ROOT_ALLOWED_THIRD_PARTY: dict[str, set[str]] = {
     "contracts": {"pydantic"},
     "telemetry": {"pydantic"},
     "agents": {"pydantic", "claude_agent_sdk", "anyio", "certifi"},
+    # Phase 4 (dispatch q77-p4-runner-a, owner-authorised scope
+    # amendment 2026-08-22). The bounded-loop runner imports NO
+    # third-party package at all: the supervisor and its breakers are
+    # stdlib-only by design, and the adapter reaches only first-party
+    # roots (sentinel, telemetry, agents). Listing it here is what makes
+    # `runner` a first-party root for this module's scan AND subjects
+    # runner/ to the same parity check as every other runtime root.
+    "runner": set(),
 }
 ALLOWED_TEST_THIRD_PARTY = {"pydantic", "yaml", "pytest"}
 

@@ -725,3 +725,273 @@ def test_lifecycle_trigger_blocks_updates_to_resolved_rows():
         )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE findings SET last_seen_run_id='run-001'")
+
+
+# --- Phase-4 loop state DDL (adr/0010; dispatch q77-p4-runner-a) -----------
+#
+# Additive tables for the bounded-loop supervisory unit. These tests pin
+# the integrity that makes ADR-0010 section 4's crash-safety invariant a
+# property of the database rather than of caller discipline.
+
+LOOP_ID = "loop-001"
+STAMP = "2026-08-04T12:00:00+00:00"
+LATER = "2026-08-04T13:00:00+00:00"
+
+
+def loop_conn():
+    """A ledger with one loop and three real runs available to bind to."""
+    conn = seeded_conn()
+    conn.execute(
+        """
+        INSERT INTO loop_runs (
+            loop_id, started_at_utc, finished_at_utc, max_iterations,
+            loop_budget_eur_micros, failure_threshold, iterations_started,
+            iterations_completed, consecutive_failures,
+            accounted_cost_eur_micros, status, stop_reason
+        ) VALUES (?, ?, NULL, 3, 750000, 3, 0, 0, 0, 0, 'RUNNING', NULL)
+        """,
+        (LOOP_ID, STAMP),
+    )
+    return conn
+
+
+def insert_intent(conn, *, index=0, planned_run_id="r-planned-0", loop_id=LOOP_ID):
+    conn.execute(
+        """
+        INSERT INTO loop_iterations (
+            loop_id, iteration_index, planned_run_id, bound_run_id,
+            iteration_state, run_status, accounted_cost_eur_micros,
+            consecutive_failures_after, started_at_utc, finished_at_utc
+        ) VALUES (?, ?, ?, NULL, 'INTENT', NULL, 0, 0, ?, NULL)
+        """,
+        (loop_id, index, planned_run_id, STAMP),
+    )
+
+
+def test_loop_tables_exist_with_the_expected_columns():
+    conn = loop_conn()
+    loop_columns = {row[1] for row in conn.execute("PRAGMA table_info(loop_runs)")}
+    assert loop_columns == {
+        "loop_id", "started_at_utc", "finished_at_utc", "max_iterations",
+        "loop_budget_eur_micros", "failure_threshold", "iterations_started",
+        "iterations_completed", "consecutive_failures",
+        "accounted_cost_eur_micros", "status", "stop_reason",
+    }
+    iteration_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(loop_iterations)")
+    }
+    assert iteration_columns == {
+        "loop_id", "iteration_index", "planned_run_id", "bound_run_id",
+        "iteration_state", "run_status", "accounted_cost_eur_micros",
+        "consecutive_failures_after", "started_at_utc", "finished_at_utc",
+    }
+
+
+def test_phase4_tables_do_not_bump_the_frozen_schema_version():
+    """The v1 tables are unchanged and still carry ``schema_version = 1``;
+    the loop tables are additive and introduce no version of their own."""
+    conn = loop_conn()
+    for table in ("runs", "tasks", "findings"):
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        assert "schema_version" in columns
+    loop_columns = {row[1] for row in conn.execute("PRAGMA table_info(loop_runs)")}
+    assert "schema_version" not in loop_columns
+
+
+def test_iteration_primary_key_is_loop_id_plus_index():
+    conn = loop_conn()
+    insert_intent(conn, index=0, planned_run_id="r-a")
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_intent(conn, index=0, planned_run_id="r-b")
+
+
+def test_planned_run_id_is_globally_unique():
+    """One planned_run_id belongs to exactly one iteration. This is what
+    makes "a crash after intent must not mint a second planned_run_id" a
+    database-enforced fact."""
+    conn = loop_conn()
+    insert_intent(conn, index=0, planned_run_id="r-a")
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_intent(conn, index=1, planned_run_id="r-a")
+
+
+def test_planned_run_id_deliberately_has_no_foreign_key_to_runs():
+    """ADR-0010 section 4: the intent is committed BEFORE the run row
+    exists, so an FK here would make the invariant unrepresentable."""
+    conn = loop_conn()
+    fks = {
+        row[3] for row in conn.execute("PRAGMA foreign_key_list(loop_iterations)")
+    }
+    assert "planned_run_id" not in fks
+    # Concretely: an intent for a run that does not exist yet is legal.
+    insert_intent(conn, index=0, planned_run_id="r-does-not-exist-yet")
+    assert conn.execute("SELECT COUNT(*) FROM loop_iterations").fetchone()[0] == 1
+
+
+def test_bound_run_id_is_foreign_keyed_to_runs():
+    conn = loop_conn()
+    insert_intent(conn, index=0, planned_run_id="r-nope")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE loop_iterations SET bound_run_id='r-nope', "
+            "iteration_state='FINALIZED', run_status='COMPLETED', finished_at_utc=? "
+            "WHERE iteration_index=0",
+            (LATER,),
+        )
+
+
+def test_bound_run_id_must_equal_the_planned_run_id():
+    conn = loop_conn()
+    insert_intent(conn, index=0, planned_run_id="run-001")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE loop_iterations SET bound_run_id='run-002', "
+            "iteration_state='FINALIZED', run_status='COMPLETED', finished_at_utc=? "
+            "WHERE iteration_index=0",
+            (LATER,),
+        )
+
+
+def test_intent_to_finalized_is_the_only_permitted_iteration_update():
+    conn = loop_conn()
+    insert_intent(conn, index=0, planned_run_id="run-001")
+    conn.execute(
+        "UPDATE loop_iterations SET bound_run_id='run-001', "
+        "iteration_state='FINALIZED', run_status='COMPLETED', finished_at_utc=? "
+        "WHERE iteration_index=0",
+        (LATER,),
+    )
+    row = conn.execute("SELECT iteration_state FROM loop_iterations").fetchone()
+    assert row[0] == "FINALIZED"
+    # A finalized row is frozen: no re-finalize, no reopen.
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE loop_iterations SET run_status='FAILED'")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE loop_iterations SET iteration_state='INTENT'")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE loop_iterations SET planned_run_id='r-other', "
+        "iteration_state='FINALIZED', run_status='COMPLETED', "
+        "finished_at_utc='2026-08-04T13:00:00+00:00'",
+        "UPDATE loop_iterations SET iteration_index=7, "
+        "iteration_state='FINALIZED', run_status='COMPLETED', "
+        "finished_at_utc='2026-08-04T13:00:00+00:00'",
+        "UPDATE loop_iterations SET started_at_utc='2026-08-04T11:00:00+00:00', "
+        "iteration_state='FINALIZED', run_status='COMPLETED', "
+        "finished_at_utc='2026-08-04T13:00:00+00:00'",
+    ],
+)
+def test_iteration_identity_is_immutable_once_the_intent_is_committed(statement):
+    conn = loop_conn()
+    insert_intent(conn, index=0, planned_run_id="run-001")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(statement)
+
+
+@pytest.mark.parametrize(
+    "state,run_status,finished",
+    [
+        ("INTENT", "COMPLETED", None),   # INTENT may not carry a run status
+        ("FINALIZED", None, LATER),      # FINALIZED must carry one
+        ("FINALIZED", "COMPLETED", None),  # FINALIZED must be finished
+        ("INTENT", None, LATER),         # INTENT must not be finished
+        ("PENDING", None, None),         # closed vocabulary
+        ("FINALIZED", "RUNNING", LATER),  # run_status is terminal-only
+    ],
+)
+def test_iteration_state_coherence_enforced(state, run_status, finished):
+    conn = loop_conn()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO loop_iterations (
+                loop_id, iteration_index, planned_run_id, bound_run_id,
+                iteration_state, run_status, accounted_cost_eur_micros,
+                consecutive_failures_after, started_at_utc, finished_at_utc
+            ) VALUES (?, 0, 'r-x', NULL, ?, ?, 0, 0, ?, ?)
+            """,
+            (LOOP_ID, state, run_status, STAMP, finished),
+        )
+
+
+@pytest.mark.parametrize("n", [0, -1, 11, 99])
+def test_loop_max_iterations_bounded_to_one_through_ten(n):
+    conn = seeded_conn()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO loop_runs (
+                loop_id, started_at_utc, finished_at_utc, max_iterations,
+                loop_budget_eur_micros, failure_threshold, iterations_started,
+                iterations_completed, consecutive_failures,
+                accounted_cost_eur_micros, status, stop_reason
+            ) VALUES ('loop-x', ?, NULL, ?, 750000, 3, 0, 0, 0, 0, 'RUNNING', NULL)
+            """,
+            (STAMP, n),
+        )
+
+
+@pytest.mark.parametrize(
+    "reason", ["DONE", "completed_iteration_cap", "", "COST_BREAKER"]
+)
+def test_loop_stop_reason_vocabulary_is_closed(reason):
+    conn = loop_conn()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE loop_runs SET status='FINISHED', stop_reason=?, finished_at_utc=?",
+            (reason, LATER),
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "COMPLETED_ITERATION_CAP",
+        "COST_BREAKER_TRIPPED",
+        "CONSECUTIVE_FAILURE_BREAKER_TRIPPED",
+        "LOOP_ABORTED_ERROR",
+    ],
+)
+def test_every_adr0010_stop_reason_is_accepted(reason):
+    conn = loop_conn()
+    conn.execute(
+        "UPDATE loop_runs SET status='FINISHED', stop_reason=?, finished_at_utc=?",
+        (reason, LATER),
+    )
+    assert conn.execute("SELECT stop_reason FROM loop_runs").fetchone()[0] == reason
+
+
+def test_a_running_loop_carries_no_stop_reason_and_a_finished_loop_must():
+    conn = loop_conn()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE loop_runs SET stop_reason='COMPLETED_ITERATION_CAP'")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE loop_runs SET status='FINISHED', finished_at_utc=?", (LATER,)
+        )
+
+
+def test_accounted_cost_may_exceed_the_ceiling_because_overshoot_is_never_clamped():
+    conn = loop_conn()
+    conn.execute("UPDATE loop_runs SET accounted_cost_eur_micros = 1234567")
+    assert (
+        conn.execute("SELECT accounted_cost_eur_micros FROM loop_runs").fetchone()[0]
+        == 1_234_567
+    )
+
+
+@pytest.mark.parametrize("table", ["loop_runs", "loop_iterations"])
+def test_loop_rows_are_never_deleted(table):
+    conn = loop_conn()
+    insert_intent(conn, index=0, planned_run_id="r-a")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(f"DELETE FROM {table}")
+
+
+def test_iteration_requires_an_existing_loop():
+    conn = loop_conn()
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_intent(conn, index=0, planned_run_id="r-a", loop_id="loop-unknown")

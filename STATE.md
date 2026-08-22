@@ -125,14 +125,30 @@ unit and a 3-consecutive-failure streak breaker, a 750,000 micro-EUR
 Phase-4 loop ceiling that never raises the unchanged EUR 0.75 per-run
 cap, termination precedence, the crash-safe `planned_run_id`
 invariant, a four-part no-new-channel failure-alert contract and a
-model-free technical gate). **Phase-4 implementation has NOT yet
-landed, the technical Phase-4 gate has NOT run, and the four ADR-0003
-P4 closure artifacts (`TEST_MATRIX.md`, `INCIDENT_RESPONSE.md`,
-`MONITORING.md` draft, `RUNBOOK.md` draft) have NOT yet landed. Phase
-4 remains OPEN** — passing the technical gate alone does not close it
-(ADR-0010 §8). The governing task item remains **OPEN** and
-is tracked in the private operations OS. `SentinelDailyRun` remains
-stub-mode, unedited. The overall production-readiness program remains
+model-free technical gate). The **Phase-4 CORE LOOP IMPLEMENTATION is
+LANDED — 2026-08-22** (dispatch `q77-p4-runner-a`): durable loop state
+(`loop_runs`, `loop_iterations`), the domain-free bounded supervisor,
+the durable `planned_run_id` iteration-intent invariant, the cost
+breaker, the consecutive-failure breaker, crash/recovery mechanics for
+ADR-0010 §4 cases A–D, model-free allowance propagation into the
+existing `RunBudgetCoordinator`, and the logging, read-only-boundary
+and coverage wiring. **Still NOT done: the three Phase-4
+fault-injection stubs in `tests/test_failures.py` remain SKIPPED; the
+technical Phase-4 gate script has NOT landed and the technical gate
+has NOT run; `ITERATION_LOG.md` has NOT landed;
+`artifacts/phase4_loop_gate.json` has NOT landed; and the four
+ADR-0003 P4 closure artifacts (`TEST_MATRIX.md`,
+`INCIDENT_RESPONSE.md`, `MONITORING.md` draft, `RUNBOOK.md` draft)
+have NOT yet landed. Phase 4 remains OPEN** — passing the technical
+gate alone would not close it (ADR-0010 §8), and that gate has not
+been run. Because `ITERATION_LOG.md` does not exist, the four-part
+ADR-0010 §5 failure-alert contract is **NOT yet proven**; three of its
+four parts (structured ERROR event, durable `stop_reason`, nonzero
+exit) are implemented, the labeled evidence line is not. The governing
+task item remains **OPEN** and is tracked in the private operations
+OS. `SentinelDailyRun` remains stub-mode, unedited, and the bounded
+loop's own entry point (`python -m runner`) is stub-only, with
+agent/provider mode refused fail-closed. The overall production-readiness program remains
 **OPEN**: Phases 4–6 and the remaining program gates are open, no
 production or production-ready claim is permitted yet, and the status
 language is unchanged — in development toward production-ready.
@@ -152,8 +168,8 @@ evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
 success; 36/36 tests, ubuntu-latest, Python 3.12). Next action in this
-repo: the separate `q77-p4-runner-a` Phase-4 implementation session;
-see the Plan field below.
+repo: `q77-p4-fi-a` — activation of the three Phase-4 fault-injection
+stubs; see the Plan field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -260,8 +276,11 @@ implementation. **Phase 4 is IN PROGRESS — 2026-08-22.
 Implementation has NOT yet landed, the technical Phase-4 gate has NOT
 run, and the four ADR-0003 P4 closure artifacts have NOT yet landed;
 Phase 4 remains OPEN**, and per ADR-0010 §8 a technical-gate PASS
-alone does not close it. Next action: the separate `q77-p4-runner-a`
-implementation session.
+alone does not close it. That implementation has since **LANDED
+2026-08-22** under dispatch `q77-p4-runner-a` — core loop only; the
+technical gate, `ITERATION_LOG.md` and the four mapped P4 closure
+artifacts remain outstanding and Phase 4 remains OPEN. Next action:
+`q77-p4-fi-a`.
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -1909,3 +1928,139 @@ merges every change."
   private operations OS annotation for this work item. Next action:
   exact-SHA CI success, then the separate `q77-p4-runner-a`
   implementation session.
+- 2026-08-22 — Phase-4 CORE LOOP IMPLEMENTED (dispatch q77-p4-runner-a).
+  `adr/0010-phase4-loop-safety-controls.md` executed as adopted, in one
+  dedicated implementation commit. Source parent
+  `e0f6fb84db43750ab8ee4120ac3d88a855b9699f` (the preceding
+  operational-record commit, which changed only `FINDINGS.md` and
+  `telemetry/cost_ledger.jsonl`); this commit does not self-cite its own
+  SHA — that SHA and its exact CI run are recorded in the private
+  operations OS annotation for this work item. **Landed. (1) Durable
+  loop state.** Two additive SQLite tables in
+  `contracts/ledger_schema.sql` — `loop_runs` and `loop_iterations` —
+  applied by the same idempotent `IF NOT EXISTS` DDL script as every
+  existing table, with **no `schema_version` bump** (nothing mechanical
+  requires one; the v1 tables are untouched). Integrity:
+  `PRIMARY KEY (loop_id, iteration_index)`; `UNIQUE (planned_run_id)`;
+  `planned_run_id` deliberately carries **no** foreign key to
+  `runs(run_id)`, because ADR-0010 §4 commits the intent *before* the
+  run row exists and an FK would make that invariant unrepresentable;
+  `bound_run_id` is FK-checked against `runs(run_id)` and constrained
+  equal to `planned_run_id`; `iteration_state` closed to
+  `INTENT | FINALIZED`; `stop_reason` closed to the §6 vocabulary;
+  `max_iterations` bounded 1–10 at the schema; never-delete triggers on
+  both tables and a finalize guard that admits only INTENT → FINALIZED
+  and freezes iteration identity. No destructive migration, no Postgres,
+  no SQLAlchemy, no Alembic. **(2) Bounded supervisor.** New `runner/`
+  package, split so the safety logic is reasonable about without the
+  domain: `runner/loop.py` (the supervisor) and `runner/breakers.py`
+  (pure ADR-0010 predicates) import **only** the standard library;
+  `runner/state.py` persists loop state reusing the existing ledger
+  connection/transaction primitives; `runner/sentinel_adapter.py` is the
+  **sole** integration boundary, binding the supervisor to
+  `sentinel.pipeline.execute_run`, reading durable cost and constructing
+  the reduced budget. No second Sentinel pipeline, no plugin framework,
+  no registry, no speculative second consumer. **(3) Durable
+  `planned_run_id` intent.** Generated once per
+  `(loop_id, iteration_index)`, persisted and **committed** before the
+  iteration callable may run, and handed to `execute_run` verbatim as
+  `RunConfig.run_id`. Proven mechanically: the iteration callable opens
+  a separate connection and reads its own INTENT row back before doing
+  any work. **(4) Cost breaker.** `LOOP_BUDGET_EUR_MICROS = 750_000`,
+  with no flag, config value or environment variable that raises it
+  (asserted against the CLI's own option surface). Accounted consumption
+  is reconstructed from durable `CostRow`s for the loop's own iteration
+  run ids — not from an in-memory counter — and known overshoot is
+  accounted in full, never clamped. **(5) Consecutive-failure breaker.**
+  An iteration failed iff its final run status is not `COMPLETED`; only
+  `COMPLETED` resets; threshold exactly 3; scoped to one `loop_id`;
+  reconstructed from durable rows so it survives crash and resume; it
+  refuses the NEXT iteration and never aborts one in progress.
+  Dead-letters, individually failed agent calls, ADR-0008 first
+  attempts, HTTP retries and tool breaker events are sub-run and are not
+  counted. **(6) Termination precedence** implemented in ADR-0010 §3's
+  exact A–E order, with the deliberate asymmetry preserved and pinned by
+  tests — post-iteration overshoot uses strict `>`, pre-start refusal
+  uses remaining `<= 0`, so exactly 750,000 accounted is an acceptable
+  terminal state but not a state from which another iteration may start.
+  All six §3A boundary consequences are covered as individual cases.
+  `1 <= N <= 10` is validated before any loop row, iteration intent or
+  run exists. Closed stop-reason vocabulary with exactly one terminal
+  reason per loop; `COMPLETED_ITERATION_CAP` exits 0, the other three
+  exit nonzero; unexpected supervisor errors fail closed to
+  `LOOP_ABORTED_ERROR` with durable terminal state still written.
+  **(7) Crash/recovery.** ADR-0010 §4 cases A–D, always reusing the
+  stored `planned_run_id`, with earlier unfinished indexes reconciled
+  before any later new iteration starts: A starts once with the same id;
+  B adopts a terminal run and never re-invokes `execute_run`; C uses
+  Sentinel's own interrupted-run recovery with no replacement id; D
+  invokes the existing terminal-output reconciliation with no rerun and
+  no second cost source. Two loop-level injectable crash seams —
+  after-intent-before-run-start, and
+  after-run-terminal-before-loop-finalize (§7 leg 4's primary seam) —
+  both created at the supervisor, **without modifying
+  `sentinel/pipeline.py`**. **(8) Allowance propagation**, per the owner
+  ruling PROPAGATE + STUB-ONLY CLI: `agents/checker/*` is untouched; the
+  adapter constructs the existing `RunBudgetCoordinator` with
+  `total_eur_micros = min(RUN_BUDGET_EUR_MICROS, remaining_loop_budget)`
+  and refuses fail-closed if that reduced allowance cannot be enforced,
+  never silently restoring EUR 0.75 and never granting more.
+  **(9) Wiring.** Eight events added to the existing closed
+  `sentinel/logs.py` vocabulary (`loop.started`,
+  `loop.iteration_intent`, `loop.iteration_finalized`,
+  `loop.recovered`, `loop.completed`, `loop.failed`,
+  `breaker.cost_tripped`, `breaker.consecutive_failure_tripped`),
+  reusing `RunLogger` and its redaction/path/secret controls — no second
+  logging system; both breaker events are ERROR severity. `runner` added
+  to `tests/test_read_only_boundary.py`'s protected roots (no model SDK
+  import, no destructive SQL, no answer-key coupling) plus four new
+  boundary tests pinning that the supervisor and breakers stay
+  domain-free, that the adapter is the sole integration boundary, that
+  it holds no direct model-SDK import, and that no runner module reaches
+  a provider execution surface. `runner` added to `.coveragerc`.
+  **Owner-authorised scope amendment (2026-08-22):**
+  `tests/test_dependency_surface.py` gained one entry,
+  `"runner": set()`. This was necessary, not cosmetic — that module
+  derives its first-party roots from `PER_ROOT_ALLOWED_THIRD_PARTY`, so
+  without it every test importing `runner` would have been classified as
+  an unpinned third-party import and the suite would have failed. The
+  addition also subjects `runner/` to the same third-party parity scan
+  as every other runtime root, which **closes** the runner-root
+  dependency-surface gap rather than carrying it forward. **Model-free
+  only.** No Claude SDK query, no provider process, no network call, no
+  Haiku or Sonnet call, no gate, re-gate, eval or scorer run. The
+  allowance tests use a deterministic fake FX rate and prove the
+  downward budget-construction seam **only**; no claim is made that a
+  provider-capable bounded loop has been proven. `python -m runner` is
+  stub-only and refuses agent/provider mode fail-closed with a
+  deterministic nonzero exit before any provider construction.
+  Evidence: 889 tests passing, **3 skipped** (the three Phase-4
+  fault-injection stubs only, untouched, with their self-guard intact),
+  `python -m pip check` clean, 92.6% coverage with `runner` measured
+  (`runner/loop.py` 100%, `runner/breakers.py` 100%, `runner/state.py`
+  100%, `runner/sentinel_adapter.py` 96.2%, `runner/__main__.py`
+  95.8%), Tier 0 artifact validator PASS, Phase-1 freeze guard PASS,
+  repository publication gate PASS. **NOT done in this session, and not
+  claimed:** the three P4 fault-injection stubs remain skipped and
+  belong to `q77-p4-fi-a`; no technical Phase-4 gate script landed and
+  the technical gate has NOT run; `ITERATION_LOG.md` did not land, so
+  the four-part ADR-0010 §5 failure-alert contract is **not proven**;
+  `artifacts/phase4_loop_gate.json`, `TEST_MATRIX.md`,
+  `INCIDENT_RESPONSE.md`, `MONITORING.md` and `RUNBOOK.md` did not land.
+  **Phase 4 remains OPEN.** Unchanged and preserved: Phase 3 CLOSED; the
+  ADR-0009 cycle PASS, consumed and complete; no Phase-3 gate reopening;
+  no fixture, answer-key, clean-manifest, scorer, threshold, model or
+  prompt change; no ADR-0008 retry-taxonomy change; the EUR 0.75 per-run
+  cap; `sentinel/pipeline.py`, `sentinel/scheduling.py`,
+  `agents/checker/*`, `tests/test_failures.py`, `FINDINGS.md`,
+  `telemetry/cost_ledger.jsonl`, `fixtures/`, `evals/`, `artifacts/`,
+  `.github/`, `BLUEPRINT.md` and `SPEC.md` all untouched; the separately
+  tracked Postgres / storage-backend work item, outside Phase 4; the
+  GitHub Actions scheduler migration and the official Sonnet gate, both
+  still Phase 5; no Task Scheduler operation of any kind —
+  `SentinelDailyRun` unchanged and still stub-mode. No production or
+  production-ready claim is made or implied; status stays "in
+  development toward production-ready." Nothing here claims the loop has
+  been validated: these are implemented controls with model-free
+  regression evidence, not a gate result. Next action: exact-SHA CI
+  success, then `q77-p4-fi-a`.

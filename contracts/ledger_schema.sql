@@ -368,3 +368,158 @@ BEFORE UPDATE ON agent_tool_attempts
 BEGIN
     SELECT RAISE(ABORT, 'tool-attempt audit rows are append-only');
 END;
+
+-- ---------------------------------------------------------------------
+-- ADR-0010 addition (adr/0010-phase4-loop-safety-controls; dispatch
+-- q77-p4-runner-a). Additive to everything above — no existing table's
+-- definition changes and schema_version is NOT bumped (nothing in the
+-- v1 contract's mechanical checks is affected by two new tables).
+--
+-- Phase 4 introduces a supervisory unit that spans MULTIPLE complete
+-- Sentinel runs: one bounded-loop execution, identified by loop_id.
+-- These two tables are that unit's durable state. They do not replace,
+-- wrap or reinterpret the run-level tables above — a loop iteration
+-- POINTS AT a run, it is not a run.
+--
+-- The load-bearing invariant here is ADR-0010 section 4: before an
+-- underlying run for iteration k may begin, (loop_id, iteration_index)
+-- must already hold exactly one durably committed planned_run_id, and
+-- that value is the run_id the run is later created with. That is why
+-- planned_run_id deliberately carries NO foreign key to runs(run_id):
+-- the intent is committed BEFORE the run row exists, so an FK would
+-- make the crash-safety invariant unrepresentable. bound_run_id is the
+-- FK-checked column, set only once the run is durable.
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS loop_runs (
+    loop_id                   TEXT NOT NULL PRIMARY KEY
+                              CHECK (loop_id = trim(loop_id) AND length(loop_id) > 0),
+    started_at_utc            TEXT NOT NULL CHECK (
+                                  length(started_at_utc) = 25
+                                  AND started_at_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]+00:00'
+                              ),
+    finished_at_utc           TEXT CHECK (
+                                  finished_at_utc IS NULL
+                                  OR (
+                                      length(finished_at_utc) = 25
+                                      AND finished_at_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]+00:00'
+                                  )
+                              ),
+    -- ADR-0010 section 7 leg 1 / dispatch section 12: 1 <= N <= 10.
+    -- Enforced in the supervisor BEFORE any intent is written; repeated
+    -- here so a hand-written row cannot represent an illegal loop.
+    max_iterations            INTEGER NOT NULL CHECK (max_iterations BETWEEN 1 AND 10),
+    loop_budget_eur_micros    INTEGER NOT NULL CHECK (loop_budget_eur_micros >= 0),
+    failure_threshold         INTEGER NOT NULL CHECK (failure_threshold >= 1),
+    iterations_started        INTEGER NOT NULL CHECK (iterations_started >= 0),
+    iterations_completed      INTEGER NOT NULL CHECK (iterations_completed >= 0),
+    consecutive_failures      INTEGER NOT NULL CHECK (consecutive_failures >= 0),
+    -- Reconstructed from durable CostRows for this loop's own iteration
+    -- run_ids (ADR-0010 section 2 accounting source), never from a
+    -- volatile in-memory counter. Known overshoot is accounted in full
+    -- and is never clamped, so this may legitimately exceed
+    -- loop_budget_eur_micros — that is a truthful record of spend that
+    -- already happened, not permission for more.
+    accounted_cost_eur_micros INTEGER NOT NULL CHECK (accounted_cost_eur_micros >= 0),
+    status                    TEXT NOT NULL CHECK (status IN ('RUNNING', 'FINISHED')),
+    -- Closed vocabulary, ADR-0010 section 6. Exactly one terminal
+    -- stop_reason is authoritative for a loop, and it exists exactly
+    -- when the loop is FINISHED.
+    stop_reason               TEXT CHECK (stop_reason IS NULL OR stop_reason IN (
+                                  'COMPLETED_ITERATION_CAP',
+                                  'COST_BREAKER_TRIPPED',
+                                  'CONSECUTIVE_FAILURE_BREAKER_TRIPPED',
+                                  'LOOP_ABORTED_ERROR'
+                              )),
+    CHECK (iterations_completed <= iterations_started),
+    CHECK (iterations_started <= max_iterations),
+    CHECK ((status = 'RUNNING') = (finished_at_utc IS NULL)),
+    CHECK ((status = 'RUNNING') = (stop_reason IS NULL)),
+    CHECK (finished_at_utc IS NULL OR finished_at_utc >= started_at_utc)
+);
+
+CREATE TABLE IF NOT EXISTS loop_iterations (
+    loop_id                    TEXT NOT NULL REFERENCES loop_runs(loop_id)
+                               CHECK (loop_id = trim(loop_id) AND length(loop_id) > 0),
+    iteration_index            INTEGER NOT NULL CHECK (iteration_index >= 0),
+    -- Generated ONCE per (loop_id, iteration_index) and reused for that
+    -- iteration forever, including across a crash and resume. NOT a
+    -- foreign key — see the header note above.
+    planned_run_id             TEXT NOT NULL
+                               CHECK (planned_run_id = trim(planned_run_id)
+                                      AND length(planned_run_id) > 0),
+    -- Set only once the underlying run row is durable. Always equal to
+    -- planned_run_id when set; the FK is what proves the run exists.
+    bound_run_id               TEXT REFERENCES runs(run_id)
+                               CHECK (bound_run_id IS NULL
+                                      OR (bound_run_id = trim(bound_run_id)
+                                          AND length(bound_run_id) > 0)),
+    -- Minimal closed set: INTENT is committed before any work may
+    -- begin, FINALIZED once the iteration's terminal result is bound.
+    iteration_state            TEXT NOT NULL CHECK (iteration_state IN ('INTENT', 'FINALIZED')),
+    -- The underlying run's final status. ADR-0010 section 1: the
+    -- iteration failed iff this is not 'COMPLETED'.
+    run_status                 TEXT CHECK (run_status IS NULL
+                                           OR run_status IN ('COMPLETED', 'FAILED')),
+    accounted_cost_eur_micros  INTEGER NOT NULL DEFAULT 0
+                               CHECK (accounted_cost_eur_micros >= 0),
+    consecutive_failures_after INTEGER NOT NULL DEFAULT 0
+                               CHECK (consecutive_failures_after >= 0),
+    started_at_utc             TEXT NOT NULL CHECK (
+                                   length(started_at_utc) = 25
+                                   AND started_at_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]+00:00'
+                               ),
+    finished_at_utc            TEXT CHECK (
+                                   finished_at_utc IS NULL
+                                   OR (
+                                       length(finished_at_utc) = 25
+                                       AND finished_at_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]+00:00'
+                                   )
+                               ),
+    PRIMARY KEY (loop_id, iteration_index),
+    -- One planned_run_id belongs to exactly one iteration, globally.
+    -- This is what makes "a crash after intent must not mint a second
+    -- planned_run_id" a database-enforced fact rather than a habit.
+    UNIQUE (planned_run_id),
+    CHECK (bound_run_id IS NULL OR bound_run_id = planned_run_id),
+    CHECK ((iteration_state = 'INTENT') = (finished_at_utc IS NULL)),
+    CHECK ((iteration_state = 'INTENT') = (run_status IS NULL)),
+    CHECK (finished_at_utc IS NULL OR finished_at_utc >= started_at_utc)
+);
+
+CREATE INDEX IF NOT EXISTS idx_loop_iterations_loop_id
+    ON loop_iterations (loop_id);
+
+-- Ledger rows are never deleted (same discipline as every table above).
+CREATE TRIGGER IF NOT EXISTS loop_runs_never_deleted
+BEFORE DELETE ON loop_runs
+BEGIN
+    SELECT RAISE(ABORT, 'ledger rows are never deleted');
+END;
+
+CREATE TRIGGER IF NOT EXISTS loop_iterations_never_deleted
+BEFORE DELETE ON loop_iterations
+BEGIN
+    SELECT RAISE(ABORT, 'ledger rows are never deleted');
+END;
+
+-- Iteration identity is immutable once the intent is committed. The
+-- only permitted update is INTENT -> FINALIZED (binding the run and its
+-- terminal result); planned_run_id, loop_id, iteration_index and
+-- started_at_utc can never move, and a FINALIZED row is frozen. This is
+-- the ADR-0010 section 4 invariant expressed as a trigger rather than
+-- left to caller discipline.
+CREATE TRIGGER IF NOT EXISTS loop_iterations_finalize_guard
+BEFORE UPDATE ON loop_iterations
+FOR EACH ROW
+WHEN NOT (
+    OLD.iteration_state = 'INTENT' AND NEW.iteration_state = 'FINALIZED'
+    AND NEW.loop_id = OLD.loop_id
+    AND NEW.iteration_index = OLD.iteration_index
+    AND NEW.planned_run_id = OLD.planned_run_id
+    AND NEW.started_at_utc = OLD.started_at_utc
+)
+BEGIN
+    SELECT RAISE(ABORT,
+        'loop iteration update violates the durable-intent invariant: only INTENT->FINALIZED is permitted');
+END;

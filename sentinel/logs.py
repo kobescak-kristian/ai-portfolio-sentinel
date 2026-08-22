@@ -51,6 +51,22 @@ EVENTS: frozenset[str] = frozenset(
         "report.appended",
         "report.section_already_present",
         "cost.row_appended",
+        # Phase 4 (adr/0010-phase4-loop-safety-controls; dispatch
+        # q77-p4-runner-a). The bounded-loop supervisor reuses this
+        # logger rather than introducing a second logging system, so
+        # loop events inherit the same redaction, path and secret
+        # controls as every run-level event above. ADR-0010 section 5
+        # requires the breaker events to be ERROR severity; severity is
+        # the caller's argument, so it is asserted in the loop tests,
+        # not encoded here.
+        "loop.started",
+        "loop.iteration_intent",
+        "loop.iteration_finalized",
+        "loop.recovered",
+        "loop.completed",
+        "loop.failed",
+        "breaker.cost_tripped",
+        "breaker.consecutive_failure_tripped",
     }
 )
 
