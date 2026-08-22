@@ -118,9 +118,19 @@ cycle executed 2026-08-20 and reached **VALID COMPLETED FAIL**
 completion as well: its full A–F bound sequence is complete, its one
 authorized cycle executed 2026-08-21/22, and independent Step-F
 verification recorded **PASS** (result (4) above). That cycle is
-**consumed and complete**. **Phase 3 is therefore CLOSED (2026-08-22)
-and Phase 4 is PERMITTED but NOT STARTED** — no Phase-4 work has
-begun in this repository. The governing task item remains **OPEN** and
+**consumed and complete**. **Phase 3 is therefore CLOSED (2026-08-22).
+Phase 4 is IN PROGRESS — 2026-08-22**: `adr/0010-phase4-loop-safety-controls.md`
+is **ADOPTED**, freezing the bounded-loop control contract (failure
+unit and a 3-consecutive-failure streak breaker, a 750,000 micro-EUR
+Phase-4 loop ceiling that never raises the unchanged EUR 0.75 per-run
+cap, termination precedence, the crash-safe `planned_run_id`
+invariant, a four-part no-new-channel failure-alert contract and a
+model-free technical gate). **Phase-4 implementation has NOT yet
+landed, the technical Phase-4 gate has NOT run, and the four ADR-0003
+P4 closure artifacts (`TEST_MATRIX.md`, `INCIDENT_RESPONSE.md`,
+`MONITORING.md` draft, `RUNBOOK.md` draft) have NOT yet landed. Phase
+4 remains OPEN** — passing the technical gate alone does not close it
+(ADR-0010 §8). The governing task item remains **OPEN** and
 is tracked in the private operations OS. `SentinelDailyRun` remains
 stub-mode, unedited. The overall production-readiness program remains
 **OPEN**: Phases 4–6 and the remaining program gates are open, no
@@ -142,7 +152,8 @@ evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
 success; 36/36 tests, ubuntu-latest, Python 3.12). Next action in this
-repo: a separate Phase-4 dispatch; see the Plan field below.
+repo: the separate `q77-p4-runner-a` Phase-4 implementation session;
+see the Plan field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -230,9 +241,27 @@ ADR-0009 cycle is **consumed and complete**. Nothing in the frozen
 quality contract moved to reach it: the scoring corpus, answer key,
 thresholds, model, prompts, caps, retry taxonomy, identity rule and
 `max_regates: 1` are all unchanged, and all three historical FAILs
-stand unrelabeled. **Phase 3 is CLOSED (2026-08-22). Phase 4 is
-PERMITTED but NOT STARTED** — no Phase-4 work has begun here. Next
-action: a separate Phase-4 dispatch.
+stand unrelabeled. **Phase 3 is CLOSED (2026-08-22).** Phase-4
+loop-safety governance ADOPTED 2026-08-22
+(`adr/0010-phase4-loop-safety-controls.md`): the bounded-loop control
+contract is frozen prospectively, before implementation — failure unit
+defined at the run level with a 3-consecutive-failure streak breaker
+scoped to one `loop_id`; a real pre-start Phase-4 loop ceiling of
+750,000 micro-EUR that neither replaces nor raises the unchanged EUR
+0.75 per-run cap and that no flag, config value or environment
+variable may raise; a frozen termination precedence (accounted
+overshoot, then the failure breaker, then normal iteration-cap
+completion, then pre-start cost refusal) with the deliberate strict-`>`
+versus remaining-`<= 0` asymmetry; a crash-safe durable
+`planned_run_id` iteration-intent invariant; a four-part alert
+contract that introduces no new notification channel; a closed
+stop-reason vocabulary; and a MODEL-FREE technical gate frozen before
+implementation. **Phase 4 is IN PROGRESS — 2026-08-22.
+Implementation has NOT yet landed, the technical Phase-4 gate has NOT
+run, and the four ADR-0003 P4 closure artifacts have NOT yet landed;
+Phase 4 remains OPEN**, and per ADR-0010 §8 a technical-gate PASS
+alone does not close it. Next action: the separate `q77-p4-runner-a`
+implementation session.
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -1760,3 +1789,123 @@ merges every change."
   private operations OS annotation for this work item. Next action:
   independent read-only review of this public recording commit and its
   exact-SHA CI, then a separate Phase-4 dispatch.
+- 2026-08-22 — Phase-4 loop-safety governance ADOPTED (dispatch
+  q77-p4-adr10-adopt-a). `adr/0010-phase4-loop-safety-controls.md`
+  created with Status: ADOPTED, owner approved 2026-08-22. Required
+  because Phase 4 introduces a supervisory unit no existing machinery
+  or ADR covers — ONE bounded-loop execution spanning multiple
+  complete Sentinel runs — and because BLUEPRINT §6 P4 freezes only
+  the shape (N ≤ 10 under caps, cost and consecutive-failure breakers
+  proven by SEEDED faults, failure alerting, published ITERATION_LOG,
+  frozen gate) and not the breaker semantics or the loop-wide ceiling.
+  Without a prospective freeze an implementer would choose policy
+  while writing the gate that judges it. **Owner decisions frozen
+  prospectively, before implementation.** (1) **Failure unit.** An
+  iteration is failed iff its underlying `RunOutcome.status` is not
+  `COMPLETED`; the durable source of truth is `runs.status` / the
+  reconstructed `RunOutcome` status, never the exit code alone. A
+  dead-lettered task, an individual failed `agent_call`, an ADR-0008
+  bounded-recovery first attempt, an HTTP retry and a tool breaker
+  event do NOT individually count as loop failures — they stay sub-run
+  mechanisms. Only a `COMPLETED` iteration resets the streak; nothing
+  else does. Threshold exactly **3** consecutive failed iterations.
+  The streak belongs to one bounded-loop execution identified by
+  `loop_id`, is durable across a crash and resume of that same loop,
+  and never persists across a separately launched loop, a scheduler
+  invocation or a later operator session. On trip the loop refuses the
+  NEXT iteration; it never aborts a run in progress and creates no
+  permanent or global lock. (2) **Loop cost ceiling.**
+  `LOOP_BUDGET_EUR_MICROS = 750_000` for Phase 4 — a real pre-start
+  loop ceiling, not an after-the-fact acceptance metric. It does not
+  replace or raise the existing EUR 0.75 per-run cap, which is
+  unchanged, and no Phase-4 flag, config value or environment variable
+  may raise it; any operation above it needs a separate dated
+  owner-governed decision, which this ADR does not pre-authorize.
+  Accounted consumption is reconstructed from durable `CostRow`s
+  belonging to the loop's own iteration `run_id`s, never from a
+  volatile counter; the next iteration runs at
+  `min(existing_per_run_cap, remaining_loop_budget)` propagated
+  downward into the existing run/model budget mechanism, and if that
+  reduced allowance cannot be enforced the iteration is refused
+  fail-closed rather than silently restored to EUR 0.75. Known
+  overshoot is accounted in full and never clamped. (3) **Termination
+  precedence** frozen in order after a finalized iteration: accounted
+  overshoot (`> ceiling`) → `COST_BREAKER_TRIPPED`, nonzero; else
+  streak ≥ 3 → `CONSECUTIVE_FAILURE_BREAKER_TRIPPED`, nonzero, which
+  outranks normal completion; else iterations ≥ N →
+  `COMPLETED_ITERATION_CAP`, exit 0; else, only if another iteration
+  would start, `remaining_loop_budget <= 0` → `COST_BREAKER_TRIPPED`,
+  refuse, nonzero; otherwise continue. Six boundary consequences are
+  written verbatim into the ADR. Recorded explicitly: **post-iteration
+  overshoot uses strict `>` while pre-start refusal uses remaining
+  `<= 0`** — the asymmetry is intentional and must not later be
+  normalized into one operator. (4) **Durable iteration intent.**
+  Before an underlying run for iteration k may begin,
+  `(loop_id, iteration_index)` must already hold exactly one durably
+  persisted `planned_run_id`, generated once, reused, and passed to
+  `execute_run` as `RunConfig.run_id`; the four recovery cases (no run
+  row yet, terminal row, RUNNING row, terminal row with incomplete
+  derived outputs) are frozen, with the invariant that a terminal
+  underlying run is never repeated merely because loop bookkeeping
+  crashed after run finalization. The SQLite representation is
+  deliberately NOT frozen. (5) **Failure alert contract.** No new
+  notification channel: a proven breaker/failure alert requires all
+  four of a structured ERROR-severity event from the closed logging
+  vocabulary, a durable `stop_reason`, a nonzero process exit and a
+  labeled `ITERATION_LOG.md` evidence line. No email, Slack, webhook,
+  push notification or dashboard; loop operational failures are never
+  appended into monitored-surface findings to manufacture an alert.
+  (6) **Closed stop-reason vocabulary**: `COMPLETED_ITERATION_CAP`
+  (exit 0), `COST_BREAKER_TRIPPED`,
+  `CONSECUTIVE_FAILURE_BREAKER_TRIPPED`, `LOOP_ABORTED_ERROR` (all
+  fail-closed, nonzero); exactly one is authoritative per loop.
+  (7) **Technical gate frozen before implementation and MODEL-FREE** —
+  no Haiku, no Sonnet, no provider contact, no real model spend —
+  across four legs (normal N = 10; cost breaker with seven sub-cases
+  at the fixed 750000 ceiling and zero real provider spend;
+  consecutive failure with trip, reset and terminal-boundary cases;
+  crash/recovery at the finalization seam), plus a self-check of the
+  public derived ITERATION_LOG figures against durable machine state.
+  (8) **The technical gate is not Phase-4 closure**: ADR-0003 maps
+  `TEST_MATRIX.md`, `INCIDENT_RESPONSE.md`, `MONITORING.md` (draft)
+  and `RUNBOOK.md` (draft) to P4, authored from implemented capability
+  and evidence and never as placeholders; Phase 4 closes only when the
+  gate PASSes AND all four exist and pass their artifact/publication
+  controls. Residuals recorded honestly rather than engineered away:
+  a very small remaining loop budget can round down to 0.0000 in the
+  SDK's four-decimal USD allowance, which is fail-closed and gets no
+  invented positive floor; and the 750,000 micro-EUR loop ceiling
+  equals exactly one per-run cap, so a real model-calling loop is
+  effectively bounded to roughly one full-cost iteration — deliberate
+  fail-closed conservatism, consistent with the model-free gate, and
+  raisable only by a separate dated owner decision. **No
+  implementation landed here**: no runner package, no loop supervisor,
+  no loop-state persistence, no breaker code, no crash-recovery code,
+  no fault-injection seam, no ITERATION_LOG support, no test, schema,
+  runtime, scheduler, BLUEPRINT or SPEC change. Exactly two files
+  changed: this ADR and `STATE.md`. This session made no Sentinel
+  checker-agent model call, no Haiku or Sonnet call of any kind, and
+  ran no gate, re-gate, eval, scorer or Phase-4 loop gate. Preserved
+  unchanged: Phase 3 CLOSED; the ADR-0009 cycle PASS, complete and
+  consumed; no Phase-3 gate reopening; no fixture, answer-key,
+  clean-manifest, scorer, threshold, model or prompt change; no
+  ADR-0008 retry-taxonomy change; the EUR 0.75 per-run cap;
+  already-proven cross-run dedup, not re-gated; the separately tracked
+  Postgres / storage-backend work item, outside Phase 4; no
+  SQLAlchemy, Alembic or storage-backend migration; the GitHub Actions
+  scheduler migration and the official Sonnet gate, both still Phase
+  5; the site-owner collision, still later-program-blocking and not a
+  P4-loop implementation blocker. Local verification in this adoption
+  session: `python -m pip check` clean, 741 tests passing, 3 skipped
+  (the existing intentional Phase-4 stubs only), 91.1% coverage,
+  Tier 0 artifact validator PASS, Phase-1 freeze guard PASS,
+  repository publication gate PASS. **Phase 4 is now IN PROGRESS
+  (2026-08-22) and remains OPEN; implementation has not landed and the
+  technical gate has not run.** The governing task item remains OPEN.
+  `SentinelDailyRun` unchanged and still stub-mode. No production or
+  production-ready claim is made or implied — status stays "in
+  development toward production-ready." This commit does not self-cite
+  its own SHA; that SHA and its exact CI run are recorded in the
+  private operations OS annotation for this work item. Next action:
+  exact-SHA CI success, then the separate `q77-p4-runner-a`
+  implementation session.
