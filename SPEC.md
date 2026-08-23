@@ -90,9 +90,17 @@ adr/0009 (BLUEPRINT §11(j)) likewise ran under the unchanged frozen
 scoring contract and `max_regates: 1` — consumed 2026-08-22
 (independent disposition PASS; C = 47; every frozen scoring threshold,
 invariant, execution-validity predicate and accounted-consumption cost
-acceptance ceiling passed). Phase 3 is CLOSED; Phase 4 is permitted but
-NOT STARTED. `max_regates: 1` and every historical re-gate fact above
-are unchanged. BLUEPRINT governs where this file diverges.
+acceptance ceiling passed). Phase 3 is CLOSED.
+
+Phase 4 is CLOSED — 2026-08-23 — after: the designated ADR-0010
+model-free bounded-loop technical gate recorded PASS; all 33 frozen
+predicates passed; all four mapped Phase-4 artifacts landed and passed
+their applicable artifact and publication controls; and the Phase-4
+public gate post landed. Phase 5 is permitted and is next; it has NOT
+STARTED. The overall production-readiness program remains OPEN, and no
+production-ready claim is permitted. `max_regates: 1` and every
+historical re-gate fact above are unchanged. BLUEPRINT governs where
+this file diverges.
 
 ## 4. Injection spec for the P1 answer key (BLUEPRINT §5)
 

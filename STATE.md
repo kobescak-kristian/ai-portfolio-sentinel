@@ -119,7 +119,8 @@ completion as well: its full A–F bound sequence is complete, its one
 authorized cycle executed 2026-08-21/22, and independent Step-F
 verification recorded **PASS** (result (4) above). That cycle is
 **consumed and complete**. **Phase 3 is therefore CLOSED (2026-08-22).
-Phase 4 is IN PROGRESS — 2026-08-22**: `adr/0010-phase4-loop-safety-controls.md`
+Phase 4 is CLOSED — 2026-08-23**, on the recorded basis that follows.
+Phase-4 work began 2026-08-22: `adr/0010-phase4-loop-safety-controls.md`
 is **ADOPTED**, freezing the bounded-loop control contract (failure
 unit and a 3-consecutive-failure streak breaker, a 750,000 micro-EUR
 Phase-4 loop ceiling that never raises the unchanged EUR 0.75 per-run
@@ -167,17 +168,39 @@ FINAL versions to Phase 5). The BLUEPRINT §6 Phase-4 gate post
 obligation is **SATISFIED**. All four artifacts were authored from the
 landed capability and the recorded gate evidence, never as
 placeholders, and that session ran no gate, changed no runner, gate,
-predicate or test code, and made zero model calls. **Phase 4
-nevertheless remains OPEN: its formal closure has NOT been recorded**,
-and per ADR-0010 §8 a technical-gate PASS alone never closed it. The
-formal Phase-4 closure record is the separate next action
-`q77-p4-record-a`. No production or production-ready claim follows from
-any of this. The governing
+predicate or test code, and made zero model calls. **PHASE 4 CLOSED —
+2026-08-23.** The formal closure record was then taken as its own
+recording-only step, and closure is true from that record. Closure
+basis, complete: (1) the core bounded-loop capability landed; (2) the
+seeded breaker fault injection PASSED; (3) the full four-part
+failure-alert fault injection PASSED; (4) the technical gate was frozen
+before execution; (5) exactly ONE designated technical-gate execution
+took place; (6) that gate recorded PASS — **33 / 33** frozen predicates,
+all four legs PASS, the durable-state self-check PASS,
+`PUBLIC_OUTPUT_CLEAN` PASS, model calls **0**, provider spend **0**;
+(7) the official evidence landed — `ITERATION_LOG.md` and
+`artifacts/phase4_loop_gate.json`; (8) all four ADR-0003 Phase-4 mapped
+artifacts landed — `TEST_MATRIX.md`, `INCIDENT_RESPONSE.md`,
+`MONITORING.md` (Phase-4 draft) and `RUNBOOK.md` (Phase-4 draft); (9)
+the BLUEPRINT §6 Phase-4 public post obligation is satisfied; and (10)
+the artifact commit `1960f543bd1f31a31042837d73e691e46d73474c` passed
+exact-SHA CI, Actions run `32609133576`, with **984 passed, 0 skipped,
+93.1% coverage**, Tier 0 PASS and Phase-1 freeze guard PASS — and that
+commit's repository publication gate was recorded PASS with zero
+blocking hits. ADR-0010 §8's complete closure condition — a technical
+gate PASS **and** all four mapped artifacts existing and passing their
+applicable artifact and publication controls — is therefore satisfied
+in full. **Closing Phase 4 establishes no production or
+production-ready claim, and none follows from any of this**: it does not
+mean the system is production-ready or in production, does not prove a
+provider-capable bounded loop, and proves nothing about GitHub Actions
+scheduling, the official Sonnet gate, scheduled live operating history,
+availability or third-party monitoring. The governing
 task item remains **OPEN** and is tracked in the private operations
 OS. `SentinelDailyRun` remains stub-mode, unedited, and the bounded
 loop's own entry point (`python -m runner`) is stub-only, with
 agent/provider mode refused fail-closed. The overall production-readiness program remains
-**OPEN**: Phases 4–6 and the remaining program gates are open, no
+**OPEN**: Phases 5–6 and the remaining program gates are open, no
 production or production-ready claim is permitted yet, and the status
 language is unchanged — in development toward production-ready.
 Implementation itself (the caged checker
@@ -195,12 +218,18 @@ review evidence committed; see the 2026-08-04 change-log entry and
 evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
-success; 36/36 tests, ubuntu-latest, Python 3.12). Next action in this
-repo: `q77-p4-record-a` — the formal Phase-4 CLOSURE record, taken only
-after this artifact commit receives exact-SHA CI success; it records
-the closure and updates the appropriate public closure surfaces, and it
-is the step that makes Phase-4 closure true. Nothing before it may
-state that Phase 4 is closed. See the Plan field below.
+success; 36/36 tests, ubuntu-latest, Python 3.12). **Next public-repo
+phase: Phase 5. Phase 5 is PERMITTED / NEXT but NOT STARTED**, and a
+separate Phase-5 planning/implementation dispatch is required before any
+Phase-5 work begins. Phase 5 remains distinct and, per BLUEPRINT §6,
+covers: scheduler migration to GitHub Actions; the official Sonnet gate
+on the frozen fixtures; the required Actions-scheduled live operating
+history (five consecutive scheduled runs within caps, zero lost runs);
+the final monitoring and runbook work whose FINAL versions ADR-0003 maps
+to Phase 5; and the remaining Phase-5 program artifacts. None of that
+mechanism is designed, executed or begun here — it is named only as
+already-governed scope. **Phase 6 is NOT STARTED.** See the Plan field
+below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -303,7 +332,8 @@ versus remaining-`<= 0` asymmetry; a crash-safe durable
 `planned_run_id` iteration-intent invariant; a four-part alert
 contract that introduces no new notification channel; a closed
 stop-reason vocabulary; and a MODEL-FREE technical gate frozen before
-implementation. **Phase 4 is IN PROGRESS — 2026-08-22.** Its core
+implementation. **Phase 4 is CLOSED — 2026-08-23**; it opened
+2026-08-22 and progressed as follows. Its core
 loop implementation **LANDED 2026-08-22** under dispatch
 `q77-p4-runner-a`, and both seeded breaker fault injections were
 **ACTIVATED and recorded PASS 2026-08-22** under dispatch
@@ -323,11 +353,15 @@ phase-gate post then **LANDED 2026-08-23** under dispatch
 `q77-p4-program-artifacts-a` — `TEST_MATRIX.md` and
 `INCIDENT_RESPONSE.md` as Phase-4 artifacts, `MONITORING.md` and
 `RUNBOOK.md` as Phase-4 DRAFTS whose FINAL versions ADR-0003 maps to
-Phase 5. **Still OPEN: the formal Phase-4 CLOSURE record itself. Phase 4
-remains OPEN**, and per ADR-0010 §8 a technical-gate PASS alone does
-not close it — closure becomes true only when it is recorded. Next
-action: `q77-p4-record-a`, after exact-SHA CI success on the artifact
-commit.
+Phase 5. That artifact commit then received exact-SHA CI success, and
+the formal Phase-4 closure record was taken as its own recording-only
+step — per ADR-0010 §8 a technical-gate PASS alone never closed the
+phase; closure became true only when it was recorded. **Phases 0–4 are
+CLOSED. Phase 5 is next and permitted but NOT STARTED, and requires its
+own separate planning/implementation dispatch before any Phase-5 work
+begins. Phase 6 is NOT STARTED. The overall production-readiness
+program remains OPEN, and no production or production-ready claim is
+permitted.**
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -2556,3 +2590,79 @@ merges every change."
   refused fail-closed. No production or production-ready claim is made
   or implied; status stays "in development toward production-ready."
   Next action: exact-SHA CI success, then `q77-p4-record-a`.
+- 2026-08-23 — PHASE 4 FORMAL CLOSURE RECORD. **Recording and truth
+  repair only.** This session ran no gate and no re-gate, made **zero
+  model or provider calls**, operated no scheduler, and changed no
+  implementation, test, ADR, BLUEPRINT or Phase-4 evidence file. Source
+  parent `1960f543bd1f31a31042837d73e691e46d73474c`; this commit does
+  not self-cite its own SHA, which is recorded with its exact-SHA CI
+  result externally in the private operations record after independent
+  verification. Exactly three paths changed: `README.md`, `SPEC.md` and
+  `STATE.md`. **Already true before this session, reverified read-only
+  from committed state and not re-established here:** the designated
+  ADR-0010 §7 technical gate had already been frozen before execution
+  and executed exactly once, recording an honest **PASS** at source
+  `338ad691f657ae123763a4810ed8170880bd8c7f` with evidence recorded at
+  `fa510bd4bb275b12d1530148f0582901fb45ba6e` — **33 / 33** frozen
+  predicates PASS, Leg 1 / Leg 2 / Leg 3 / Leg 4 all PASS, the
+  ITERATION_LOG durable-state self-check PASS, `PUBLIC_OUTPUT_CLEAN`
+  PASS, **model calls 0 and provider spend 0**, the 750,000 micro-EUR
+  loop ceiling and the failure threshold of 3 both unchanged, and
+  `iteration_log_sha256`
+  `d47294873206bd96abb64a4a0377f5bb4e4685c5a7980a8890ab7e92668e3e40`
+  recomputed here over the log's exact committed bytes and matched. The
+  gate is **MODEL-FREE**: it proves loop-control behaviour under seeded
+  faults, never provider or model reliability. The four ADR-0003 P4
+  mapped artifacts had already landed — `TEST_MATRIX.md`,
+  `INCIDENT_RESPONSE.md`, `MONITORING.md` as a Phase-4 DRAFT and
+  `RUNBOOK.md` as a Phase-4 DRAFT, both drafts unchanged by this session
+  and still drafts after closure because ADR-0003 maps their FINAL
+  versions to Phase 5. The BLUEPRINT §6 Phase-4 public post
+  `posts/2026-08-23-phase-4-gate.md` had already landed, so the
+  phase-post obligation was already satisfied; it is left byte-unchanged
+  and its statement that the phase was not formally closed in that
+  artifact commit stands as historical truth. The artifact commit
+  `1960f543bd1f31a31042837d73e691e46d73474c` received exact-SHA CI
+  success, Actions run `32609133576`, event `push`, with **984 passed, 0
+  skipped, 93.1% coverage**, Tier 0 PASS and Phase-1 freeze guard PASS,
+  and its repository publication gate was recorded PASS with zero
+  blocking hits. **ADR-0010 §8's complete closure condition — technical
+  gate PASS AND all four mapped Phase-4 artifacts existing and passing
+  their applicable artifact and publication controls — is therefore
+  satisfied in full, and PHASE 4 is CLOSED — 2026-08-23.** **Repaired
+  here:** the README current Outcome now opens on Phase-4 closure with
+  the model-free gate result, the mapped artifacts and the artifact
+  commit's 984 / 0 / 93.1% figures, with the Phase-3 real-Haiku
+  synthetic-fixture validation retained below and relabelled as
+  historical capability evidence; README Version Log **v0.6** landed;
+  SPEC §3's current phase-status clause repaired narrowly, leaving
+  `max_regates: 1` and every historical re-gate and validation-lineage
+  fact byte-unchanged; and this STATE's operative Phase-status and Plan
+  fields repaired to current truth. **Verification:** `python -m pip
+  check` clean, **984 passed, 0 skipped, 93.1% coverage** (unchanged
+  from the parent — this commit touches only Markdown), Tier 0 artifact
+  validator PASS, Phase-1 freeze guard PASS, repository publication gate
+  PASS with zero blocking hits and **no `.publicgate-allow` entry
+  added**. **NOT done, and not claimed:** no gate rerun; no change to
+  `ITERATION_LOG.md`, `artifacts/phase4_loop_gate.json`,
+  `TEST_MATRIX.md`, `INCIDENT_RESPONSE.md`, `MONITORING.md`,
+  `RUNBOOK.md` or the Phase-4 gate post, all verified byte-unchanged; no
+  ADR, BLUEPRINT, runner, gate, predicate, threshold, test, fixture,
+  answer-key, scorer, model or prompt change; no Phase-3 reopening —
+  Phase 3 stays CLOSED and the ADR-0009 cycle stays consumed and
+  complete; no historical record rewritten, and the original Phase-3
+  FAIL, the consumed re-gate FAIL, the ADR-0007 VALID COMPLETED FAIL and
+  the ADR-0009 PASS all stand unrelabeled; neither the EUR 0.75 per-run
+  cap nor the 750,000 micro-EUR loop ceiling raised; **no Phase-5 work
+  of any kind and Phase 5 NOT STARTED**; no Task Scheduler operation —
+  `SentinelDailyRun` unchanged and still stub-mode, and the bounded
+  loop's own entry point still stub-only with agent/provider mode
+  refused fail-closed. **Closing Phase 4 does not make the system
+  production-ready or in production**, and proves nothing about a
+  provider-capable bounded loop, GitHub Actions scheduling, the official
+  Sonnet gate, scheduled live operating history, availability or
+  third-party monitoring. The overall production-readiness program
+  remains **OPEN**; status stays "in development toward
+  production-ready". Next action: Phase 5 is permitted and next but not
+  started, and requires its own separate planning/implementation
+  dispatch.
