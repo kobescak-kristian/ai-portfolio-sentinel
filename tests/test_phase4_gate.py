@@ -13,8 +13,11 @@ than decoration:
   module-scoped fixture. That invocation is an IMPLEMENTATION TEST. It is
   NOT the designated ``q77-p4-gate-exec-a`` execution, and it deliberately
   writes nowhere near the repository root — the last test in this file
-  asserts that the official ``ITERATION_LOG.md`` and
-  ``artifacts/phase4_loop_gate.json`` were not created.
+  snapshots the official ``ITERATION_LOG.md`` and
+  ``artifacts/phase4_loop_gate.json`` BEFORE that fixture runs and asserts
+  the suite neither created nor mutated them. That invariant holds in both
+  phases: before the designated execution the snapshot is absence, and
+  after its evidence is committed the snapshot is the committed bytes.
 * Dangerous-looking canary values are BUILT AT RUNTIME from fragments, so
   the tracked source of this file contains no complete secret or absolute
   path that a publication control could reasonably flag. The runtime
@@ -908,9 +911,28 @@ def test_the_self_check_compares_the_fields_adr0010_requires():
 
 # --- the gate, end to end (ONE model-free invocation) -----------------------
 
+#: The official ``q77-p4-gate-exec-a`` outputs. They belong to that dispatch
+#: alone, and nothing in this suite may create or mutate them.
+OFFICIAL_OUTPUT_PATHS = (
+    REPO_ROOT / "ITERATION_LOG.md",
+    REPO_ROOT / "artifacts" / "phase4_loop_gate.json",
+)
+
 
 @pytest.fixture(scope="module")
-def gate_run(tmp_path_factory):
+def official_output_snapshot():
+    """The official outputs as they stood BEFORE this module ran anything.
+
+    ``gate_run`` depends on this fixture, so that ordering is guaranteed by
+    the dependency graph rather than by declaration order."""
+    return {
+        path: path.read_bytes() if path.exists() else None
+        for path in OFFICIAL_OUTPUT_PATHS
+    }
+
+
+@pytest.fixture(scope="module")
+def gate_run(tmp_path_factory, official_output_snapshot):
     """Run the frozen gate once, into tmp_path outputs.
 
     This is an IMPLEMENTATION TEST of the gate machinery. It is NOT the
@@ -1119,9 +1141,19 @@ def test_the_written_iteration_log_carries_no_unsafe_value(gate_run):
     assert len(parse_sections(text)) == 12
 
 
-def test_the_gate_tests_create_no_repository_root_outputs(gate_run):
+def test_the_gate_tests_leave_repository_root_outputs_unchanged(
+    gate_run,
+    official_output_snapshot,
+):
     """The official outputs belong to q77-p4-gate-exec-a alone. Nothing in
-    this session — including the end-to-end fixture above, which has already
-    run by the time this test executes — may create them."""
-    assert not (REPO_ROOT / "ITERATION_LOG.md").exists()
-    assert not (REPO_ROOT / "artifacts" / "phase4_loop_gate.json").exists()
+    this suite — including the end-to-end fixture above, which has already
+    run by the time this test executes — may create or mutate them.
+
+    Strictly stronger than the absence assertion it replaces, and stable
+    across both phases: before the designated execution every snapshot value
+    is ``None`` and the suite must leave the paths absent; afterwards the
+    snapshot holds the committed bytes and the suite must leave them exactly
+    as they were."""
+    for path, before in official_output_snapshot.items():
+        after = path.read_bytes() if path.exists() else None
+        assert after == before, path.name

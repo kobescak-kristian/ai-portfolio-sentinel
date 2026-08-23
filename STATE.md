@@ -145,20 +145,25 @@ model-free ADR-0010 §7 gate runner with a CLOSED 33-predicate set,
 frozen before the judged gate runs. The **full four-part ADR-0010 §5
 failure-alert FI is ACTIVATED and PASSES model-free**, so **ALL
 Phase-4 fault-injection skips are now ZERO** — the whole suite runs
-with zero skipped tests. **Still NOT done: the designated technical
-Phase-4 gate has NOT been EXECUTED; the official repository-root
-`ITERATION_LOG.md` has NOT been generated;
-`artifacts/phase4_loop_gate.json` has NOT been generated; and the four
-ADR-0003 P4 closure artifacts (`TEST_MATRIX.md`,
-`INCIDENT_RESPONSE.md`, `MONITORING.md` draft, `RUNBOOK.md` draft)
-have NOT yet landed. Phase 4 remains OPEN** — passing the technical
-gate alone would not close it (ADR-0010 §8), and that gate has not
-been run. One distinction is load-bearing and must not be collapsed:
-the four-part §5 alert is now proven **as an implementation /
-fault-injection test**, and the ITERATION_LOG machinery is proven by
-model-free tests, but **no ADR-0010 §7 predicate has been recorded by
-a designated technical-gate execution**. No TECHNICAL GATE PASS is
-claimed and Phase 4 is not closed. The governing
+with zero skipped tests. The **designated technical Phase-4 gate has
+now been EXECUTED — 2026-08-23** (dispatch `q77-p4-gate-exec-a`):
+exactly one official invocation, from the pristine frozen source commit
+`338ad691f657ae123763a4810ed8170880bd8c7f`, recording an honest
+**PASS**. All **33 / 33** frozen predicates PASS; Leg 1, Leg 2, Leg 3
+and Leg 4 all PASS; the ITERATION_LOG durable-state self-check PASS;
+`PUBLIC_OUTPUT_CLEAN` PASS; gate process exit 0; **zero model calls and
+zero provider spend**; the 750,000 micro-EUR loop ceiling and the
+failure threshold of 3 both unchanged. The official repository-root
+`ITERATION_LOG.md` and `artifacts/phase4_loop_gate.json` are **LANDED**,
+and the artifact's `iteration_log_sha256`
+`d47294873206bd96abb64a4a0377f5bb4e4685c5a7980a8890ab7e92668e3e40` was
+independently recomputed over the written log's exact bytes and matched.
+**Still NOT done: the four ADR-0003 P4 closure artifacts
+(`TEST_MATRIX.md`, `INCIDENT_RESPONSE.md`, `MONITORING.md` draft,
+`RUNBOOK.md` draft) have NOT landed. Phase 4 therefore remains OPEN** —
+a technical-gate PASS alone does not close it (ADR-0010 §8), so no
+Phase-4 closure and no production-ready claim follows from this result.
+The governing
 task item remains **OPEN** and is tracked in the private operations
 OS. `SentinelDailyRun` remains stub-mode, unedited, and the bounded
 loop's own entry point (`python -m runner`) is stub-only, with
@@ -2164,8 +2169,9 @@ merges every change."
   no fixture, answer-key, clean-manifest, scorer, threshold, model or
   prompt change; no ADR-0008 retry-taxonomy change; the EUR 0.75 per-run
   cap and the 750,000 micro-EUR loop ceiling, neither raised; no Phase-5
-  work of any kind and no Q-83 work; no Task Scheduler operation —
-  `SentinelDailyRun` unchanged and still stub-mode. No production or
+  work of any kind and no separately tracked storage-backend work; no
+  Task Scheduler operation — `SentinelDailyRun` unchanged and still
+  stub-mode. No production or
   production-ready claim is made or implied; status stays "in
   development toward production-ready." Nothing here claims the bounded
   loop has been gated: these are seeded fault-injection proofs of two
@@ -2351,10 +2357,101 @@ merges every change."
   clean-manifest, scorer, threshold, model or prompt change; no ADR-0008
   retry-taxonomy change; the EUR 0.75 per-run cap and the 750,000
   micro-EUR loop ceiling, neither raised; no Phase-5 work of any kind
-  and no Q-83 work; no Task Scheduler operation — `SentinelDailyRun`
-  unchanged and still stub-mode. No production or production-ready claim
+  and no separately tracked storage-backend work; no Task Scheduler
+  operation — `SentinelDailyRun` unchanged and still stub-mode. No
+  production or production-ready claim
   is made or implied; status stays "in development toward
   production-ready." Nothing here claims the bounded loop has been
   gated: this is a frozen judge plus model-free evidence that the judge
   works, not a Phase-4 gate result. Next action: exact-SHA CI success,
   then `q77-p4-gate-exec-a`.
+- 2026-08-23 — Phase-4 TECHNICAL GATE EXECUTED: honest **PASS** (dispatch
+  `q77-p4-gate-exec-a`). The designated ADR-0010 §7 gate ran **exactly
+  once**, from the pristine frozen source commit
+  `338ad691f657ae123763a4810ed8170880bd8c7f` with a clean tree and both
+  official output paths absent beforehand; this commit does not self-cite
+  its own SHA — that SHA and its exact CI run are recorded in the private
+  operations OS annotation for this work item. **The judge was not touched.**
+  `scripts/run_phase4_loop_gate.py`, `runner/iteration_log.py`, the closed
+  33-entry predicate set, the gate schema, the acceptance behaviour and the
+  whole runner core are byte-identical to the frozen source: the judge was
+  frozen by `q77-p4-gate-a` before the judged run, and nothing here was
+  adjusted to make the gate pass. There was **one** designated execution
+  and **no rerun** — not for confirmation, not after inspecting the
+  artifact. **Result: OVERALL PASS**, gate process exit 0, **33 / 33 frozen
+  predicates PASS**, Leg 1 PASS, Leg 2 PASS, Leg 3 PASS, Leg 4 PASS, the
+  ITERATION_LOG durable-state self-check PASS and `PUBLIC_OUTPUT_CLEAN`
+  PASS. Leg 1 drove N = 10 through the real landed integration; Leg 2
+  covered all five cost cases against the fixed ceiling; Leg 3 covered the
+  trip at exactly three, the reset sequence, terminal-boundary precedence
+  and all four §5 alert parts; Leg 4 covered the primary
+  terminal-run-before-finalize seam plus the no-run-yet and
+  terminal-output-reconciliation cases. **Official evidence LANDED:**
+  `ITERATION_LOG.md` (12 sections, derived public evidence, explicitly
+  **NOT authoritative loop state** — the durable SQLite ledger and the
+  durable `CostRow`s are) and `artifacts/phase4_loop_gate.json`. Neither
+  machine-written file was hand-edited, normalized, prettified, reordered
+  or repaired. **Independent verification, separate from the gate's own
+  predicates and adding none:** the artifact's fixed fields were checked
+  one by one; `predicate_results` was confirmed to hold exactly 33 unique
+  ids equal in order to the frozen tuple parsed statically out of the gate
+  source (no missing predicate, no unknown predicate); all four leg records
+  were confirmed present and PASS; `ITERATION_LOG.md` was reparsed through
+  `runner.iteration_log.parse_sections`; the labelled `PHASE4_FAILURE_ALERT`
+  section was confirmed to be the abnormal Leg-3 case and the only labelled
+  section; and SHA256 was recomputed over the log's exact bytes as
+  `d47294873206bd96abb64a4a0377f5bb4e4685c5a7980a8890ab7e92668e3e40`,
+  matching the artifact's recorded `iteration_log_sha256`. **Model-free:
+  ZERO model calls, ZERO provider spend** (`model_calls` 0,
+  `provider_spend_eur_micros` 0) — no Haiku, no Sonnet, no SDK client, no
+  provider process, no network call, no agent mode, no eval or scorer run.
+  Loop ceiling **750,000 micro-EUR** and failure threshold **3**, both
+  unchanged and neither raisable from the command line. **Post-execution
+  test-harness correction (test-only).** After the gate result was fixed
+  and preserved, `tests/test_phase4_gate.py` had one obsolete invariant
+  corrected: the old assertion that the official root outputs must never
+  EXIST was true only before this dispatch and became false the moment the
+  official evidence legitimately landed. It is replaced by the strictly
+  stronger, phase-stable invariant that **the test suite must never create
+  or mutate the official root outputs** — a module-scoped fixture snapshots
+  both paths before the end-to-end `gate_run` fixture executes (`gate_run`
+  now depends on it, so the ordering is guaranteed by the dependency graph
+  rather than by declaration order) and the renamed
+  `test_the_gate_tests_leave_repository_root_outputs_unchanged` asserts the
+  bytes are unchanged afterwards. The protection was not weakened: it holds
+  in both phases, reading as absence before the designated execution and as
+  byte-preservation after. This changed **no** gate code, **no** runner
+  code, **no** predicate id, **no** threshold and **no** gate acceptance
+  behaviour, and the official evidence was verified byte-identical after
+  the full suite ran. **Inherited public-hygiene repair.** Two internal
+  queue-label tokens inherited from earlier Phase-4 change-log prose were
+  replaced with descriptive public-safe storage-backend wording so the
+  repository publication gate returns PASS. No historical date, technical
+  outcome or evidence figure changed, no Phase-3 historical record was
+  touched, and **no allowlist exemption was added** — `.publicgate-allow`
+  is unchanged. **Verification:** `python -m pip check` clean, 984 tests
+  passing with **exactly 0 skipped** (unchanged from the source SHA — the
+  correction renames one test and adds one fixture, introducing no skip and
+  removing no coverage), **93.1% coverage** with `runner/iteration_log.py`
+  at 99.2% and `runner/loop.py`, `runner/breakers.py` and `runner/state.py`
+  all at 100%, Tier 0 artifact validator PASS, Phase-1 freeze guard PASS,
+  repository publication gate PASS. Exactly four files changed: `ITERATION_LOG.md`,
+  `artifacts/phase4_loop_gate.json`, `tests/test_phase4_gate.py` and
+  `STATE.md`. **NOT done, and not claimed:** no gate rerun; no gate,
+  runner, predicate, threshold or ADR change; no new ADR; no
+  `runner/loop.py`, `runner/breakers.py`, `runner/state.py`,
+  `runner/sentinel_adapter.py`, `runner/__main__.py`, `sentinel/*`,
+  `agents/*`, `checks/*`, `contracts/*` or `telemetry/*` change; no
+  fixture, answer-key, clean-manifest, scorer, threshold, model or prompt
+  change; no Phase-3 gate reopening — Phase 3 stays CLOSED and the ADR-0009
+  cycle stays consumed and complete; the EUR 0.75 per-run cap and the
+  750,000 micro-EUR loop ceiling, neither raised; no Phase-5 work of any
+  kind and no separately tracked storage-backend work; no Task Scheduler
+  operation — `SentinelDailyRun` unchanged and still stub-mode.
+  **`TEST_MATRIX.md`, `INCIDENT_RESPONSE.md`, `MONITORING.md` draft and
+  `RUNBOOK.md` draft did NOT land, so Phase 4 remains OPEN** — per
+  ADR-0010 §8 a technical-gate PASS alone does not close it, and this
+  entry claims nothing more than the gate result it records. No production
+  or production-ready claim is made or implied; status stays "in
+  development toward production-ready." Next action: exact-SHA CI success,
+  then `q77-p4-program-artifacts-a`.

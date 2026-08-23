@@ -1,0 +1,282 @@
+{
+  "failure_threshold": 3,
+  "gate": "phase4_bounded_loop",
+  "gate_contract": "ADR-0010-section-7",
+  "iteration_log_sha256": "d47294873206bd96abb64a4a0377f5bb4e4685c5a7980a8890ab7e92668e3e40",
+  "legs": [
+    {
+      "cases": [
+        "leg1-normal-n10"
+      ],
+      "leg": "LEG1",
+      "result": "PASS"
+    },
+    {
+      "cases": [
+        "leg2a-749999-midloop",
+        "leg2b-exact-cap-midloop",
+        "leg2c-overshoot-midloop",
+        "leg2d-terminal-exact-cap",
+        "leg2e-terminal-overshoot"
+      ],
+      "leg": "LEG2",
+      "result": "PASS"
+    },
+    {
+      "cases": [
+        "leg3-trip-at-three",
+        "leg3-reset-sequence",
+        "leg3-terminal-precedence"
+      ],
+      "leg": "LEG3",
+      "result": "PASS"
+    },
+    {
+      "cases": [
+        "leg4-primary-before-finalize",
+        "leg4-intent-before-run",
+        "leg4-terminal-outputs"
+      ],
+      "leg": "LEG4",
+      "result": "PASS"
+    }
+  ],
+  "loop_budget_eur_micros": 750000,
+  "model_calls": 0,
+  "overall": "PASS",
+  "predicate_results": [
+    {
+      "evidence": {
+        "iterations": 10
+      },
+      "id": "LEG1_NORMAL_N10_ITERATION_COUNT",
+      "result": "PASS"
+    },
+    {
+      "id": "LEG1_NORMAL_N10_INDEX_CONTIGUITY",
+      "result": "PASS"
+    },
+    {
+      "id": "LEG1_NORMAL_N10_ALL_FINALIZED",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "unique_bound": 10,
+        "unique_planned": 10
+      },
+      "id": "LEG1_NORMAL_N10_IDENTITY_UNIQUE",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "runs": 10
+      },
+      "id": "LEG1_NORMAL_N10_RUNS_TERMINAL",
+      "result": "PASS"
+    },
+    {
+      "id": "LEG1_NORMAL_N10_TASKS_TERMINAL",
+      "result": "PASS"
+    },
+    {
+      "id": "LEG1_NORMAL_N10_ONE_COSTROW_PER_RUN",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "later_iterations": 9
+      },
+      "id": "LEG1_NORMAL_N10_CONTINUITY",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "accounted_cost_eur_micros": 0
+      },
+      "id": "LEG1_NORMAL_N10_COST_WITHIN_CEILING",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "stop_reason": "COMPLETED_ITERATION_CAP"
+      },
+      "id": "LEG1_NORMAL_N10_STOP_REASON",
+      "result": "PASS"
+    },
+    {
+      "id": "LEG1_NORMAL_N10_EXIT_ZERO",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "accounted_cost_eur_micros": 749999,
+        "further_iterations": 2
+      },
+      "id": "LEG2_749999_MIDLOOP_CONTINUES",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "allowance_seen": 1,
+        "coordinator_remaining": 1
+      },
+      "id": "LEG2_REDUCED_ALLOWANCE_PROPAGATED",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "stop_reason": "COST_BREAKER_TRIPPED"
+      },
+      "id": "LEG2_EXACT_CAP_MIDLOOP_REFUSED",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "intents": 1,
+        "runs": 1
+      },
+      "id": "LEG2_NO_NEXT_RUN_AT_EXACT_CAP",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "stop_reason": "COST_BREAKER_TRIPPED"
+      },
+      "id": "LEG2_OVERSHOOT_TRIPS",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "accounted_cost_eur_micros": 750001
+      },
+      "id": "LEG2_OVERSHOOT_FULL_NOT_CLAMPED",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "intents": 1,
+        "runs": 1
+      },
+      "id": "LEG2_NO_NEXT_RUN_AFTER_OVERSHOOT",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "accounted_cost_eur_micros": 750000,
+        "stop_reason": "COMPLETED_ITERATION_CAP"
+      },
+      "id": "LEG2_TERMINAL_EXACT_CAP_NORMAL",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "accounted_cost_eur_micros": 750001,
+        "stop_reason": "COST_BREAKER_TRIPPED"
+      },
+      "id": "LEG2_TERMINAL_OVERSHOOT_TRIPS",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "iterations": 3,
+        "streak": 3
+      },
+      "id": "LEG3_TRIP_AT_THREE",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "intents": 3,
+        "runs": 3
+      },
+      "id": "LEG3_NO_FOURTH_ITERATION",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "durable_stop_reason": true,
+        "labeled_iteration_log_section": true,
+        "nonzero_exit": true,
+        "structured_error_event": true
+      },
+      "id": "LEG3_FOUR_PART_ALERT",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "iterations": 5,
+        "streak": 2
+      },
+      "id": "LEG3_RESET_SEQUENCE",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "stop_reason": "CONSECUTIVE_FAILURE_BREAKER_TRIPPED"
+      },
+      "id": "LEG3_TERMINAL_STREAK_PRECEDENCE",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "adopted_without_reexecution": true,
+        "stop_reason": "COMPLETED_ITERATION_CAP"
+      },
+      "id": "LEG4_TERMINAL_BEFORE_FINALIZE_ADOPTED",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "planned_run_id": "r-p4g-l4p-000"
+      },
+      "id": "LEG4_SAME_PLANNED_RUN_ID",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "runs": 2
+      },
+      "id": "LEG4_NO_DUPLICATE_RUN",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "iterations": 2
+      },
+      "id": "LEG4_NO_SKIPPED_ITERATION",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "planned_run_id": "r-p4g-l4a-000",
+        "runs": 1
+      },
+      "id": "LEG4_INTENT_BEFORE_RUN_REUSED",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "cost_rows": 1,
+        "planned_run_id": "r-p4g-l4d-000"
+      },
+      "id": "LEG4_TERMINAL_OUTPUTS_RECONCILED",
+      "result": "PASS"
+    },
+    {
+      "evidence": {
+        "sections_checked": 12
+      },
+      "id": "ITERATION_LOG_MATCHES_DURABLE_STATE",
+      "result": "PASS"
+    },
+    {
+      "detail": "structured revalidation, artifact schema and raw-byte backstops all clean",
+      "id": "PUBLIC_OUTPUT_CLEAN",
+      "result": "PASS"
+    }
+  ],
+  "provider_spend_eur_micros": 0,
+  "schema_version": 1,
+  "source_sha": "338ad691f657ae123763a4810ed8170880bd8c7f"
+}
