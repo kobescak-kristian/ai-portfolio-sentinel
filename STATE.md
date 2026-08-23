@@ -218,18 +218,19 @@ review evidence committed; see the 2026-08-04 change-log entry and
 evals/). Phase 0 CLOSED 2026-08-03 — evidence: foundation and canary
 commits public on main; repository publish gate OVERALL PASS from the
 closing HEAD; CI green on push (Actions run 30852395018, conclusion
-success; 36/36 tests, ubuntu-latest, Python 3.12). **Next public-repo
-phase: Phase 5. Phase 5 is PERMITTED / NEXT but NOT STARTED**, and a
-separate Phase-5 planning/implementation dispatch is required before any
-Phase-5 work begins. Phase 5 remains distinct and, per BLUEPRINT §6,
-covers: scheduler migration to GitHub Actions; the official Sonnet gate
-on the frozen fixtures; the required Actions-scheduled live operating
-history (five consecutive scheduled runs within caps, zero lost runs);
-the final monitoring and runbook work whose FINAL versions ADR-0003 maps
-to Phase 5; and the remaining Phase-5 program artifacts. None of that
-mechanism is designed, executed or begun here — it is named only as
-already-governed scope. **Phase 6 is NOT STARTED.** See the Plan field
-below.
+success; 36/36 tests, ubuntu-latest, Python 3.12). **Current public-repo
+phase: Phase 5. Phase 5 is IN PROGRESS as of 2026-08-23**, opened by
+adoption of `adr/0011-phase5-unattended-operation-contract.md` after
+the separate planning and owner-ruling work completed. This adoption
+freezes the Phase-5 unattended-operation contract before
+implementation: GitHub Actions scheduling, workload-identity
+federation, the official Sonnet gate, the prospective five-slot
+scheduled-live qualification window, Actions-era state continuity,
+cost/cadence controls, the Windows scheduler transition,
+evidence-backed final operations documents and the versioned release.
+**No Phase-5 implementation, workflow, scheduler operation, WIF probe,
+official gate, rehearsal or qualifying scheduled run has occurred yet.
+Phase 6 is NOT STARTED.** See the Plan field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
 amended 2026-08-03.
@@ -356,12 +357,14 @@ phase-gate post then **LANDED 2026-08-23** under dispatch
 Phase 5. That artifact commit then received exact-SHA CI success, and
 the formal Phase-4 closure record was taken as its own recording-only
 step — per ADR-0010 §8 a technical-gate PASS alone never closed the
-phase; closure became true only when it was recorded. **Phases 0–4 are
-CLOSED. Phase 5 is next and permitted but NOT STARTED, and requires its
-own separate planning/implementation dispatch before any Phase-5 work
-begins. Phase 6 is NOT STARTED. The overall production-readiness
-program remains OPEN, and no production or production-ready claim is
-permitted.**
+phase; closure became true only when it was recorded. **Phases 0-4 are
+CLOSED. Phase 5 is IN PROGRESS as of 2026-08-23 under
+`adr/0011-phase5-unattended-operation-contract.md`. The contract is
+adopted; implementation, Actions rehearsal, WIF probe, official Sonnet
+gate, Windows scheduler cutover, prospective five-slot live window,
+evidence finalization and release are still pending. Phase 6 is NOT
+STARTED. The overall production-readiness program remains OPEN, and no
+production or production-ready claim is permitted.**
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -2666,3 +2669,34 @@ merges every change."
   production-ready". Next action: Phase 5 is permitted and next but not
   started, and requires its own separate planning/implementation
   dispatch.
+- 2026-08-23 - PHASE 5 UNATTENDED-OPERATION CONTRACT ADOPTED (dispatch
+  `q77-p5-adr-a`). `adr/0011-phase5-unattended-operation-contract.md`
+  is ADOPTED before implementation and freezes the Phase-5 contract:
+  GitHub Actions at `37 6 * * *` UTC; least-privilege read/OIDC
+  permissions; Anthropic WIF as the scheduled auth target with one
+  capped NON-QUALIFYING Haiku compatibility probe; an explicit
+  Windows-to-Actions migration boundary with a fresh Actions-era
+  SQLite lineage; immutable artifact-chain state with SHA-256
+  predecessor integrity and cache non-authoritative; a prospective
+  five-slot qualification window pinned before slot 1 with a
+  120-minute qualification threshold and distinct
+  `LATE_NONQUALIFYING` / `MISSING/LOST` outcomes; the unchanged
+  750,000-micro-EUR Haiku live cap, EUR 40 cadence trigger and EUR 50
+  hard ceiling; a dedicated Sonnet official-gate runner with its own
+  5,000,000-micro-EUR total coordinator and a prospectively derived
+  per-call reserve; Windows `SentinelDailyRun` disable only after
+  rehearsal and before qualification; evidence-backed final
+  `RUNBOOK.md`, `MONITORING.md`, `MODEL_CARD.md` and `SLO.md`; and the
+  annotated `v0.7` release after the final Phase-5 evidence commit is
+  exact-SHA CI green. The final Actions SQLite database is not committed
+  to Git. This adoption is the first Phase-5 write, so **Phase 5 is IN
+  PROGRESS as of 2026-08-23 and remains OPEN.** No implementation
+  landed in this session: no workflow, scheduler, runtime, state-chain,
+  WIF setup, probe, gate runner, qualifying-window artifact or release;
+  no Sentinel model/provider call; no gate, eval or scorer execution;
+  no Task Scheduler operation. `SentinelDailyRun` remains unchanged and
+  stub-mode. Phase 4 remains CLOSED. Phase 6 remains NOT STARTED. The
+  overall production-readiness program remains OPEN and the
+  production-ready claim remains NOT PERMITTED. Next action: separate
+  P5-B implementation dispatch after this adoption commit receives
+  exact-SHA CI success.

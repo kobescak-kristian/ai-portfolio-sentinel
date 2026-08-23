@@ -168,12 +168,14 @@ runs are **live** — real data against the operator's own public
 repositories. The two are labeled everywhere and neither borrows the
 other's credibility. Status: in development toward production-ready. No
 production claim is made — the production-readiness program is still
-open. **Phase 4 is CLOSED. Phase 5 is permitted and is next; it has not
-started, and the lane's governing work item remains open.** No
-production-ready claim is permitted while the program is open, and
-closing Phase 4 does not make one true. `SentinelDailyRun` remains
-stub-mode, and the bounded loop's own entry point (`python -m runner`)
-is stub-only, with agent/provider mode refused fail-closed.
+open. **Phase 4 is CLOSED. Phase 5 is IN PROGRESS as of 2026-08-23
+under the adopted unattended-operation contract; implementation and
+operational qualification have not started, and the lane's governing
+work item remains open.** No production-ready claim is permitted while
+the program is open, and closing Phase 4 does not make one true.
+`SentinelDailyRun` remains stub-mode, and the bounded loop's own entry
+point (`python -m runner`) is stub-only, with agent/provider mode
+refused fail-closed.
 
 ## Version Log
 
