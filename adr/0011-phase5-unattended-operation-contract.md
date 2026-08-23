@@ -351,6 +351,76 @@ The Phase-5 gate item closes on either:
 An honest FAIL does not authorize moving the fixtures, answer key,
 scorer, thresholds, model route or budget after seeing the result.
 
+#### Amendment (2026-08-23): owner-fixed official Sonnet gate reserve
+
+**A. Original pre-write stop.** The first P5-B implementation attempt
+reached this gate and stopped before any repository write, with reason
+`SONNET_RESERVE_DERIVATION_NOT_MECHANICALLY_CLOSED`. The frozen
+workload/prompt material for the gate exists, but no prospectively
+frozen exact Sonnet input/output token envelope and no committed exact
+local tokenizer/counting mechanism exist for the fixed Sonnet route.
+Historical Haiku consumption is observational, not a future bound, and
+available tokenizer behavior is approximate, not an exact bound. ECB
+FX is intentionally resolved fresh per run rather than frozen, so it
+supplies no permanent constant either. This was a governed
+pre-implementation stop, not a model or gate-quality failure.
+
+**B. Replacement owner ruling.** The official Sonnet gate model
+remains:
+
+    claude-sonnet-5
+
+The gate total accounted-consumption coordinator remains:
+
+    5,000,000 micro-EUR
+
+The official-gate per-call reservation is prospectively owner-fixed
+at:
+
+    1,000,000 micro-EUR
+
+This number is an owner-fixed risk/start limit. It is NOT workload- or
+token-derived, NOT an expected call cost, NOT a statistical fit, NOT
+guaranteed sufficient, and NOT a guaranteed physical or provider
+maximum.
+
+Rationale: 1,000,000 / 5,000,000 = 20 percent, the same
+reservation-to-total proportion as the existing Haiku control,
+150,000 / 750,000 = 20 percent. This proportional consistency is the
+rationale. Current canonical Sonnet pricing may be recorded as context
+but does not mathematically derive this constant.
+
+**C. Token/FX consequence.** P5-B introduces no token maxima,
+tokenizer dependency or provider token-count call solely to
+manufacture this derivation. No permanent USD/EUR value is pinned or
+invented. At gate execution, fresh authoritative ECB USD/EUR is
+resolved under existing policy, and the existing SDK allowance safety
+margin converts the EUR reservation into the SDK-facing USD allowance.
+FX-resolution failure remains fail-closed before model execution.
+
+**D. Overshoot/one-shot consequence.** Existing honest overshoot
+accounting is unchanged: the reservation is a start-control; known
+post-call consumption above the reservation is accounted in full and
+never clamped to manufacture compliance; exhausted or negative
+remaining capacity starts no new call; exceeding 5,000,000 micro-EUR
+total is an honest gate FAIL. The owner accepts that 1,000,000
+micro-EUR may prove restrictive. If the one official gate fails under
+this prospective limit, the honest FAIL and required miss-pattern
+analysis are recorded; the reserve is not relaxed retrospectively to
+manufacture a pass. Any later change requires a new prospective
+owner-governed ruling.
+
+**E. Haiku unchanged.** The ordinary live Haiku run cap remains
+750,000 micro-EUR with its existing 150,000 micro-EUR default per-call
+reserve. The P5-C WIF capability probe total remains 150,000
+micro-EUR.
+
+After this amendment, P5-B's fixed official-gate implementation
+contract is: model `claude-sonnet-5`; total 5,000,000 micro-EUR;
+per-call reserve 1,000,000 micro-EUR; fresh FX resolution plus the
+existing safety-margin conversion; honest overshoot semantics. No
+generic model selector is introduced.
+
 ### 8. Windows-to-Actions transition
 
 P5-C rehearsal and the WIF capability probe must pass before the
@@ -484,8 +554,9 @@ Stop and obtain a new owner decision if:
   assumption in this ADR;
 - Actions artifact retention is insufficient for the evidence window and
   reconstruction requirement;
-- the Sonnet gate reserve cannot be derived prospectively without a new
-  discretionary assumption;
+- the owner-fixed Sonnet model/reserve contract cannot be implemented
+  or executed without weakening the existing fail-closed FX, budget or
+  honest-overshoot accounting rules;
 - a source/workflow change is needed during an active five-slot window;
 - the cost rule requires a cadence change during an active window.
 
