@@ -103,6 +103,24 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         return 2
 
 
+def _derive_auth_mode(calls) -> "str | None":
+    """Derive auth_mode from this run's persisted agent_calls rows,
+    never by assuming the configured auth profile's label. Zero rows
+    means no call was ever attempted. A single agreed label is
+    reported as-is. Disagreement across rows (never expected in
+    normal operation) reports a deterministic non-WIF placeholder that
+    can never satisfy CAPABILITY_PASS. Takes the already-fetched row
+    list rather than (conn, run_id) so it has no ledger import of its
+    own -- ledger access stays local to cmd_execute, matching this
+    script's existing per-function local-import convention."""
+    if not calls:
+        return None
+    modes = {c.auth_mode for c in calls}
+    if len(modes) == 1:
+        return next(iter(modes))
+    return "conflicting-auth-mode"
+
+
 def cmd_execute(args: argparse.Namespace) -> int:
     from agents.checker import auth, oidc
     from agents.checker.budget import RunBudgetCoordinator
@@ -111,13 +129,16 @@ def cmd_execute(args: argparse.Namespace) -> int:
     from agents.checker.harness import CagedCheckerStub
     from agents.checker.oidc import health_gated
     from checks.judgment.stubs import JudgmentRequest
+    from contracts.schemas import RunRecord
     from sentinel import costs, ledger
 
     env = os.environ
     session = None
-    disposition = "CAPABILITY_FAIL"
+    conn = None
+    judged_cleanly = False
     cost_rows: tuple = ()
     accounted_total = 0
+    auth_mode: "str | None" = None
     try:
         client = build_evidence_client(env)  # pops GITHUB_TOKEN
         ctx = derive_github_context(env)
@@ -138,6 +159,18 @@ def cmd_execute(args: argparse.Namespace) -> int:
         run_id = f"r-p5c-{ctx.run_id}"
         db_path = args.work_root / "probe.sqlite3"
         conn = ledger.open_ledger(db_path)
+
+        with ledger.unit_of_work(conn):
+            ledger.insert_run(
+                conn,
+                RunRecord(
+                    schema_version=1, run_id=run_id, run_kind="live", status="RUNNING",
+                    started_at_utc=datetime.now(timezone.utc), finished_at_utc=None,
+                    tasks_created=0, tasks_terminal=0,
+                    findings_new=0, findings_still_open=0, findings_resolved=0,
+                ),
+            )
+
         coordinator = RunBudgetCoordinator(
             fx_rate=fx_rate, total_eur_micros=PROBE_TOTAL_EUR_MICROS,
             max_per_call_reserve_eur_micros=PROBE_RESERVE_EUR_MICROS,
@@ -147,31 +180,63 @@ def cmd_execute(args: argparse.Namespace) -> int:
             model=HAIKU_ORDINARY.model, auth_profile=auth.WIF,
         )
         stub.query_fn = health_gated(stub.query_fn, session)
-        stub.judge(
-            JudgmentRequest(
-                surface="phase5-wif-probe/PROBE.md",
-                check_class="missing-synthetic-label",
-                path="PROBE.md",
-                text="line one\nline two has 42\nline three",
+        try:
+            stub.judge(
+                JudgmentRequest(
+                    surface="phase5-wif-probe/PROBE.md",
+                    check_class="missing-synthetic-label",
+                    path="PROBE.md",
+                    text="line one\nline two has 42\nline three",
+                )
             )
-        )
+            judged_cleanly = True
+        except Exception as exc:  # noqa: BLE001 - judgment failure is accounted, not swallowed
+            print(f"PROBE JUDGMENT FAILED: {type(exc).__name__}", file=sys.stderr)
+
         if costs.has_agent_calls_for_run(conn, run_id):
             row = costs.build_agent_cost_row(
                 conn, run_id=run_id, run_kind="live", recorded_at_utc=datetime.now(timezone.utc)
             )
             cost_rows = (row,)
             accounted_total = row.cost_eur_micros
-            disposition = "CAPABILITY_PASS"
-        conn.close()
-    except Exception as exc:  # noqa: BLE001 - any failure records CAPABILITY_FAIL truthfully
-        print(f"PROBE EXECUTE FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
+            auth_mode = _derive_auth_mode(ledger.list_agent_calls_for_run(conn, run_id))
+
+        # Unguarded locally: a close_run failure is an explicit
+        # infrastructure failure and must reach the outer except below,
+        # never be caught here and normalized into a successful return.
+        with ledger.unit_of_work(conn):
+            ledger.close_run(
+                conn, run_id,
+                status="COMPLETED" if judged_cleanly else "FAILED",
+                finished_at_utc=datetime.now(timezone.utc),
+                counts=ledger.RunCounts(
+                    tasks_terminal=0, findings_new=0,
+                    findings_still_open=0, findings_resolved=0,
+                ),
+            )
+    except Exception as exc:  # noqa: BLE001 - any failure, including RunRecord terminalization, is recorded truthfully as FAIL
+        judged_cleanly = False
+        print(f"PROBE EXECUTE FAILED: {type(exc).__name__}", file=sys.stderr)
     finally:
         if session is not None:
             session.shutdown(env)
         else:
             oidc.scrub_identity_token_file(env)
+        if conn is not None:
+            conn.close()
 
-    from sentinel.phase5.evidence_records import ProbeEvidenceRecord, StepEvidence
+    disposition = (
+        "CAPABILITY_PASS"
+        if (
+            judged_cleanly
+            and cost_rows
+            and auth_mode == auth.WIF.label
+            and accounted_total <= PROBE_TOTAL_EUR_MICROS
+        )
+        else "CAPABILITY_FAIL"
+    )
+
+    from sentinel.phase5.evidence_records import ProbeEvidenceRecord
 
     ctx = derive_github_context(env)
     evidence = ProbeEvidenceRecord(
@@ -180,6 +245,7 @@ def cmd_execute(args: argparse.Namespace) -> int:
         created_at_utc=datetime.now(timezone.utc), steps=(),
         expected_source_sha=args.expected_source_sha, disposition=disposition,
         cost_rows=cost_rows, accounted_total_eur_micros=accounted_total,
+        auth_mode=auth_mode,
     )
     evidence_path = args.evidence_out
     evidence_path.parent.mkdir(parents=True, exist_ok=True)

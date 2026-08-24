@@ -255,6 +255,7 @@ def test_freeze_succeeds_and_produces_a_validate_bundle_clean_genesis(tmp_path, 
         event="workflow_dispatch", ref="refs/heads/main", source_sha=SOURCE_SHA,
         created_at_utc=datetime.now(timezone.utc), steps=(), expected_source_sha=SOURCE_SHA,
         disposition="CAPABILITY_PASS", cost_rows=(probe_row,), accounted_total_eur_micros=1000,
+        auth_mode="github-actions-wif-federation",
     )
     probe_evidence_dir = tmp_path / "src-probe-evidence"
     probe_evidence_dir.mkdir()

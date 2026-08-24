@@ -123,18 +123,30 @@ class ProbeEvidenceRecord(_IdentityFields):
     """Seam 3 (revision c): ``disposition`` is a closed vocabulary, and
     ``CAPABILITY_PASS`` is schema-unconstructible without accounting
     evidence — a source/preflight/WIF/OIDC/FX/setup failure can only
-    ever be recorded as ``CAPABILITY_FAIL``."""
+    ever be recorded as ``CAPABILITY_FAIL``.
+
+    ``auth_mode`` (dispatch q77-p5c-execute-a, C0-C) is additive and
+    optional for schema-version compatibility: it carries the runner's
+    own persisted-row-derived auth provenance, never an assumed label,
+    and ``CAPABILITY_PASS`` is additionally schema-unconstructible
+    unless it exactly equals the WIF federation label."""
 
     expected_source_sha: str
     disposition: Literal["CAPABILITY_PASS", "CAPABILITY_FAIL"]
     cost_rows: tuple[CostRow, ...]
     accounted_total_eur_micros: int = Field(ge=0)
+    auth_mode: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "ProbeEvidenceRecord":
         _require_hex40(self.expected_source_sha)
-        if self.disposition == "CAPABILITY_PASS" and not self.cost_rows:
-            raise ValueError("CAPABILITY_PASS requires at least one accounted CostRow")
+        if self.disposition == "CAPABILITY_PASS":
+            if not self.cost_rows:
+                raise ValueError("CAPABILITY_PASS requires at least one accounted CostRow")
+            if self.auth_mode != "github-actions-wif-federation":
+                raise ValueError(
+                    "CAPABILITY_PASS requires auth_mode == 'github-actions-wif-federation'"
+                )
         return self
 
 

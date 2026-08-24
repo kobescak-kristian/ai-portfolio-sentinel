@@ -226,3 +226,80 @@ def test_github_token_only_on_steps_that_perform_rest_calls(name):
         env = step.get("env", {})
         if "GITHUB_TOKEN" in env:
             assert "run" in step  # only python-invoking steps read it, never upload-artifact steps
+
+
+# =====================================================================
+# C0 (dispatch q77-p5c-execute-a): workflow context repair coverage --
+# `runner` is not available in jobs.<job_id>.env (GitHub Actions
+# context-availability table), only from jobs.<job_id>.steps.{env,
+# with,run} onward.
+# =====================================================================
+
+
+def test_no_job_level_env_references_runner_context():
+    for path in WORKFLOWS_DIR.glob("*.yml"):
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job in data["jobs"].values():
+            for value in job.get("env", {}).values():
+                assert "${{ runner." not in str(value), f"{path}: job-level env references runner context"
+
+
+@pytest.mark.parametrize("name", ["sentinel-wif-probe.yml", "sentinel-schedule.yml",
+                                   "sentinel-official-gate.yml", "sentinel-window-control.yml"])
+def test_runner_temp_only_appears_at_step_level_or_in_with_blocks(name):
+    """Every `${{ runner.` occurrence in these four repaired files must
+    sit at or after the job's `steps:` key -- never inside the
+    job-level `env:` block that precedes it."""
+    text = (WORKFLOWS_DIR / name).read_text(encoding="utf-8")
+    steps_idx = text.index("\n    steps:\n")
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if "${{ runner." in line:
+            offset = text.index(line)
+            assert offset > steps_idx, f"{name}:{line_no}: runner.* reference precedes 'steps:'"
+
+
+def test_probe_preflight_and_execute_env_match_exactly():
+    data = _load("sentinel-wif-probe.yml")
+    job = next(iter(data["jobs"].values()))
+    steps = {s["name"]: s for s in job["steps"] if s.get("name") in ("preflight", "execute")}
+    for key in ("ANTHROPIC_IDENTITY_TOKEN_FILE", "WORK_ROOT"):
+        assert steps["preflight"]["env"][key] == steps["execute"]["env"][key]
+
+
+def test_official_gate_preflight_and_execute_env_match_exactly():
+    data = _load("sentinel-official-gate.yml")
+    job = next(iter(data["jobs"].values()))
+    steps = {s["name"]: s for s in job["steps"] if s.get("name") in ("preflight", "execute")}
+    for key in ("ANTHROPIC_IDENTITY_TOKEN_FILE", "WORK_ROOT", "GATE_ROOT", "ARTIFACTS_DIR"):
+        assert steps["preflight"]["env"][key] == steps["execute"]["env"][key]
+
+
+def test_artifact_upload_paths_match_producer_paths():
+    expectations = {
+        "sentinel-wif-probe.yml": [
+            ("upload one-shot marker", "preflight", "WORK_ROOT", "/marker.json"),
+            ("upload probe evidence", "execute", "WORK_ROOT", "/probe-evidence.json"),
+        ],
+        "sentinel-official-gate.yml": [
+            ("upload one-shot marker", "preflight", "WORK_ROOT", "/marker.json"),
+        ],
+        "sentinel-window-control.yml": [
+            ("upload genesis bundle", "freeze", "WORK_ROOT", "/genesis-out"),
+            ("upload freeze-refusal evidence", "freeze", "WORK_ROOT", "/freeze_refusal.json"),
+        ],
+    }
+    for name, cases in expectations.items():
+        data = _load(name)
+        job = next(iter(data["jobs"].values()))
+        steps_by_name = {s.get("name"): s for s in job["steps"]}
+        for upload_name, producer_name, env_key, suffix in cases:
+            producer_root = steps_by_name[producer_name]["env"][env_key]
+            expected_path = f"{producer_root}{suffix}"
+            assert steps_by_name[upload_name]["with"]["path"] == expected_path
+
+    # sentinel-official-gate.yml's gate-evidence upload path is the
+    # ARTIFACTS_DIR root itself, not a suffixed file under WORK_ROOT.
+    gate_data = _load("sentinel-official-gate.yml")
+    gate_job = next(iter(gate_data["jobs"].values()))
+    gate_steps = {s.get("name"): s for s in gate_job["steps"]}
+    assert gate_steps["upload gate evidence"]["with"]["path"] == gate_steps["execute"]["env"]["ARTIFACTS_DIR"]

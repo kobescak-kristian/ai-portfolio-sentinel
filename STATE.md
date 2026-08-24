@@ -3035,3 +3035,81 @@ merges every change."
   OPEN and the production-ready claim remains NOT PERMITTED. Next
   action: P5-C (exact-SHA CI plus the NON-QUALIFYING Actions rehearsal
   and the one capped WIF capability probe) as its own child dispatch.
+- 2026-08-24 - P5-C C0 READINESS REPAIR LANDED (dispatch
+  q77-p5c-execute-a). **P5-C is IN PROGRESS. This session landed C0
+  (readiness repair) only: the rehearsal was NOT executed, the WIF
+  probe was NOT executed, and no one-shot marker was consumed.** Six
+  defects, found by re-reading the current GitHub Actions
+  context-availability rules and the ledger's own foreign-key
+  constraint, are repaired: (1) the four affected Phase-5 workflows,
+  the three provider-capable lanes (`sentinel-schedule.yml`,
+  `sentinel-wif-probe.yml`, `sentinel-official-gate.yml`) plus the
+  model-free `sentinel-window-control.yml`, set
+  `ANTHROPIC_IDENTITY_TOKEN_FILE`/`WORK_ROOT`/`PHASE5_WORK_ROOT`/
+  `GATE_ROOT`/`ARTIFACTS_DIR` from `${{ runner.temp }}` inside
+  `jobs.<job_id>.env`, a context GitHub Actions does not resolve
+  there; every such value now lives in step-level `env:`, and every
+  artifact-upload `with.path` reads `${{ runner.temp }}/...` directly
+  instead of a job-level `env.*` reference that no longer exists; (2)
+  `scripts/run_phase5_wif_probe.py` never inserted the parent `runs`
+  row its own `agent_calls` writes require under
+  `contracts/ledger_schema.sql`'s foreign key, so every real probe
+  attempt would have hit an FK violation on the first `agent_calls`
+  insert and silently reported `CAPABILITY_FAIL` with zero accounting;
+  the probe core now inserts a `RUNNING` `RunRecord` before any
+  agent-call write and closes it terminally (`COMPLETED` on a clean
+  judgment, `FAILED` otherwise) through the existing DAL, unguarded
+  locally so a `close_run` failure itself reaches the same
+  fail-closed path rather than being normalized into a false PASS; (3)
+  a judgment failure after a reservation previously discarded the
+  real charge instead of recording it, now caught locally so the
+  actual `CostRow` is always built whenever an `agent_calls` row
+  exists, whether the judgment completed or failed; (4)
+  `scripts/record_phase5_cost_evidence.py` could silently treat a
+  corrupt existing ledger as "run not found" instead of refusing; it
+  now strict-parses the whole existing ledger first, refuses closed
+  (zero bytes written) on any parse failure or on a duplicate
+  `run_id` found either against the existing ledger or within the
+  incoming evidence batch itself, and re-parses after append to
+  confirm each newly appended `run_id` occurs exactly once, all via
+  explicit `if`/`return` checks rather than a Python `assert`; (5)
+  `ProbeEvidenceRecord.auth_mode` is now an additive, optional field
+  derived only from the run's persisted `agent_calls` rows (never
+  copied from the configured auth profile), and `CAPABILITY_PASS` is
+  schema-unconstructible unless it exactly equals
+  `github-actions-wif-federation`; (6) the probe core's own
+  `CAPABILITY_PASS` disposition now mechanically requires a clean
+  judgment, a non-empty `CostRow`, that exact `auth_mode`, and an
+  accounted total at or under 150000 micro-EUR, with the full
+  unclamped total always preserved even when it exceeds that ceiling.
+  No raw exception text is ever printed by the repaired probe core;
+  only the exception's type name. New/extended tests:
+  `tests/test_phase5_probe_runner.py` (real-SQLite integration
+  coverage for the foreign key, the clean-PASS path, a judgment
+  failure after reservation, an unresolved RESERVED row, a
+  pre-provider auth refusal, a pre-ledger failure, an over-ceiling
+  charge, a `close_run` infrastructure failure, the no-second-model-
+  call budget contract observed at the actual `query_fn` seam, the
+  extended `ProbeEvidenceRecord` schema, and the recording script's
+  fail-closed behavior) and `tests/test_phase5_workflow_contracts.py`
+  (no job-level `env:` references `runner`, every `runner.temp`
+  occurrence sits at or after `steps:`, preflight/execute step env
+  values match exactly, and artifact-upload paths match their
+  producer paths). Full suite green, coverage recorded, Tier 0
+  artifact validator PASS, Phase-1 freeze guard PASS. Exactly ten
+  paths changed: the four workflow files, `scripts/run_phase5_wif_
+  probe.py`, `scripts/record_phase5_cost_evidence.py`,
+  `sentinel/phase5/evidence_records.py`, the two test files above,
+  and this file. No unrelated scope work and no schema/SQL/DAL/contracts `CostRow`
+  change, no governance/KOS write. Once `sentinel-schedule.yml`
+  parses cleanly, the frozen `37 6 * * *` cron becomes active, but
+  with no qualification window frozen it remains on its designed
+  pre-window zero-provider path; this is unchanged by C0. No
+  Anthropic Console mutation, no GitHub variable/secret/environment
+  mutation, no workflow_dispatch, no rehearsal, no OIDC request, no
+  WIF exchange, no Anthropic model/provider call, no Anthropic
+  token-count call, no Windows scheduler operation, no qualification-
+  window freeze, and no official Sonnet gate occurred in this
+  session. No production-ready claim, no P5-C COMPLETE claim, no v0.7
+  claim. Next action: operator push approval for this commit, then
+  C1 onward as later child dispatches.
