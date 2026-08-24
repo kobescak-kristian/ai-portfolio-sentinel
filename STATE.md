@@ -2700,3 +2700,79 @@ merges every change."
   production-ready claim remains NOT PERMITTED. Next action: separate
   P5-B implementation dispatch after this adoption commit receives
   exact-SHA CI success.
+- 2026-08-24 - P5-B PART 1/3 (EXECUTION PROFILE + WIF/LOCAL-AUTH
+  FOUNDATION) LANDED (dispatch `q77-p5b-foundation-a`, child of the
+  plan-only `q77-p5b-impl-b` session that recommended a three-part
+  split of the full P5-B implementation). This part lands two things,
+  model-free: an internal `ExecutionProfile` abstraction
+  (`agents/checker/config.py`) bundling model, run budget, per-call
+  reserve and SDK safety margin, with `HAIKU_ORDINARY` reproducing the
+  existing ordinary constants exactly and `SONNET_OFFICIAL_GATE` fixed
+  at the ADR-0011 §7 amendment's owner-fixed contract (model
+  `claude-sonnet-5`, 5,000,000 micro-EUR total, 1,000,000 micro-EUR
+  per-call reserve, same 0.70 safety margin) as configuration data
+  only, reachable by no coordinator, stub or CLI path in this part;
+  and a GitHub Actions WIF auth-readiness check
+  (`agents/checker/auth.py`) that validates the current
+  Anthropic-documented federation environment variables by name and
+  precedence-cleanliness only, fails closed on a missing or empty
+  required variable, on presence (including empty string) of any
+  variable that could shadow or reroute direct-Anthropic federation
+  (the existing local-OAuth override set, `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_PROFILE`, and the literal
+  `ANTHROPIC_IDENTITY_TOKEN`), and on an identity-token-file path that
+  is missing, not a regular file, or a symlink (checked and refused
+  before any existence test, since a naive check would follow the link
+  and accept it) -- never reading or echoing a credential, token, or
+  path value. `agents/checker/budget.py`'s `RunBudgetCoordinator`
+  gained instance-level `max_per_call_reserve_eur_micros` and
+  `sdk_allowance_safety_margin` fields (defaults reproduce every
+  existing call site exactly) so a non-Haiku profile can build its own
+  coordinator. `agents/checker/harness.py` threads a profile's model
+  and an `AuthProfile`'s truthful label through `CagedCheckerStub` into
+  the `agent_calls` audit row, and re-checks the active auth profile at
+  both the factory boundary and the existing per-judgment fail-closed
+  checkpoint, generalized from the auth-override-specific exception to
+  a common `AuthCheckFailure` base that both `AuthOverrideRisk` and the
+  new `WifConfigurationError` satisfy. `build_caged_judgment_stub`'s
+  defaults are `HAIKU_ORDINARY`/`auth.LOCAL_OAUTH`, and
+  `sentinel/cli.py`'s sole call site
+  (`build_caged_judgment_stub(run_id=run_id, db_path=config.db_path)`)
+  passes neither override, so ordinary `--judgment-mode agent` behavior
+  is unchanged: same model, same budget numbers, same auth label, same
+  auth check, proven end to end by a ledger-row assertion in the new
+  test suite. `sentinel/cli.py` and `sentinel/pipeline.py` were not
+  touched -- no new CLI flag, no generic model selector, matching
+  ADR-0011 §7's explicit prohibition. No OIDC token is requested and no
+  WIF exchange occurs anywhere in this part; no GitHub Actions workflow
+  exists yet; no state-bundle, qualification-window, cadence or
+  one-shot-marker machinery exists yet; no historical Phase-1/3/4
+  fixture, evaluator, frozen gate runner, or ADR was touched. New tests
+  `tests/test_execution_profile.py` and `tests/test_auth_wif.py`
+  cover the profile golden values, the coordinator's new seams, the
+  full WIF required/shadow/token-file matrix (including the symlink
+  case, skipped where the platform does not permit creating one), the
+  `AuthCheckFailure` hierarchy, and an end-to-end proof that a failing
+  WIF precheck makes zero `query_fn` invocations and records a
+  `REJECTED` ledger row with the truthful `github-actions-wif-federation`
+  auth-mode label. Three existing test files
+  (`tests/test_bounds.py`, `tests/test_failures.py`,
+  `tests/test_adr0008.py`) received the minimal mechanical update their
+  injected `query_fn` fakes needed to accept the new internal model
+  argument, with no behavioral change. **Verification:** `python -m pip
+  check` clean, **1043 passed, 1 skipped (the platform-gated symlink
+  case), 93.2% coverage**, Tier 0 artifact validator PASS, Phase-1
+  freeze guard PASS. **Phase 5 remains IN PROGRESS. P5-A remains
+  COMPLETE. P5-B is now IN PROGRESS, with Part 1/3 COMPLETE and Parts
+  2/3 and 3/3 (state/qualification/cadence layer; workflow topology and
+  scheduled orchestration) NOT STARTED, so P5-B itself is NOT
+  complete.** No Sentinel model/provider call, no Anthropic
+  token-count call, no OIDC/WIF operation, no workflow dispatch, no
+  official Sonnet gate execution, no P5-C WIF probe execution occurred
+  in this session. P5-C remains NOT STARTED. Windows `SentinelDailyRun`
+  remains unchanged and stub-mode. No qualification window is frozen.
+  No qualifying Phase-5 scheduled run exists. Q-83 is untouched. The
+  overall production-readiness program remains OPEN and the
+  production-ready claim remains NOT PERMITTED. Next action: Part 2/3
+  (state-bundle, qualification-window and cost/cadence machinery) as
+  its own child dispatch.

@@ -574,7 +574,7 @@ def test_per_run_cost_cap_halts_checker(tmp_path, make_config, make_deps, fixed_
 
     calls_made: list[str] = []
 
-    def tiny_query_fn(check_class, reservation, state, user_prompt):
+    def tiny_query_fn(check_class, reservation, state, user_prompt, model=None):
         calls_made.append(check_class)
         # total_cost_usd=None -> "unresolved usage" path -> the full
         # reservation is charged, deliberately draining the entire

@@ -65,6 +65,13 @@ class Reservation:
 class RunBudgetCoordinator:
     fx_rate: FxRate
     total_eur_micros: int = RUN_BUDGET_EUR_MICROS
+    # Phase-5 (q77-p5b-foundation-a): per-call reserve ceiling and SDK
+    # safety margin are now instance fields rather than always reading
+    # the Haiku module constants, so a non-Haiku ExecutionProfile (see
+    # agents/checker/config.py) can build a coordinator with its own
+    # values. Defaults reproduce every existing call site exactly.
+    max_per_call_reserve_eur_micros: int = MAX_PER_CALL_RESERVE_EUR_MICROS
+    sdk_allowance_safety_margin: str = SDK_ALLOWANCE_SAFETY_MARGIN
     _committed_eur_micros: int = field(default=0, init=False)  # charged, finalized calls
     _reserved_eur_micros: int = field(default=0, init=False)  # held by in-flight calls
 
@@ -82,14 +89,14 @@ class RunBudgetCoordinator:
                 f"run budget exhausted: {self.total_eur_micros} EUR-micros total, "
                 f"{self._committed_eur_micros} charged, {self._reserved_eur_micros} reserved"
             )
-        amount = min(remaining, MAX_PER_CALL_RESERVE_EUR_MICROS)
+        amount = min(remaining, self.max_per_call_reserve_eur_micros)
         self._reserved_eur_micros += amount
         sdk_allowance = self._conservative_usd_allowance(amount)
         return Reservation(reserved_eur_micros=amount, sdk_max_budget_usd=sdk_allowance)
 
     def _conservative_usd_allowance(self, reserved_eur_micros: int) -> float:
         reserved_eur = Decimal(reserved_eur_micros) / _MICROS_PER_EUR
-        margin = Decimal(SDK_ALLOWANCE_SAFETY_MARGIN)
+        margin = Decimal(self.sdk_allowance_safety_margin)
         usd = reserved_eur * self.fx_rate.usd_per_eur * margin
         # Round DOWN — the SDK-facing allowance must never exceed what
         # the safety-margined EUR reservation actually covers.

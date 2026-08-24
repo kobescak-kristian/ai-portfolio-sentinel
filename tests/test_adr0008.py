@@ -614,7 +614,7 @@ class ScriptedQuery:
         self.steps = list(steps)
         self.calls = []
 
-    def __call__(self, check_class, reservation, state, user_prompt):
+    def __call__(self, check_class, reservation, state, user_prompt, model=None):
         self.calls.append(
             SimpleNamespace(
                 check_class=check_class,

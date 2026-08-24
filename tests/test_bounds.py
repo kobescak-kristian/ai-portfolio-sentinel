@@ -96,7 +96,7 @@ def _clean_query_fn_factory(*, findings_calls=None, result_kwargs=None):
     findings_calls = findings_calls or []
     result_kwargs = result_kwargs or {}
 
-    def _fake(check_class, reservation, state, user_prompt):
+    def _fake(check_class, reservation, state, user_prompt, model=None):
         for call in findings_calls:
             state.accept(**call)
         defaults = dict(
@@ -198,7 +198,7 @@ def test_tool_call_circuit_breaker_trips_after_max_calls():
 
 
 def test_breaker_tripped_call_fails_the_judge_and_returns_no_findings(ledger_conn):
-    def query_that_spams_tool(check_class, reservation, state, user_prompt):
+    def query_that_spams_tool(check_class, reservation, state, user_prompt, model=None):
         for i in range(MAX_TOOL_CALLS_PER_CHECK + 2):
             state.accept(reason_code="FIGURE_WITHOUT_ADJACENT_SYNTHETIC_LABEL", raw_evidence=[{"line": 2, "excerpt": "has 42"}])
         return SimpleNamespace(is_error=False, subtype="success", num_turns=1, total_cost_usd=0.0001, usage={}, result="done")
@@ -238,7 +238,7 @@ def test_run_budget_shared_across_reservations_never_exceeds_total():
 def test_no_call_starts_after_budget_exhaustion(ledger_conn):
     calls_made = {"count": 0}
 
-    def counting_query_fn(check_class, reservation, state, user_prompt):
+    def counting_query_fn(check_class, reservation, state, user_prompt, model=None):
         calls_made["count"] += 1
         return SimpleNamespace(is_error=False, subtype="success", num_turns=1, total_cost_usd=0.0001, usage={}, result="done")
 
@@ -334,7 +334,7 @@ def test_no_override_variables_present_passes():
 def test_judge_fails_closed_on_auth_override_risk_before_any_reserve(ledger_conn):
     calls_made = {"count": 0}
 
-    def counting_query_fn(check_class, reservation, state, user_prompt):
+    def counting_query_fn(check_class, reservation, state, user_prompt, model=None):
         calls_made["count"] += 1
         return SimpleNamespace(is_error=False, subtype="success", num_turns=1, total_cost_usd=0.0, usage={}, result="")
 
@@ -418,7 +418,7 @@ def test_crash_recovery_charges_unresolved_reservation_never_zero(ledger_conn):
 
 
 def test_late_sdk_error_discards_findings_already_accepted_in_process(ledger_conn):
-    def accept_then_fail(check_class, reservation, state, user_prompt):
+    def accept_then_fail(check_class, reservation, state, user_prompt, model=None):
         state.accept(reason_code="FIGURE_WITHOUT_ADJACENT_SYNTHETIC_LABEL", raw_evidence=[{"line": 2, "excerpt": "has 42"}])
         assert len(state.findings) == 1  # the tool call itself succeeded
         return SimpleNamespace(is_error=True, subtype="error_during_execution", num_turns=3, total_cost_usd=0.01, usage={}, result=None)
@@ -438,7 +438,7 @@ def test_late_sdk_error_discards_findings_already_accepted_in_process(ledger_con
 
 
 def test_exception_during_query_discards_any_partial_state(ledger_conn):
-    def raises_mid_call(check_class, reservation, state, user_prompt):
+    def raises_mid_call(check_class, reservation, state, user_prompt, model=None):
         state.accept(reason_code="FIGURE_WITHOUT_ADJACENT_SYNTHETIC_LABEL", raw_evidence=[{"line": 2, "excerpt": "has 42"}])
         raise ConnectionError("simulated transport failure")
 
@@ -944,7 +944,7 @@ def test_adopted_bounds_left_deliberately_unchanged_by_the_remediation():
 def test_absent_file_returns_empty_with_no_model_call_and_no_audit_row(ledger_conn):
     calls_made = {"count": 0}
 
-    def must_not_be_called(check_class, reservation, state, user_prompt):
+    def must_not_be_called(check_class, reservation, state, user_prompt, model=None):
         calls_made["count"] += 1
         raise AssertionError("the model path must not be reached for a confirmed-absent file")
 

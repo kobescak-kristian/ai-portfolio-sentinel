@@ -9,9 +9,21 @@ dev/live run <= EUR 0.75 (Haiku)"); the Claude Agent SDK's own
 and every USD figure the SDK is given is *derived* from it at run time
 via the resolved FX rate (see ``fx.py``, ``budget.py``), never
 hardcoded in USD.
+
+Phase-5 execution profiles (dispatch q77-p5b-foundation-a, ADR-0011
+§7 and its 2026-08-23 Sonnet-reserve amendment): ``ExecutionProfile``
+bundles the model/budget/reserve/margin values a caged run is built
+from, so a second, structurally distinct profile can exist as data
+without touching the ordinary Haiku path's constants above. Only
+``HAIKU_ORDINARY`` is reachable from ``sentinel/cli.py`` today —
+``SONNET_OFFICIAL_GATE`` is configuration only until a dedicated
+Phase-5 gate runner (a later part of this same program) constructs a
+coordinator/stub from it directly.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 # Haiku is the only model this phase's dev gate uses (BLUEPRINT §6 P3:
 # "Caged checker agent (Haiku dev)"). The Sonnet official gate is a
@@ -91,3 +103,42 @@ QUALIFIED_TOOL_NAME = f"mcp__{MCP_SERVER_NAME}__{TOOL_NAME}"
 # were confirmed absent, not an independently verified provider
 # assertion. Documented as a residual limitation, not hidden.
 AUTH_MODE_LABEL = "operator-subscription-oauth-assumed"
+
+
+@dataclass(frozen=True)
+class ExecutionProfile:
+    """Everything one caged run needs to know about which model it
+    targets and what it may spend, as a single immutable value rather
+    than a scatter of module constants. ``HAIKU_ORDINARY`` below
+    reproduces the constants above exactly; nothing that already reads
+    those constants directly needs to change."""
+
+    name: str
+    model: str
+    run_budget_eur_micros: int
+    max_per_call_reserve_eur_micros: int
+    sdk_allowance_safety_margin: str  # Decimal string; see budget.py
+
+
+HAIKU_ORDINARY = ExecutionProfile(
+    name="haiku-ordinary",
+    model=MODEL,
+    run_budget_eur_micros=RUN_BUDGET_EUR_MICROS,
+    max_per_call_reserve_eur_micros=MAX_PER_CALL_RESERVE_EUR_MICROS,
+    sdk_allowance_safety_margin=SDK_ALLOWANCE_SAFETY_MARGIN,
+)
+
+# ADR-0011 §7 amendment (2026-08-23): the official Sonnet gate's model
+# and budget are owner-fixed constants, restated here as plain
+# literals rather than derived from anything above — the 1,000,000
+# per-call reserve is a proportional risk/start limit (the same 20%
+# of total as Haiku's 150,000/750,000), explicitly NOT token- or
+# workload-derived. This profile is data only in this dispatch: no
+# coordinator, stub, or CLI path constructs a run from it yet.
+SONNET_OFFICIAL_GATE = ExecutionProfile(
+    name="sonnet-official-gate",
+    model="claude-sonnet-5",
+    run_budget_eur_micros=5_000_000,
+    max_per_call_reserve_eur_micros=1_000_000,
+    sdk_allowance_safety_margin=SDK_ALLOWANCE_SAFETY_MARGIN,
+)

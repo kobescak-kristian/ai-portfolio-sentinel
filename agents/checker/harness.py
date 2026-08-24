@@ -47,6 +47,7 @@ import anyio
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, create_sdk_mcp_server, query
 
 from agents.checker import auth, failures
+from agents.checker.auth import AuthProfile
 from agents.checker.budget import (
     BudgetExhausted,
     Reservation,
@@ -54,12 +55,13 @@ from agents.checker.budget import (
     usd_to_charged_eur_micros,
 )
 from agents.checker.config import (
-    AUTH_MODE_LABEL,
+    HAIKU_ORDINARY,
     MAX_MODEL_ATTEMPTS_PER_TASK,
     MAX_TURNS,
     MCP_SERVER_NAME,
     MODEL,
     QUALIFIED_TOOL_NAME,
+    ExecutionProfile,
 )
 from agents.checker.failures import QueryOutcome
 from agents.checker.fx import resolve_ecb_usd_per_eur
@@ -85,7 +87,9 @@ class TerminalAccountingError(CheckerAgentError):
     or deleted to make the two layers agree."""
 
 
-def build_options(check_class: str, reservation: Reservation) -> ClaudeAgentOptions:
+def build_options(
+    check_class: str, reservation: Reservation, model: str = MODEL
+) -> ClaudeAgentOptions:
     """The cage (dispatch section C): no built-in tools, exactly one
     qualified custom tool, a bounded turn count, a per-call USD
     ceiling derived from the run's EUR budget, and no inherited
@@ -96,9 +100,13 @@ def build_options(check_class: str, reservation: Reservation) -> ClaudeAgentOpti
     from the same request and its own ordinary reservation, so it gets
     the same model, the same one-tool cage and the same turn allowance
     — only the SDK budget allowance differs, and only because it is
-    derived from whatever run capacity actually remains."""
+    derived from whatever run capacity actually remains.
+
+    ``model`` defaults to the ordinary Haiku constant (dispatch
+    q77-p5b-foundation-a: a non-default value is only ever supplied by
+    a non-default ``ExecutionProfile``, threaded in via ``run_query``)."""
     return ClaudeAgentOptions(
-        model=MODEL,
+        model=model,
         system_prompt=build_system_prompt(check_class),
         tools=[],  # disable every built-in tool (Read, Bash, Write, Edit, ...)
         allowed_tools=[QUALIFIED_TOOL_NAME],  # exactly the one custom tool
@@ -115,6 +123,7 @@ async def run_query(
     reservation: Reservation,
     state: CheckerToolState,
     user_prompt: str,
+    model: str = MODEL,
 ) -> QueryOutcome:
     """The real SDK call. Kept as a free function (not a method) so
     tests can substitute an entirely different async callable via
@@ -134,7 +143,7 @@ async def run_query(
     server = create_sdk_mcp_server(
         name=MCP_SERVER_NAME, version="1.0.0", tools=[build_emit_finding_tool(state)]
     )
-    options = build_options(check_class, reservation)
+    options = build_options(check_class, reservation, model)
     options.mcp_servers = {MCP_SERVER_NAME: server}
 
     result: Optional[ResultMessage] = None
@@ -159,6 +168,11 @@ class CagedCheckerStub:
     coordinator: RunBudgetCoordinator
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     query_fn: Callable = field(default=run_query)
+    # Phase-5 (q77-p5b-foundation-a): which model this stub calls and
+    # which auth profile it checks. Defaults reproduce today's ordinary
+    # Haiku/local-OAuth behavior exactly for every existing caller.
+    model: str = MODEL
+    auth_profile: AuthProfile = field(default=auth.LOCAL_OAUTH)
 
     #: Run-lifetime fail-closed latch. Set once ``_advance_budget``
     #: catches a coordinator accounting failure, i.e. after this call's
@@ -201,8 +215,8 @@ class CagedCheckerStub:
         task_key = f"{request.surface}::{request.check_class}"
 
         try:
-            auth.assert_no_auth_override_risk()
-        except auth.AuthOverrideRisk as exc:
+            self.auth_profile.check(None)
+        except auth.AuthCheckFailure as exc:
             self._record_terminal(
                 task_key=task_key,
                 request=request,
@@ -314,9 +328,11 @@ class CagedCheckerStub:
         of bypassing it."""
         try:
             if inspect.iscoroutinefunction(self.query_fn):
-                raw = anyio.run(self.query_fn, check_class, reservation, state, user_prompt)
+                raw = anyio.run(
+                    self.query_fn, check_class, reservation, state, user_prompt, self.model
+                )
             else:
-                raw = self.query_fn(check_class, reservation, state, user_prompt)
+                raw = self.query_fn(check_class, reservation, state, user_prompt, self.model)
         except Exception as exc:  # noqa: BLE001 - any SDK/transport failure
             return QueryOutcome(result=None, error=exc)
         if isinstance(raw, QueryOutcome):
@@ -361,8 +377,8 @@ class CagedCheckerStub:
                 task_key=task_key,
                 surface=request.surface,
                 check_class=request.check_class,
-                model=MODEL,
-                auth_mode=AUTH_MODE_LABEL,
+                model=self.model,
+                auth_mode=self.auth_profile.label,
                 started_at_utc=at_utc,
                 reserved_eur_micros=reservation.reserved_eur_micros,
                 fx_source=fx_rate.source,
@@ -451,8 +467,8 @@ class CagedCheckerStub:
                 task_key=task_key,
                 surface=request.surface,
                 check_class=request.check_class,
-                model=MODEL,
-                auth_mode=AUTH_MODE_LABEL,
+                model=self.model,
+                auth_mode=self.auth_profile.label,
                 started_at_utc=at_utc,
                 reserved_eur_micros=0,
                 fx_source=fx_rate.source,
@@ -477,15 +493,37 @@ def build_caged_judgment_stub(
     run_id: str,
     db_path: Path,
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    profile: ExecutionProfile = HAIKU_ORDINARY,
+    auth_profile: AuthProfile = auth.LOCAL_OAUTH,
 ) -> CagedCheckerStub:
     """Factory used by ``sentinel/cli.py`` when ``--judgment-mode agent``
     is selected. Fails closed, before any model call and before
-    ``execute_run`` creates any run row, if the auth-override check or
-    FX resolution cannot succeed (``auth.AuthOverrideRisk`` /
-    ``fx.FxResolutionError`` propagate to the caller)."""
-    auth.assert_no_auth_override_risk()
+    ``execute_run`` creates any run row, if the auth check or FX
+    resolution cannot succeed (``auth.AuthCheckFailure`` /
+    ``fx.FxResolutionError`` propagate to the caller).
+
+    ``sentinel/cli.py`` calls this with neither ``profile`` nor
+    ``auth_profile`` overridden, so its defaults — ``HAIKU_ORDINARY``
+    and ``auth.LOCAL_OAUTH`` — are what make ordinary
+    ``--judgment-mode agent`` behavior byte-for-byte unchanged
+    (dispatch q77-p5b-foundation-a). A non-default profile is only ever
+    supplied by a dedicated, separate entry point outside this
+    dispatch's scope."""
+    auth_profile.check(None)
     now = clock()
     fx_rate = resolve_ecb_usd_per_eur(now=now)
     conn = ledger.open_ledger(db_path)
-    coordinator = RunBudgetCoordinator(fx_rate=fx_rate)
-    return CagedCheckerStub(run_id=run_id, conn=conn, coordinator=coordinator, clock=clock)
+    coordinator = RunBudgetCoordinator(
+        fx_rate=fx_rate,
+        total_eur_micros=profile.run_budget_eur_micros,
+        max_per_call_reserve_eur_micros=profile.max_per_call_reserve_eur_micros,
+        sdk_allowance_safety_margin=profile.sdk_allowance_safety_margin,
+    )
+    return CagedCheckerStub(
+        run_id=run_id,
+        conn=conn,
+        coordinator=coordinator,
+        clock=clock,
+        model=profile.model,
+        auth_profile=auth_profile,
+    )
