@@ -234,13 +234,17 @@ plumbing, and the five Phase-5 workflow files
 (`.github/workflows/sentinel-schedule.yml`,
 `sentinel-rehearsal.yml`, `sentinel-wif-probe.yml`,
 `sentinel-official-gate.yml`, `sentinel-window-control.yml`) exist on
-main with model-free contract tests. No workflow has ever been
-dispatched, no OIDC/WIF exchange, no probe, no official gate execution,
-no rehearsal execution, no window freeze and no qualifying scheduled
-run has occurred. The scheduled workflow's pre-window firings (with no
-real qualification window frozen) are structurally incapable of any
-OIDC or model call, proven by `sentinel/phase5/preflight.py`'s step
-order and exercised by `tests/test_phase5_orchestrator.py`.
+main with model-free contract tests. **P5-C is now COMPLETE**: the
+model-free rehearsal (Actions run `32780462877`, completed/success,
+NONQUALIFYING) and the one capped, one-shot WIF capability probe
+(Actions run `32783229864`, `CAPABILITY_PASS`) have both been
+dispatched and have both occurred; no official gate execution, no
+window freeze and no qualifying scheduled run has occurred. The
+scheduled workflow itself has still never been dispatched or
+authenticated; its pre-window firings (with no real qualification
+window frozen) are structurally incapable of any OIDC or model call,
+proven by `sentinel/phase5/preflight.py`'s step order and exercised by
+`tests/test_phase5_orchestrator.py`.
 Phase 6 is NOT STARTED.** See the Plan field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
@@ -372,9 +376,10 @@ phase; closure became true only when it was recorded. **Phases 0-4 are
 CLOSED. Phase 5 is IN PROGRESS as of 2026-08-23 under
 `adr/0011-phase5-unattended-operation-contract.md`. The contract is
 adopted; P5-B (implementation) is COMPLETE across all three parts.
-Actions rehearsal, WIF probe, official Sonnet gate, Windows scheduler
-cutover, prospective five-slot live window, evidence finalization and
-release remain P5-C through P5-H and are still pending; P5-C is
+**P5-C (Actions rehearsal plus the one capped, one-shot WIF capability
+probe) is COMPLETE.** Official Sonnet gate, Windows scheduler cutover,
+prospective five-slot live window, evidence finalization and release
+remain P5-D through P5-H and are still pending; P5-D is
 NEXT. Phase 6 is NOT STARTED. The overall production-readiness program
 remains OPEN, and no production or production-ready claim is
 permitted.**
@@ -3113,3 +3118,79 @@ merges every change."
   session. No production-ready claim, no P5-C COMPLETE claim, no v0.7
   claim. Next action: operator push approval for this commit, then
   C1 onward as later child dispatches.
+- 2026-08-25 - P5-C COMPLETE (dispatch q77-p5c-c5-record-execute-a).
+  **P5-C is now COMPLETE: C0 through C5 all landed.** This session
+  records, durably, the evidence for two prior governed executions and
+  the outcome of the one-shot WIF capability probe's full lifecycle;
+  it makes no provider/model call and no GitHub Actions dispatch
+  itself.
+  C2: the model-free rehearsal, Actions run `32780462877`, completed
+  with conclusion success. NONQUALIFYING by design; it exercises no
+  provider or model call.
+  C3: the technical pre-probe readiness gate recorded PASS, and the
+  final human Console gate recorded PASS, both ahead of the governed
+  probe dispatch.
+  C4: the governed one-shot probe, Actions run `32783229864`,
+  event `workflow_dispatch`, attempt 1, head SHA
+  `f5b2ae6e393252594efa5b48e1f86a1f2296f797`, conclusion success.
+  Marker artifact `sentinel-p5-oneshot-p5c-wif-probe-r32783229864`
+  (artifact ID `9540505807`) and probe evidence artifact
+  `sentinel-p5-probe-evidence-r32783229864-a1` (artifact ID
+  `9540511349`) are cited here as pointers into the Actions artifact
+  store, not committed. Disposition `CAPABILITY_PASS`; `auth_mode`
+  `github-actions-wif-federation`. The probe's `CostRow`: `run_id`
+  `r-p5c-32783229864`, `run_kind` `live`, `model`
+  `claude-haiku-4-5-20251001`, `input_tokens` 1811, `output_tokens`
+  600, `cost_eur_micros` 4676; `accounted_total_eur_micros` 4676,
+  against the mechanized probe ceiling of 150000 micro-EUR. This
+  session's own `CostRow` handoff, run through the governed
+  `scripts/record_phase5_cost_evidence.py` tool (never hand-typed),
+  appended exactly that row to `telemetry/cost_ledger.jsonl`, verified
+  byte-equivalent and present exactly once. The one-shot marker
+  `P5C_WIF_PROBE` is CONSUMED. The probe remains NONQUALIFYING: it
+  does not count toward the five scheduled live runs, does not count
+  as the official Sonnet gate, and does not widen the final production
+  trust rule.
+  C5, provider-side verification: an Anthropic authentication event
+  recorded Success on Aug 25 00:09:23 GMT+2, issuer `github-actions`,
+  rule `sentinel-p5c-probe`, service account `sentinel-github`. The
+  `sentinel` workspace's Console spend display showed USD 0.01 of a
+  USD 1.00 monthly cap (reset Sep 1 2026 UTC). This cent-rounded
+  provider display and the session's mechanized `cost_eur_micros`
+  4676 are two separate, both truthful, surfaces; the provider display
+  is never forced to equal the mechanized figure. Recorded verbatim,
+  per the governing cap contract: "The Anthropic workspace limit is a
+  provider-enforced monthly backstop, not a per-run guarantee.
+  Sentinel's mechanized accounting remains the per-run authority."
+  The temporary federation rule `sentinel-p5c-probe`
+  (`fdrl_0153QKJnAPpJPcezqz2k8bRP`) was confirmed Active before the
+  probe ran, and confirmed Archived through the supported Anthropic
+  Console afterward, by an immediate post-action Console readback on
+  2026-08-25. The Console surface inspected did not expose an exact
+  provider-side archive timestamp; none is recorded, and none is
+  invented. The GitHub repository variable
+  `SENTINEL_P5C_FEDERATION_RULE_ID` is left unmutated, retained as
+  historical configuration naming that now-archived, inert rule; no
+  committed contract requires its removal.
+  Boundary: P5-C completion is not P5-D completion. It is not a
+  qualification window, not production scheduling, not production
+  readiness, and not v0.7 release eligibility.
+  ACTUAL WRITE SET: seven paths: `telemetry/cost_ledger.jsonl`,
+  `STATE.md`, `README.md`, `SPEC.md`, `DATA_RETENTION_POLICY.md`,
+  `RUNBOOK.md`, `MONITORING.md`. No workflow, code, test, ADR, or
+  `.publicgate-allow` change; no probe-evidence JSON or marker JSON
+  committed; no new `artifacts/*.json`; no `evidence/` directory; no
+  `FINDINGS.md` change; no README Version Log row.
+  NON-EVENTS: no P5-D execution; no official Sonnet gate; no Windows
+  scheduler operation or cutover; no qualification-window freeze; no
+  qualifying scheduled run; no v0.7 tag; no Anthropic provider/model
+  call in this session; no Anthropic Console mutation beyond the
+  already-completed archival; no GitHub variable/secret/environment
+  mutation; no federation rule created, edited, or unarchived; no
+  governance/KOS write.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. **P5-C
+  COMPLETE.** P5-D NOT STARTED. Phase 5 IN PROGRESS. Phase 6 NOT
+  STARTED. Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: P5-D as its own child dispatch; the corresponding
+  governance truth record for this evidence is recorded separately, in
+  a later dispatch, in the private operations OS.

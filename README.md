@@ -178,9 +178,11 @@ production claim is made — the production-readiness program is still
 open. **Phase 4 is CLOSED. Phase 5 is IN PROGRESS as of 2026-08-23
 under the adopted unattended-operation contract; the model-free
 implementation (Actions workflow topology, state-chain orchestration,
-WIF plumbing) has landed, but no workflow has ever been dispatched and
-operational qualification has not started, and the lane's governing
-work item remains open.** No production-ready claim is permitted while
+WIF plumbing) has landed, and the model-free rehearsal plus one capped,
+one-shot, non-qualifying WIF capability probe have both been
+dispatched and completed, but operational qualification has not
+started, and the lane's governing work item remains open.** No
+production-ready claim is permitted while
 the program is open, and closing Phase 4 does not make one true.
 `SentinelDailyRun` remains stub-mode, and the bounded loop's own entry
 point (`python -m runner`) is stub-only, with agent/provider mode

@@ -246,8 +246,10 @@ lost. **No crash-proof per-tool telemetry is claimed.**
 This section documents the capability landed in P5-B Part 3/3
 (`sentinel/phase5/`, ADR-0011 §4). It states what the implementation
 does; it does not claim the chain has ever carried a real qualifying
-lineage: no real qualification window exists yet (P5-E), and no
-workflow has ever been dispatched.
+lineage: no real qualification window exists yet (P5-E). The Actions
+rehearsal and one capped, one-shot WIF capability probe have both been
+dispatched (P5-C); the scheduled lane itself has never been
+dispatched.
 
 **What travels in the chain.** Every Actions-era state bundle (a
 GENESIS, a slot successor, or a control refusal) carries exactly the

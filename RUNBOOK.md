@@ -33,11 +33,15 @@ production, service or availability claim is made in this document. -->
   resolved command carries no judgment-mode flag, so it stays in stub
   mode by construction.
 - **GitHub Actions scheduling topology is implemented (P5-B, part of
-  Phase 5) but has never operated.** Five workflow files exist under
-  `.github/workflows/` (`sentinel-schedule.yml` and four manual/
-  model-free lanes), contract-tested model-free; none has ever been
-  dispatched, and the scheduled lane has never authenticated or made a
-  model call.
+  Phase 5); the scheduled lane itself has never operated.** Five
+  workflow files exist under `.github/workflows/`
+  (`sentinel-schedule.yml` and four manual/model-free lanes),
+  contract-tested model-free. Two of those lanes have now been
+  dispatched (P5-C): the model-free rehearsal made no provider or
+  model call, and the one capped, one-shot WIF capability probe
+  authenticated and made one capped model call. The scheduled lane
+  itself has never been dispatched and has never authenticated or made
+  a model call.
 
 ## B. Pre-run checks
 
@@ -247,11 +251,13 @@ have is worse than no runbook:
   stub mode only; agent mode is refused fail-closed.
 - **The standing scheduled task is stub-mode** and unedited. It invokes
   a single run, not a bounded loop.
-- **The GitHub Actions scheduler migration is implemented but has not
-  operated.** The five workflow files exist and are contract-tested
-  model-free; none has been dispatched, the Windows scheduler has not
-  been cut over, and no Actions-scheduled run has occurred, qualifying
-  or otherwise.
+- **The GitHub Actions scheduler migration is implemented; the
+  scheduled lane itself has not operated.** The five workflow files
+  exist and are contract-tested model-free. The model-free rehearsal
+  and the one capped, one-shot WIF capability probe (P5-C) have both
+  been dispatched; the scheduled lane itself has never been dispatched,
+  the Windows scheduler has not been cut over, and no Actions-scheduled
+  run has occurred, qualifying or otherwise.
 - **No five consecutive Actions-scheduled live runs exist.** There is no
   scheduled operating history to diagnose against.
 - **No final `MONITORING.md`, no final `RUNBOOK.md`, no `SLO.md`.**

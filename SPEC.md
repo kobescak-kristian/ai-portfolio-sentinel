@@ -100,11 +100,12 @@ public gate post landed. Phase 5 is IN PROGRESS as of 2026-08-23 under
 `adr/0011-phase5-unattended-operation-contract.md`. P5-B (the
 model-free implementation: the Actions scheduler/state-chain/
 qualification/cost-cadence machinery, the WIF plumbing, and the five
-Phase-5 workflow files) is COMPLETE across all three parts; Actions
-rehearsal, the WIF probe, the official Sonnet gate, the scheduler
-cutover and a qualifying scheduled run have still not occurred. The
-overall production-readiness program remains OPEN, and no
-production-ready claim is permitted.
+Phase-5 workflow files) is COMPLETE across all three parts; the
+Actions rehearsal and the one capped, one-shot WIF capability probe
+have both occurred and P5-C is COMPLETE. The official Sonnet gate, the
+scheduler cutover and a qualifying scheduled run have still not
+occurred. The overall production-readiness program remains OPEN, and
+no production-ready claim is permitted.
 `max_regates: 1` and every historical re-gate fact above are unchanged.
 BLUEPRINT governs where this file diverges.
 
