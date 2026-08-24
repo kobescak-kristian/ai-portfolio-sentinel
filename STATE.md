@@ -2776,3 +2776,107 @@ merges every change."
   production-ready claim remains NOT PERMITTED. Next action: Part 2/3
   (state-bundle, qualification-window and cost/cadence machinery) as
   its own child dispatch.
+- 2026-08-24 - P5-B PART 2/3 (STATE, QUALIFICATION AND CADENCE DOMAIN
+  CORE) LANDED (dispatch `q77-p5b-state-f`, closing a plan-only chain
+  `q77-p5b-state-a` through `q77-p5b-state-e` that was reviewed and
+  revised five times before execution was authorized). This part lands
+  a new, entirely model-free package, `sentinel/phase5/`, containing
+  the pure/local domain machinery ADR-0011 requires before any Actions
+  integration: canonical JSON serialization and SHA-256 hashing for
+  every Phase-5 record (`models.py`); an immutable
+  `QualificationWindowRecord` with five 06:37 UTC daily slots (1..5,
+  GENESIS reserved for slot 0), explicit supersession fields, and
+  migration-evidence fields for the later Windows-to-Actions boundary;
+  discriminated GENESIS/SLOT_SUCCESSOR/CONTROL_REFUSAL state-bundle
+  manifests bound to the exact window that froze them; a durable
+  `Phase5ControlState` with a clean-completion invariant that a window
+  can only be marked consumed-with-no-reason at slot index 5; trusted-
+  root path safety (every filesystem path validated component by
+  component before any resolve, never after); SQLite snapshot/restore
+  via the stdlib backup API only, with `PRAGMA integrity_check`
+  enforced on both sides and no raw file copy; a local bundle builder
+  that validates every authoritative source file (SQLite, FINDINGS.md,
+  cost_ledger.jsonl) before any write and one comprehensive bundle
+  validator (exact file-tree match, manifest/window/control-state
+  binding, local accounting truth including GENESIS) used identically
+  after build and before any later acceptance; active-window discovery
+  as a global supersession-graph algorithm with cycle detection over
+  every candidate, never a mtime/name/cache heuristic; a cryptographic
+  predecessor chain verified by both hash and artifact identity at
+  every link back to GENESIS; a cross-bundle control-state transition
+  validator enforcing monotone window consumption, degrade-only
+  cadence, and spend recomputed from each bundle's own carried
+  CostRows rather than trusted as a stored integer; deterministic
+  CONTROL_REFUSAL decision reconstruction from carried evidence (no
+  execution-time placeholder) reusing the same cadence evaluator as
+  every other caller; a durable refusal walker for zero or more
+  consecutive CONTROL_REFUSAL bundles that never earns qualification
+  credit; an exact five-of-five clean-completion proof walked from
+  GENESIS through the cryptographic chain, never inferred from a
+  slot-5-shaped control state alone; single-path qualification
+  classification that computes an outcome deterministically before
+  ever reading a supplied successor's claimed outcome, validates the
+  successor's own predecessor-chain and control-state edge before
+  QUALIFYING is possible, and structurally enforces cause-to-window-
+  consumption binding for every execution-time outcome inside
+  `classify_run` itself; half-open daily ownership intervals that
+  separate "which slot owns this run" from "did it arrive in
+  tolerance," so a late-but-real run at +121 minutes or +23 hours is
+  never misclassified `MISSING_LOST`; `MISSING_LOST` finalized only at
+  ownership-interval close and producible only by independent review,
+  never by single-run classification; `DUPLICATE_NONQUALIFYING` for
+  multiple distinct scheduled executions discovered in one ownership
+  interval, with GitHub run-history evidence normalized by execution
+  identity so conflicting metadata for the same identity fails closed;
+  fail-closed trailing-30-day spend evidence (a missing, unreadable or
+  malformed cost ledger raises rather than defaulting to zero spend,
+  with a generic public error message and the real cause preserved
+  only via exception chaining); the exact EUR50 prospective start
+  formula, EUR40 five-slot freeze-headroom formula, and the approved
+  cadence/cost overlap ruling (an EUR50 refusal never suppresses
+  truthful EUR40 window-consumption state); and purpose-wide one-shot
+  marker guards for the P5-C WIF probe and the P5-D official Sonnet
+  gate, where any existing marker (success or failure) permanently
+  consumes that one-shot and a source-SHA change never resets it.
+  `sentinel/phase5/**` is restricted to stdlib and pydantic only, the
+  same third-party allowance already governing the rest of `sentinel/`,
+  confirmed by the existing dependency-surface test with no changes to
+  that test's allowlist. New files: `sentinel/phase5/__init__.py`,
+  `sentinel/phase5/models.py`, `sentinel/phase5/bundle.py`,
+  `sentinel/phase5/qualification.py`, `sentinel/phase5/cadence.py`,
+  `sentinel/phase5/oneshot.py`, `tests/test_phase5_bundle.py`,
+  `tests/test_phase5_qualification.py`, `tests/test_phase5_cadence.py`,
+  `tests/test_phase5_oneshot.py`. No other production path touched:
+  `contracts/`, `sentinel/ledger.py`, `sentinel/costs.py`,
+  `sentinel/config.py`, `sentinel/pipeline.py`, `sentinel/cli.py`,
+  `telemetry/`, `runner/`, `.github/`, and every ADR remain unmodified;
+  no ledger-schema change and no Phase-5 SQL table were added; the
+  operational SQLite database and the existing cost ledger remain the
+  sole ledger-side truth, with Phase-5 orchestration state carried as
+  versioned canonical JSON inside the (not-yet-created) Actions
+  artifact chain. **Verification:** `python -m pip check` clean, full
+  suite **1276 passed, 7 skipped** (1 pre-existing platform-gated
+  symlink case plus 6 new Phase-5 symlink-creation cases skipped on
+  this Windows environment where creating a symlink requires elevated
+  privilege the invoking session does not have), **92.7% coverage**
+  (phase5/models.py 95.8%, phase5/cadence.py 97.7%, phase5/oneshot.py
+  100%, phase5/qualification.py 99.1%, phase5/bundle.py 84.7%), Tier 0
+  artifact validator PASS, Phase-1 freeze guard PASS with the
+  pre-existing amber diff-stat note unrelated to this change (nothing
+  under `fixtures/`, `evals/` or the frozen gate post was touched).
+  **Phase 5 remains IN PROGRESS. P5-A remains COMPLETE. P5-B is now IN
+  PROGRESS, with Part 1/3 COMPLETE and Part 2/3 now COMPLETE; Part 3/3
+  (GitHub Actions workflow topology, live OIDC/WIF exchange, real
+  qualification-window freeze and scheduled orchestration) is NOT
+  STARTED and is next.** No Sentinel model/provider call, no Anthropic
+  token-count call, no OIDC/WIF operation, no workflow file created or
+  dispatched, no GitHub Actions artifact operation, no official Sonnet
+  gate execution, no P5-C WIF probe execution occurred in this session.
+  P5-C remains NOT STARTED. Windows `SentinelDailyRun` remains
+  unchanged and stub-mode. No qualification window is frozen; no
+  GENESIS, slot-successor or control-refusal bundle exists for a real
+  window, only as pure-function test fixtures. No qualifying Phase-5
+  scheduled run exists. No unrelated scope was touched. The overall
+  production-readiness program remains OPEN and the production-ready
+  claim remains NOT PERMITTED. Next action: Part 3/3 as its own child
+  dispatch.
