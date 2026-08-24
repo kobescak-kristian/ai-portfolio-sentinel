@@ -6,13 +6,15 @@ No production claim is made in this document. -->
 
 ## 1. Scope and status
 
-This document covers the Phase-3 addition only: the caged checker
-agent (`agents/checker/`) that replaces the two Phase-2 judgment stubs
-(`stale-STATE-marker`, `missing-synthetic-label`). The deterministic
-control plane's own trust boundary (no credentials for monitored
-surfaces, read-only by construction) is unchanged and is described in
-`DATA_CONTRACT.md` §3; this document adds what's new when a model is
-in the loop.
+This document covers the Phase-3 caged checker agent
+(`agents/checker/`) that replaces the two Phase-2 judgment stubs
+(`stale-STATE-marker`, `missing-synthetic-label`), and the P5-B
+GitHub Actions/WIF execution surface added on top of it (§7a, §12).
+The deterministic control plane's own trust boundary (no credentials
+for monitored surfaces, read-only by construction) is unchanged and is
+described in `DATA_CONTRACT.md` §3; this document adds what's new when
+a model is in the loop, and what's new when that loop runs inside a
+GitHub-hosted runner instead of the operator's own machine.
 
 System: n=1, operator-owned. The only person this system acts for or
 reports to is the operator. There is no multi-tenant surface, no other
@@ -324,6 +326,60 @@ not an independently verified provider assertion. `AUTH_OVERRIDE_ENV_VARS`
 is a documented-as-of-date enumeration (auth.py), not a guarantee of
 completeness against every future SDK/provider addition.
 
+## 7a. P5-B addition: GitHub Actions WIF authentication boundary
+
+**Threat**: on a GitHub-hosted runner, the intended authentication path
+is Workload Identity Federation (WIF), a short-lived OIDC token
+exchanged for a scoped Anthropic access token, never a long-lived
+static API key. A shadowing static credential, a stale profile
+variable, or a routing override present in the job environment could
+silently redirect calls away from the intended federated path, exactly
+as §7 describes for local subscription OAuth.
+
+**Mitigation**: `agents/checker/auth.py::assert_wif_config_ready`
+(landed P5-B Part 1/3) fails closed, before any OIDC or model
+activity, unless every required federation variable
+(`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`,
+`ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`) is
+present and non-empty, and unless every shadowing variable
+(`WIF_SHADOW_ENV_VARS`: the static-credential set, every existing
+routing/base-URL override, and the literal in-memory
+`ANTHROPIC_IDENTITY_TOKEN`) is absent, presence counted even as an
+empty string. The identity-token-file path is checked for symlink
+status *before* any existence check, closing the gap where a symlink
+could point at an attacker-controlled file elsewhere on disk.
+
+**Credential lifecycle (P5-B Part 3/3, `agents/checker/oidc.py`)**. The
+GitHub OIDC token-request credentials
+(`ACTIONS_ID_TOKEN_REQUEST_URL`/`_TOKEN`) are captured into a private,
+parent-process-only object and *removed* from the process environment
+in the same call that reads them, before any Agent-SDK-capable object
+is constructed. This closes the specific leak path §7's own module
+docstring documents: the Agent SDK spawns the CLI as a subprocess and
+merges the *entire* parent environment into it, so a credential merely
+being set is enough to leak, independent of whether this code ever
+reads or forwards it. `GITHUB_TOKEN` (used only by the read-only REST
+client, never by the provider path) is popped from the environment at
+process startup for the identical reason. The Anthropic identity-token
+file itself is installed atomically (a fresh 0600 temp file, then
+`os.replace`) so a concurrent reader, such as the SDK re-reading the
+file on its own refresh cycle, can only ever observe a complete prior
+token or a complete new one, never a partially-written one; a
+parent-only background refresher re-fetches a fresh token on a fixed
+interval well under GitHub's own JWT lifetime, using only the request
+credentials captured at acquisition, never re-reading them from the
+environment. A refresh failure blocks any *new* model invocation while
+letting one already in flight terminate through the existing
+failure-accounting path (§5, §6); it never silently falls back to a
+static credential.
+
+**Residual risk (documented limitation)**: as with §7, the SDK exposes
+no API to positively confirm which credential a given call actually
+used. `assert_wif_config_ready` proves configuration readiness and
+absence of known shadowing signals, not an independently verified
+provider assertion. `WIF_SHADOW_ENV_VARS` is a documented-as-of-date
+enumeration, same limitation as §7's `AUTH_OVERRIDE_ENV_VARS`.
+
 ## 8. No monitored-repository credentials
 
 Unchanged from Phase 2 (`DATA_CONTRACT.md` §3): the system holds no
@@ -378,3 +434,67 @@ never a silent pass:
   anywhere in this system; this threat model is scoped to an n=1,
   operator-owned deployment and does not attempt to address multi-
   tenant or third-party-facing threats that don't exist here.
+
+## 12. P5-B addition: hosted-runner and Actions-artifact-chain boundary
+
+**Threat: an untrusted GitHub-hosted runner as the execution
+environment.** Unlike the operator's own machine, a scheduled Actions
+job runs on GitHub-managed compute the operator does not control
+end to end.
+
+**Mitigation.** No long-lived secret is ever placed on that runner.
+§7a's WIF path issues only short-lived, narrowly-scoped tokens, and
+the production federation trust rule (a Console-side, operator-owned
+resource, not code in this repository) is scoped to the exact
+repository, `refs/heads/main`, the `schedule` event, and the exact
+scheduled workflow's `workflow_ref` claim. No static Anthropic API key
+exists in any workflow file, any repository secret, or any code path,
+confirmed by `tests/test_phase5_probe_runner.py` and
+`tests/test_phase5_gate_runner.py`'s static scans for
+`ANTHROPIC_API_KEY`.
+
+**Threat: no pull-request-reachable path to a model call.** A
+fork-originated pull request is a well-documented attack class for
+secret exposure via `pull_request_target`-triggered workflows.
+
+**Mitigation.** None of the five Phase-5 workflows declares
+`pull_request` or `pull_request_target` as a trigger;
+`tests/test_phase5_workflow_contracts.py` asserts this statically for
+every one of them. The only trigger that can reach a provider call at
+all is `schedule` (workflow A) or an operator-initiated
+`workflow_dispatch` (workflows C and D); a pull request can trigger
+neither.
+
+**Threat: a malicious or corrupted downloaded artifact.** Cross-run
+state (the predecessor bundle, one-shot markers) travels through
+GitHub's Actions artifact store and is fetched by this repository's own
+code, not GitHub's own trust boundary.
+
+**Mitigation.** Every downloaded artifact is untrusted bytes until it
+passes explicit validation: `sentinel/phase5/bundle.py::validate_bundle`
+for a state bundle (exact file-tree match, per-file SHA-256, manifest/
+window/control-state binding, SQLite integrity check) or a strict
+pydantic parse for a marker or evidence record. Zip extraction
+(`sentinel/phase5/github_evidence.py::_safe_extract_zip`) independently
+rejects absolute paths, `..` traversal, symlink entries, and archives
+exceeding bounded entry-count/size caps *before* any file reaches disk;
+`tests/test_phase5_github_evidence.py` exercises each rejection
+path. Predecessor selection is by cryptographic hash **and** artifact
+identity together (`predecessor_manifest_sha256` plus
+`predecessor_artifact_id_or_name`), never by name, upload time, or
+cache freshness; GitHub's Actions cache is never treated as
+authoritative state anywhere in this design (`DATA_RETENTION_POLICY.md`
+§15).
+
+**Threat: a scheduled firing before any real qualification window
+exists.** The scheduled workflow lands on `main` in P5-B, before P5-E
+freezes a real window, and GitHub will fire the cron regardless.
+
+**Mitigation.** `sentinel/phase5/preflight.py`'s frozen step order
+makes the OIDC-request step (`S09`) mechanically unreachable until
+every deterministic preflight through `S08` has recorded `OK`; with no
+matching GENESIS artifact discovered, `bundle.select_active_window`
+raises `NoActiveWindow` at step `S02`, and the run exits with zero
+OIDC requests, zero WIF exchanges, and zero provider calls.
+`tests/test_phase5_orchestrator.py`'s pre-window tests assert the exact
+port-call list is empty except the unconditional cleanup step.

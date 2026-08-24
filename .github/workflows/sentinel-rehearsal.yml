@@ -1,0 +1,46 @@
+name: sentinel-rehearsal
+
+# Model-free rehearsal (P5-B Part 3/3). No id-token permission exists
+# on this lane -- OIDC is structurally unreachable, not merely unused.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: "Exact 40-lowercase-hex commit SHA this rehearsal is running against"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: sentinel-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  rehearsal:
+    if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - name: rehearsal
+        id: rehearsal
+        run: >
+          python scripts/run_phase5_rehearsal.py
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: upload rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ steps.rehearsal.outputs.evidence_name }}
+          path: ${{ steps.rehearsal.outputs.evidence_path }}
+          retention-days: 90
+          if-no-files-found: error

@@ -228,8 +228,19 @@ federation, the official Sonnet gate, the prospective five-slot
 scheduled-live qualification window, Actions-era state continuity,
 cost/cadence controls, the Windows scheduler transition,
 evidence-backed final operations documents and the versioned release.
-**No Phase-5 implementation, workflow, scheduler operation, WIF probe,
-official gate, rehearsal or qualifying scheduled run has occurred yet.
+**P5-B is now COMPLETE (Parts 1/3, 2/3 and 3/3 all landed): the Actions
+scheduler/state-chain/qualification/cost-cadence machinery, the WIF
+plumbing, and the five Phase-5 workflow files
+(`.github/workflows/sentinel-schedule.yml`,
+`sentinel-rehearsal.yml`, `sentinel-wif-probe.yml`,
+`sentinel-official-gate.yml`, `sentinel-window-control.yml`) exist on
+main with model-free contract tests. No workflow has ever been
+dispatched, no OIDC/WIF exchange, no probe, no official gate execution,
+no rehearsal execution, no window freeze and no qualifying scheduled
+run has occurred. The scheduled workflow's pre-window firings (with no
+real qualification window frozen) are structurally incapable of any
+OIDC or model call, proven by `sentinel/phase5/preflight.py`'s step
+order and exercised by `tests/test_phase5_orchestrator.py`.
 Phase 6 is NOT STARTED.** See the Plan field below.
 **Status:** in development toward production-ready (program opened by
 owner ruling 2026-08-03); claim levels per the CLAUDE.md ladder as
@@ -360,11 +371,13 @@ step — per ADR-0010 §8 a technical-gate PASS alone never closed the
 phase; closure became true only when it was recorded. **Phases 0-4 are
 CLOSED. Phase 5 is IN PROGRESS as of 2026-08-23 under
 `adr/0011-phase5-unattended-operation-contract.md`. The contract is
-adopted; implementation, Actions rehearsal, WIF probe, official Sonnet
-gate, Windows scheduler cutover, prospective five-slot live window,
-evidence finalization and release are still pending. Phase 6 is NOT
-STARTED. The overall production-readiness program remains OPEN, and no
-production or production-ready claim is permitted.**
+adopted; P5-B (implementation) is COMPLETE across all three parts.
+Actions rehearsal, WIF probe, official Sonnet gate, Windows scheduler
+cutover, prospective five-slot live window, evidence finalization and
+release remain P5-C through P5-H and are still pending; P5-C is
+NEXT. Phase 6 is NOT STARTED. The overall production-readiness program
+remains OPEN, and no production or production-ready claim is
+permitted.**
 Activating the
 standing scheduled task in agent mode remains a separate, later
 decision either way — SentinelDailyRun stays stub-mode, unedited.
@@ -2880,3 +2893,145 @@ merges every change."
   production-readiness program remains OPEN and the production-ready
   claim remains NOT PERMITTED. Next action: Part 3/3 as its own child
   dispatch.
+- 2026-08-24 - P5-B PART 3/3 (ACTIONS WORKFLOW TOPOLOGY, STATE-CHAIN
+  ORCHESTRATION AND GATE/PROBE/FREEZE PLUMBING) LANDED, closing P5-B
+  in full (planning chain `q77-p5b-part3-plan-a` through revision
+  `q77-p5b-part3-plan-c`, reviewed and revised twice before execution
+  was authorized). This part connects the pure Part-2 domain core to
+  real GitHub Actions execution without ever running it. New pure
+  adapter modules under `sentinel/phase5/`: `github_context.py`
+  (env-mapping parsing of the GitHub Actions execution context, plus
+  an independent `assert_expected_source` check that never trusts
+  `GITHUB_SHA` alone); `artifact_names.py` (deterministic Actions
+  artifact naming on the already-frozen `window_id = "p5w-" +
+  control_run_id` rule, with parse/prefix helpers for every lineage
+  and evidence kind); `github_evidence.py` (the package's one
+  network-touching module: a stdlib-only, `urllib.request`+`zipfile`
+  GitHub REST/artifact client with paginated discovery that fails
+  closed on overflow, and safe zip extraction that rejects absolute
+  paths, `..` traversal, symlink entries and oversized archives before
+  any byte is trusted); `preflight.py` (the frozen `S01`..`S18`
+  scheduled step order and the shorter model-free rehearsal order, as
+  a runtime-enforced ledger: an out-of-order step raises, and the
+  provider path is unreachable until every step through `S11` has
+  recorded `OK`); `evidence_records.py` (non-lineage, `if: always()`
+  evidence artifacts for every workflow, including closed disposition
+  vocabularies: `ProbeEvidenceRecord`'s `CAPABILITY_PASS` and
+  `GateEvidenceRecord`'s `GREEN`/`HONEST_FAIL` are schema-
+  unconstructible without real accounting evidence, so a WIF/OIDC/FX/
+  setup failure can only ever be recorded as `CAPABILITY_FAIL` or
+  `INFRASTRUCTURE_FAILURE`); and `orchestrator.py` (composes all of
+  the above plus the Part-2 domain core behind an injected
+  `ScheduledPorts` bundle, importing no `agents.*` module and no
+  `claude_agent_sdk` itself). `qualification.py` gained two narrow
+  public helpers, `derive_pre_successor_outcome` and
+  `derive_timing_outcome`, extracted verbatim from the landed
+  `_compute_outcome` branch order, not a re-decision: `classify_run`
+  calls them in the exact same semantic order as before, so timing is
+  still reached only after the full successor-chain validation, proven
+  by a dedicated precedence-regression test (a 121-minute-late run
+  with a broken chain classifies `STATE_CHAIN_FAILURE`, never
+  `LATE_NONQUALIFYING`). `agents/checker/oidc.py` is new: GitHub OIDC
+  request-credential capture that removes both `ACTIONS_ID_TOKEN_
+  REQUEST_URL`/`_TOKEN` from the process environment in the same call
+  that reads them (so no later-spawned Agent-SDK child can ever
+  inherit them), atomic symlink-safe identity-token-file installs, and
+  a parent-only `TokenFileRefresher` that re-fetches a fresh JWT on a
+  180-second interval, safely under GitHub's ~5-minute JWT lifetime,
+  using only the request credentials captured at acquisition, with a
+  refresh fault blocking any NEW model invocation while letting one
+  already in flight terminate honestly. Six new `scripts/run_phase5_
+  *.py` entry points (plus a shared `scripts/_phase5_common.py` and
+  the P5-C/P5-D CostRow committed-ledger handoff tool `scripts/
+  record_phase5_cost_evidence.py`) are thin control surfaces over this
+  machinery, each popping `GITHUB_TOKEN` at startup before any
+  provider-capable object is constructed. Five new workflow files:
+  `.github/workflows/sentinel-schedule.yml` (`schedule: "37 6 * * *"`,
+  `contents: read` / `actions: read` / `id-token: write`, concurrency
+  group `sentinel-schedule`, 20-minute timeout, matching Q-77 owner
+  ruling 4, 2026-08-23), `sentinel-rehearsal.yml` (model-free, no
+  `id-token` permission at all), `sentinel-wif-probe.yml` and
+  `sentinel-official-gate.yml` (each uploading an immutable one-shot
+  marker between a preflight step and an execute step, so every
+  retryable check, including, for the gate, frozen fixture/eval
+  presence and fresh evidence-directory checks, runs before the
+  marker exists and any OIDC/provider activity happens only after),
+  and `sentinel-window-control.yml` (model-free; requires all seven
+  Windows-migration-evidence inputs, refuses a second freeze against
+  an intact active window, and mechanically verifies exactly one
+  `CAPABILITY_PASS` P5-C marker+evidence pair and one `GREEN`/
+  `HONEST_FAIL` P5-D marker+evidence pair, with every carried CostRow
+  present exactly once, byte-equivalently, in the committed ledger,
+  before computing EUR40 five-slot freeze headroom or constructing a
+  GENESIS bundle). Each of the three provider-capable lanes reads its
+  own distinct GitHub repository variable
+  (`SENTINEL_SCHEDULE_FEDERATION_RULE_ID`,
+  `SENTINEL_P5C_FEDERATION_RULE_ID`,
+  `SENTINEL_P5D_FEDERATION_RULE_ID`) into the one Anthropic-required
+  runtime name `ANTHROPIC_FEDERATION_RULE_ID`; no value is committed,
+  and Part 3 mutates no GitHub variable, no Anthropic Console state,
+  and no secret. `ADR-0011 §7`'s pinned gate-runner path,
+  `scripts/run_phase5_official_gate.py`, reuses `scripts/run_phase3_
+  dev_gate.py`'s scoring, eval-config-load and execution-validity
+  machinery by import over the SAME frozen `fixtures/`+`evals/`
+  contract, with model `claude-sonnet-5`, WIF auth, and one shared
+  5,000,000/1,000,000 micro-EUR coordinator for the whole gate session
+  in place of the dev gate's two independent 750,000/150,000
+  breakers; its cost literals are independently restated and cross-
+  pinned against `SONNET_OFFICIAL_GATE`, matching the dev gate's own
+  anti-tautology precedent. `tests/test_execution_profile.py`'s
+  `SONNET_OFFICIAL_GATE`-reference guard is amended to allowlist
+  exactly this one ADR-pinned file; no other production module may
+  reference the profile. New tests:
+  `tests/test_phase5_preflight.py`, `tests/test_phase5_orchestrator.py`,
+  `tests/test_phase5_artifact_names.py`,
+  `tests/test_phase5_github_evidence.py`,
+  `tests/test_phase5_workflow_contracts.py` (static PyYAML contract
+  checks over all five workflow files, no new dependency: `PyYAML` is
+  already pinned in `requirements-dev.txt`),
+  `tests/test_phase5_gate_runner.py`, `tests/test_phase5_probe_runner.py`,
+  `tests/test_phase5_window_freeze.py` (including a full `main()`
+  integration test that builds and `validate_bundle`-checks a real
+  synthetic GENESIS), `tests/test_phase5_oidc.py`; amendments to
+  `tests/test_phase5_qualification.py` (helper-equivalence and the
+  precedence-regression test above) and `tests/test_execution_profile.py`.
+  Two real correctness bugs surfaced and were fixed during this
+  session's own test-writing, before any push: two GENESIS-construction
+  call sites (`orchestrator.py`'s rehearsal path and
+  `run_phase5_window_freeze.py`) were missing the required
+  `no_run_outcome` manifest field; and both S06/S15 control-state
+  construction used two separate sub-second-precision clock reads
+  where `Phase5ControlState.last_evaluated_at_utc` is truncated to
+  whole seconds on canonical serialization, which could disagree with
+  `validate_bundle`'s own independent recompute; both call sites now
+  capture one whole-second `now` and reuse it for both the spend sum
+  and the persisted timestamp. No other production path touched:
+  `sentinel/cli.py`, `sentinel/pipeline.py`, `sentinel/config.py`,
+  `sentinel/costs.py`, `sentinel/ledger.py`,
+  `sentinel/phase5/{models,bundle,cadence,oneshot}.py`, `contracts/`,
+  `telemetry/` code, `fixtures/`, `evals/`, `checks/`, `runner/`,
+  `agents/checker/{auth,budget,config,fx,harness}.py`,
+  `scripts/Sentinel-Schedule.ps1`, every ADR, and `ci.yml` remain
+  unmodified; no ledger-schema change and no Phase-5 SQL table were
+  added. **Verification:** `python -m pip check` clean, full suite
+  **1437 passed, 8 skipped** (platform-gated symlink cases on this
+  Windows environment), **91.2% overall coverage** (every new/modified
+  `sentinel/phase5/` module and `agents/checker/oidc.py` individually
+  in the 73-100% range, `qualification.py` 100%,
+  `artifact_names.py` 100%), Tier 0 artifact validator PASS, Phase-1
+  freeze guard PASS. **P5-B is now COMPLETE: Parts 1/3, 2/3 and 3/3
+  all landed. Phase 5 remains IN PROGRESS. P5-C is NOT STARTED and is
+  next.** No Sentinel model/provider call, no Anthropic token-count
+  call, no workflow dispatch, no P5-C probe execution, no official
+  Sonnet gate execution, no Windows scheduler operation, no real
+  qualification-window freeze, no qualifying scheduled run, no v0.7
+  tag occurred in this session. Windows `SentinelDailyRun` remains
+  unchanged and stub-mode. No qualification window is frozen; no
+  GENESIS, slot-successor or control-refusal bundle exists for a real
+  window. No GitHub variable, secret, environment or Anthropic Console
+  mutation occurred. `scripts/record_phase5_cost_evidence.py` was not
+  invoked against the committed ledger. Q-83 untouched. No unrelated
+  scope was touched. The overall production-readiness program remains
+  OPEN and the production-ready claim remains NOT PERMITTED. Next
+  action: P5-C (exact-SHA CI plus the NON-QUALIFYING Actions rehearsal
+  and the one capped WIF capability probe) as its own child dispatch.

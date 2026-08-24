@@ -253,21 +253,29 @@ def test_ordinary_judge_call_records_unchanged_model_and_auth_mode_on_the_ledger
 
 
 def test_sonnet_profile_is_referenced_only_by_its_own_definition_and_tests():
-    """SONNET_OFFICIAL_GATE is configuration/capability data only in
-    this dispatch (q77-p5b-foundation-a): no production module other
-    than config.py's own definition references the name, so nothing
-    in ``sentinel/``, ``agents/checker/harness.py``, or ``scripts/``
-    can accidentally construct a live run from it yet."""
+    """SONNET_OFFICIAL_GATE was configuration/capability data only
+    through dispatch q77-p5b-foundation-a: no production module other
+    than config.py's own definition referenced the name. P5-B Part 3/3
+    (ADR-0011 §7's dedicated gate runner) is that later dispatch —
+    exactly one additional production file, the ADR-pinned
+    ``scripts/run_phase5_official_gate.py``, is now allowed to
+    construct a run from it. Every other production module still may
+    not."""
     production_dirs = ["sentinel", "agents", "scripts", "runner", "checks", "contracts"]
+    allowed_extra = REPO_ROOT / "scripts" / "run_phase5_official_gate.py"
     hits = []
     for d in production_dirs:
         for path in (REPO_ROOT / d).rglob("*.py"):
             if path == REPO_ROOT / "agents" / "checker" / "config.py":
                 continue  # the definition itself
+            if path == allowed_extra:
+                continue  # ADR-0011 §7's pinned dedicated gate runner
             text = path.read_text(encoding="utf-8")
             if "SONNET_OFFICIAL_GATE" in text:
                 hits.append(str(path.relative_to(REPO_ROOT)))
     assert hits == []
+    assert allowed_extra.exists()
+    assert "SONNET_OFFICIAL_GATE" in allowed_extra.read_text(encoding="utf-8")
 
 
 def test_module_makes_no_network_or_provider_call():

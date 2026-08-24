@@ -7,12 +7,13 @@ production-ready. No production claim is made in this document. -->
 ## 1. Scope and status
 
 This policy governs data handling for the Phase 2 deterministic
-control plane plus the Phase-3 caged checker agent (§13). Operator-only,
+control plane, the Phase-3 caged checker agent (§13), and the
+Phase-5 GitHub Actions artifact-chain transport (§15). Operator-only,
 n=1: there is no service, no third party, and no data subject other
 than the operator. The agent's own credential relationship (the
-operator's Claude subscription auth) is covered in `THREAT_MODEL.md`
-§7 — it is unrelated to, and never mixed with, any monitored
-repository's data.
+operator's Claude subscription auth, and the Phase-5 WIF federation
+path) is covered in `THREAT_MODEL.md` §7; it is unrelated to, and
+never mixed with, any monitored repository's data.
 
 ## 2. Data classes at a glance
 
@@ -131,6 +132,7 @@ unaffected because it lives in git.
 | `var/logs/*.jsonl` | runtime-local, gitignored | never committed |
 | `scripts/sentinel.local.json` | runtime-local, gitignored | may contain a machine-local python path — never tracked |
 | `fixtures/`, `evals/` | committed, **frozen** | Phase-1 boundary; guarded by `scripts/check_phase1_frozen.py` |
+| Actions artifact bundles (GENESIS/slot/refusal/evidence, §15) | GitHub Actions artifact storage, not git | never committed to this repository; retained 90 days (platform maximum for a public repo) |
 
 ## 12. Current limitations (dated, honest)
 
@@ -238,6 +240,60 @@ a failure on either leg rolls both back and the call stays visibly
 and is unchanged: the `RESERVED` row survives, reconciliation charges
 its reservation conservatively, and the in-memory buffer may simply be
 lost. **No crash-proof per-tool telemetry is claimed.**
+
+## 15. P5-B addition: GitHub Actions artifact-chain transport
+
+This section documents the capability landed in P5-B Part 3/3
+(`sentinel/phase5/`, ADR-0011 §4). It states what the implementation
+does; it does not claim the chain has ever carried a real qualifying
+lineage: no real qualification window exists yet (P5-E), and no
+workflow has ever been dispatched.
+
+**What travels in the chain.** Every Actions-era state bundle (a
+GENESIS, a slot successor, or a control refusal) carries exactly the
+same four authoritative files already governed elsewhere in this
+policy: `state/ledger.sqlite3` (a full-fidelity SQLite snapshot taken
+via the stdlib backup API, never a raw file copy), `state/FINDINGS.md`,
+`state/cost_ledger.jsonl`, and `state/phase5_state.json` (the durable
+`Phase5ControlState`), plus three small metadata files: the frozen
+`QualificationWindowRecord`, a discriminated manifest, and a SHA-256
+sidecar. One-shot markers (`OneShotMarker`) and non-lineage evidence
+records travel as separate, smaller artifacts.
+
+**Storage boundary: never git.** The raw operational SQLite database
+travels *inside* Actions artifacts and is **never** committed to this
+public repository, exactly as §11's never-commit rule for
+`var/sentinel.sqlite3` already requires for the local database. GitHub's
+Actions artifact store is not authoritative Git history; it is a
+platform-managed, time-bounded transport layer, and this repository's
+own `.gitignore` (unanchored `*.sqlite3`) is a second fence against any
+local rehearsal residue.
+
+**Retention.** 90 days per artifact, the maximum GitHub permits for a
+public repository (the default; no shorter value is configured). An
+artifact chain older than that window is not recoverable from GitHub
+and is not relied upon as long-term history; public closure evidence
+(later phases) may cite artifact names, numeric artifact IDs and
+manifest SHA-256 hashes as pointers, never claim the artifacts
+themselves are permanent.
+
+**Integrity before trust.** A downloaded artifact is untrusted bytes
+until `sentinel/phase5/bundle.py::validate_bundle` succeeds against it:
+exact file-tree match, per-file SHA-256 digest, manifest/window/
+control-state binding, and a `PRAGMA integrity_check` on the carried
+SQLite snapshot. Zip extraction (`sentinel/phase5/github_evidence.py`)
+independently rejects absolute paths, `..` traversal, symlink entries,
+and archives exceeding bounded entry-count/size caps before any file
+is written to disk. Predecessor selection is by cryptographic hash and
+artifact identity together, never by name, timestamp or cache
+freshness; GitHub's Actions cache is never treated as authoritative
+state anywhere in this design.
+
+**No new secret surface.** The artifact chain carries no credential,
+token, or Anthropic Console identifier of any kind, only the same
+classes of ledger/report/cost data this policy already governs
+locally, now also transiting a GitHub-managed store between scheduled
+runs.
 
 Empty (zero rows) for every stub-mode run, including the standing
 scheduled task's runs.

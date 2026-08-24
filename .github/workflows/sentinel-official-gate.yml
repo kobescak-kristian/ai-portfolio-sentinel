@@ -1,0 +1,82 @@
+name: sentinel-official-gate
+
+# P5-D official Sonnet gate plumbing (P5-B Part 3/3). ADR-0011 Section
+# 7 pins the runner path scripts/run_phase5_official_gate.py.
+# Implemented here; NEVER executed by Part 3. Every retryable
+# preflight (expected-source, frozen fixture/eval presence, fresh
+# evidence dirs, one-shot discovery, WIF config, FX + coordinator
+# construction) runs and must pass BEFORE the immutable one-shot
+# marker is uploaded.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: "Exact 40-lowercase-hex commit SHA this gate is running against"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: sentinel-oneshot-p5d
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.SENTINEL_P5D_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/anthropic_identity_token
+      WORK_ROOT: ${{ runner.temp }}/p5-gate
+      GATE_ROOT: ${{ runner.temp }}/p5-gate/gate-root
+      ARTIFACTS_DIR: ${{ runner.temp }}/p5-gate/artifacts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - name: preflight
+        id: preflight
+        run: >
+          python scripts/run_phase5_official_gate.py preflight
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --gate-root "$GATE_ROOT"
+          --artifacts-dir "$ARTIFACTS_DIR"
+          --work-root "$WORK_ROOT"
+          --marker-out "$WORK_ROOT/marker.json"
+          --fx-state-path "$WORK_ROOT/fx-state.json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: upload one-shot marker
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: sentinel-p5-oneshot-p5d-official-sonnet-gate-r${{ github.run_id }}
+          path: ${{ env.WORK_ROOT }}/marker.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: execute
+        id: execute
+        run: >
+          python scripts/run_phase5_official_gate.py execute
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --gate-root "$GATE_ROOT"
+          --artifacts-dir "$ARTIFACTS_DIR"
+          --fx-state-path "$WORK_ROOT/fx-state.json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: sentinel-p5-gate-evidence-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ env.ARTIFACTS_DIR }}
+          retention-days: 90
+          if-no-files-found: error

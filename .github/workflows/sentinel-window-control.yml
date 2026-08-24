@@ -1,0 +1,87 @@
+name: sentinel-window-control
+
+# Window-control / GENESIS-freeze plumbing (P5-B Part 3/3). Implements
+# the real P5-E freeze; Part 3 never executes it and no real
+# qualification window is frozen by landing this file. Model-free: no
+# id-token permission exists on this lane.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: "Exact 40-lowercase-hex commit SHA this freeze is running against"
+        required: true
+      first_slot_date:
+        description: "YYYY-MM-DD (UTC) -- slot 1 opens at 06:37 UTC that day"
+        required: true
+      windows_task_name:
+        description: "Must be exactly SentinelDailyRun"
+        required: true
+      disabled_at_utc:
+        description: "UTC ISO-8601 timestamp the Windows scheduler was disabled"
+        required: true
+      final_legacy_db_sha256:
+        description: "SHA-256 (64 lowercase hex) of the final legacy Windows database"
+        required: true
+      legacy_row_counts:
+        description: "JSON object with the seven legacy ledger table row counts"
+        required: true
+      dual_scheduler_verification_at_utc:
+        description: "UTC ISO-8601 timestamp dual-scheduler non-overlap was verified"
+        required: true
+      supersedes_window_id:
+        description: "Optional: window_id of the unique consumed/failed window this freeze supersedes"
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: sentinel-window-control
+  cancel-in-progress: false
+
+jobs:
+  freeze:
+    if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WORK_ROOT: ${{ runner.temp }}/p5-freeze
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - name: freeze
+        id: freeze
+        run: >
+          python scripts/run_phase5_window_freeze.py
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --first-slot-date "${{ inputs.first_slot_date }}"
+          --windows-task-name "${{ inputs.windows_task_name }}"
+          --disabled-at-utc "${{ inputs.disabled_at_utc }}"
+          --final-legacy-db-sha256 "${{ inputs.final_legacy_db_sha256 }}"
+          --legacy-row-counts '${{ inputs.legacy_row_counts }}'
+          --dual-scheduler-verification-at-utc "${{ inputs.dual_scheduler_verification_at_utc }}"
+          ${{ inputs.supersedes_window_id != '' && format('--supersedes {0}', inputs.supersedes_window_id) || '' }}
+          --work-root "$WORK_ROOT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: upload genesis bundle
+        if: success()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: sentinel-p5-genesis-p5w-${{ github.run_id }}-r${{ github.run_id }}
+          path: ${{ env.WORK_ROOT }}/genesis-out
+          retention-days: 90
+          if-no-files-found: error
+      - name: upload freeze-refusal evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: sentinel-p5-freeze-refusal-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ env.WORK_ROOT }}/freeze_refusal.json
+          retention-days: 90
+          if-no-files-found: ignore

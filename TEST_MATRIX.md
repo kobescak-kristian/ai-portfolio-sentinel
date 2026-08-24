@@ -271,9 +271,10 @@ Gate-mechanism controls — the judge held to its own standard:
 
 ## 13. Residual — what is NOT tested, and what these results do not prove
 
-- **GitHub Actions scheduling belongs to Phase 5.** No scheduler
-  migration has happened. The standing scheduled task remains
-  stub-mode and unedited.
+- **GitHub Actions scheduling topology exists and is contract-tested
+  model-free (P5-B); it has never fired a live run.** The scheduler
+  migration itself (Windows cutover) has not happened. The standing
+  scheduled task remains stub-mode and unedited.
 - **Five consecutive Actions-scheduled live runs have not occurred.**
   There is no Actions-scheduled operating history to measure.
 - **The official Sonnet gate belongs to Phase 5.** It has not run.

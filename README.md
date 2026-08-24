@@ -54,7 +54,8 @@ stub mode.
 
 ```mermaid
 flowchart TD
-  SCH["Windows Task Scheduler<br/>daily · current user · no stored secret"]
+  SCH["Windows Task Scheduler<br/>daily · current user · no stored secret<br/>the ONLY scheduler that has ever fired a run"]
+  GHA["GitHub Actions sentinel-schedule.yml<br/>cron 37 6 * * * UTC · WIF, no stored secret<br/>implemented + model-free tested, never dispatched, never authenticated"]
   MON["Monitored surfaces<br/>own public repos — READ-ONLY, no credentials held"]
   INV["1 · Inventory (deterministic)<br/>public repos derived live via GitHub API<br/>no hand-maintained list"]
   TSK["2 · CheckTasks<br/>one per surface × check class<br/>PENDING → IN_PROGRESS → DONE / FAILED / DEAD_LETTER"]
@@ -68,6 +69,7 @@ flowchart TD
   OPR(["Operator — decides on every proposal"])
 
   SCH -->|"python -m sentinel run --run-kind live"| INV
+  GHA -.->|"not yet operating"| INV
   MON -.->|"public read only"| INV
   INV --> TSK
   TSK --> DET
@@ -84,10 +86,15 @@ flowchart TD
 **Runtime surface (decided at Phase 2, BLUEPRINT §11(a)).** Core
 pipeline: Python 3.12 with pinned dependencies. Tested platform:
 `ubuntu-latest` + Python 3.12 — the single declared CI leg, run on
-every push. Scheduling host: the operator's current Windows
-environment via Task Scheduler; the PowerShell scheduling tooling is
-Windows-only and is not covered by the CI leg. No other platform is
-claimed or tested.
+every push. Operating scheduling host: the operator's current Windows
+environment via Task Scheduler, still the only host that has ever
+actually fired a scheduled run; the PowerShell scheduling tooling is
+Windows-only and is not covered by the CI leg. A GitHub Actions
+scheduled workflow (`.github/workflows/sentinel-schedule.yml`, cron
+`37 6 * * *` UTC) exists as implemented, model-free-tested capability
+on `ubuntu-latest`; it has never fired against a real qualification
+window and has never authenticated. No other platform is claimed or
+tested.
 
 Data shapes, ledger schema, hashing and lifecycle rules:
 [DATA_CONTRACT.md](DATA_CONTRACT.md). What is stored, for how long, and
@@ -169,8 +176,10 @@ repositories. The two are labeled everywhere and neither borrows the
 other's credibility. Status: in development toward production-ready. No
 production claim is made — the production-readiness program is still
 open. **Phase 4 is CLOSED. Phase 5 is IN PROGRESS as of 2026-08-23
-under the adopted unattended-operation contract; implementation and
-operational qualification have not started, and the lane's governing
+under the adopted unattended-operation contract; the model-free
+implementation (Actions workflow topology, state-chain orchestration,
+WIF plumbing) has landed, but no workflow has ever been dispatched and
+operational qualification has not started, and the lane's governing
 work item remains open.** No production-ready claim is permitted while
 the program is open, and closing Phase 4 does not make one true.
 `SentinelDailyRun` remains stub-mode, and the bounded loop's own entry

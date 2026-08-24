@@ -164,7 +164,9 @@ and it is why Phase 5 exists.
 
 This section names future requirements; it does not claim them.
 
-- Migrate scheduling from the local task scheduler to GitHub Actions.
+- The GitHub Actions scheduling topology is implemented and
+  model-free-tested (P5-B); the local task scheduler has not yet been
+  cut over and the Actions lane has never authenticated or fired.
 - Establish an Actions-scheduled operating history — five consecutive
   scheduled live runs within caps, zero lost runs.
 - Finalize this monitoring document from that measured history.

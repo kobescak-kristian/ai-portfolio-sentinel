@@ -683,6 +683,99 @@ def test_only_independent_review_emits_missing_lost():
     assert "MISSING_LOST" not in get_args(m.ExecutionTimeQualificationOutcome)
 
 
+# ---------------------------------------------------------------------------
+# P5-B Part 3/3 (revision c, seam 2): derive_pre_successor_outcome and
+# derive_timing_outcome equivalence + precedence regression.
+# ---------------------------------------------------------------------------
+
+
+def test_derive_pre_successor_outcome_matches_classify_run_for_every_early_branch():
+    window = make_window()
+    genesis = make_genesis(window)
+    genesis_state = make_control_state(window, slot_index=0)
+    chain = q.QualificationChainContext(genesis_identity="genesis-1", genesis=genesis, genesis_state=genesis_state)
+
+    cases = [
+        (dict(window_already_consumed=True), [], [], "STATE_CHAIN_FAILURE"),
+        (dict(event="workflow_dispatch"), [], [], "WRONG_PROVENANCE_NONQUALIFYING"),
+        (dict(ref="refs/heads/other"), [], [], "WRONG_PROVENANCE_NONQUALIFYING"),
+        (dict(run_attempt=2), [], [], "DUPLICATE_NONQUALIFYING"),
+    ]
+    for run_overrides, evidence, cost_rows, expected in cases:
+        window_already_consumed = run_overrides.pop("window_already_consumed", False)
+        github_run = make_github_run(window, 1, **run_overrides)
+        early = q.derive_pre_successor_outcome(
+            window, 1, github_run, evidence, cost_rows, window_already_consumed=window_already_consumed
+        )
+        assert early == (expected, early[1])
+        result = q.classify_run(
+            window, 1, github_run, evidence, cost_rows, None, chain,
+            window_already_consumed=window_already_consumed, now=slot_ts(1),
+        )
+        assert result.outcome == expected
+
+
+def test_derive_pre_successor_outcome_returns_none_when_successor_required():
+    ctx = _happy_path(delay=timedelta(minutes=5))
+    early = q.derive_pre_successor_outcome(
+        ctx["window"], 1, ctx["github_run"], [ctx["evidence"]], [ctx["cost_row"]], window_already_consumed=False
+    )
+    assert early is None
+
+
+def test_derive_timing_outcome_matches_classify_run_on_a_valid_chain():
+    for delay, expected in ((timedelta(minutes=0), "QUALIFYING"), (timedelta(minutes=120), "QUALIFYING"),
+                             (timedelta(minutes=-5), "WRONG_PROVENANCE_NONQUALIFYING")):
+        ctx = _happy_path(delay=delay)
+        outcome, _reason, _delay_minutes = q.derive_timing_outcome(ctx["window"], 1, ctx["github_run"])
+        assert outcome == expected
+
+
+def test_helper_and_final_classifier_never_disagree_on_a_valid_chain():
+    for delay in (timedelta(minutes=0), timedelta(minutes=60), timedelta(minutes=120)):
+        ctx = _happy_path(delay=delay)
+        result = q.classify_run(
+            ctx["window"], 1, ctx["github_run"], [ctx["evidence"]], [ctx["cost_row"]], ctx["successor"], ctx["chain"],
+            window_already_consumed=False, now=ctx["github_run"].created_at,
+        )
+        outcome, _reason, _delay = q.derive_timing_outcome(ctx["window"], 1, ctx["github_run"])
+        assert result.outcome == outcome
+
+
+def test_precedence_regression_121_minute_run_with_broken_chain_is_state_chain_failure_not_late():
+    """Required regression (revision c, seam 2): timing must NEVER be
+    evaluated ahead of successor-chain validation. A 121-minute-late
+    run whose successor/predecessor chain is broken must classify
+    STATE_CHAIN_FAILURE, not LATE_NONQUALIFYING — proving
+    derive_timing_outcome is unreachable until the chain validates."""
+    ctx = _happy_path(delay=timedelta(minutes=121))
+    successor = ctx["successor"]
+    # Break the chain: claim a predecessor hash that does not match the
+    # real genesis, AND make the manifest's own claim agree with the
+    # truthfully-computed STATE_CHAIN_FAILURE outcome (so this test
+    # isolates precedence, not the separate InconsistentEvidence check).
+    broken_manifest = successor.manifest.model_copy(
+        update={
+            "predecessor_manifest_sha256": "f" * 64,
+            "qualification_outcome": "STATE_CHAIN_FAILURE",
+        }
+    )
+    broken_state = make_control_state(
+        ctx["window"], slot_index=1, window_consumed=True,
+        window_consume_reason="STATE_CHAIN_FAILURE", spend=100, evaluated_at=slot_ts(1),
+    )
+    broken_successor = b.SlotSuccessorCandidate(
+        artifact_identity=successor.artifact_identity, manifest=broken_manifest,
+        control_state=broken_state, cost_rows=successor.cost_rows,
+    )
+    result = q.classify_run(
+        ctx["window"], 1, ctx["github_run"], [ctx["evidence"]], [ctx["cost_row"]], broken_successor, ctx["chain"],
+        window_already_consumed=False, now=ctx["github_run"].created_at,
+    )
+    assert result.outcome == "STATE_CHAIN_FAILURE"
+    assert result.delay_minutes is None  # never reached derive_timing_outcome, so no delay was stamped
+
+
 def test_run_started_at_does_not_affect_classification():
     ctx = _happy_path(delay=timedelta(minutes=5))
     divergent_run = q.GithubRunMetadata(**{**ctx["github_run"].__dict__, "run_started_at": slot_ts(1) - timedelta(hours=10)})

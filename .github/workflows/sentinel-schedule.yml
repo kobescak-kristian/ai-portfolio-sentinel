@@ -1,0 +1,58 @@
+name: sentinel-schedule
+
+# ADR-0011 Section 2; Q-77 owner ruling 4 (2026-08-23) is the dated
+# ruling authorizing this cron. Scheduled workflows run only on the
+# default branch (GitHub-documented behavior) -- GITHUB_SHA/GITHUB_REF
+# are always the last commit on main.
+on:
+  schedule:
+    - cron: "37 6 * * *"
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: sentinel-schedule
+  cancel-in-progress: false
+
+jobs:
+  scheduled:
+    if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.SENTINEL_SCHEDULE_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/anthropic_identity_token
+      PHASE5_WORK_ROOT: ${{ runner.temp }}/p5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - name: orchestrate
+        id: orchestrate
+        run: python scripts/run_phase5_scheduled.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: upload attempt evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ steps.orchestrate.outputs.evidence_name }}
+          path: ${{ steps.orchestrate.outputs.evidence_path }}
+          retention-days: 90
+          if-no-files-found: error
+      - name: upload successor or refusal bundle
+        if: steps.orchestrate.outputs.bundle_name != ''
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ steps.orchestrate.outputs.bundle_name }}
+          path: ${{ steps.orchestrate.outputs.bundle_path }}
+          retention-days: 90
+          if-no-files-found: error

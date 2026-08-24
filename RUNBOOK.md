@@ -32,7 +32,12 @@ production, service or availability claim is made in this document. -->
 - **The standing scheduled task is unchanged and stub-mode.** Its
   resolved command carries no judgment-mode flag, so it stays in stub
   mode by construction.
-- **GitHub Actions scheduling is Phase 5** and has not happened.
+- **GitHub Actions scheduling topology is implemented (P5-B, part of
+  Phase 5) but has never operated.** Five workflow files exist under
+  `.github/workflows/` (`sentinel-schedule.yml` and four manual/
+  model-free lanes), contract-tested model-free; none has ever been
+  dispatched, and the scheduled lane has never authenticated or made a
+  model call.
 
 ## B. Pre-run checks
 
@@ -242,14 +247,19 @@ have is worse than no runbook:
   stub mode only; agent mode is refused fail-closed.
 - **The standing scheduled task is stub-mode** and unedited. It invokes
   a single run, not a bounded loop.
-- **No GitHub Actions scheduler migration has happened.** It is Phase 5.
+- **The GitHub Actions scheduler migration is implemented but has not
+  operated.** The five workflow files exist and are contract-tested
+  model-free; none has been dispatched, the Windows scheduler has not
+  been cut over, and no Actions-scheduled run has occurred, qualifying
+  or otherwise.
 - **No five consecutive Actions-scheduled live runs exist.** There is no
   scheduled operating history to diagnose against.
 - **No final `MONITORING.md`, no final `RUNBOOK.md`, no `SLO.md`.**
   This document and `MONITORING.md` are Phase-4 drafts.
-- **No deploy/rollback procedure is documented**, because there is no
-  deployment surface yet to deploy to or roll back from. Phase 5 owns
-  it.
+- **A deploy/rollback procedure is not yet documented from real
+  operation.** The five workflow files are now the deployment surface,
+  but no deploy or rollback has actually been exercised against it;
+  that evidence-backed procedure remains owed to the final `RUNBOOK.md`.
 - **No production or production-ready claim** is made or implied. The
   status language is unchanged: in development toward production-ready.
 

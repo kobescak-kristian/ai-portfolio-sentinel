@@ -198,6 +198,79 @@ def _finalize_against_manifest(successor: SlotSuccessorCandidate | None, compute
 # ---------------------------------------------------------------------------
 
 
+def derive_pre_successor_outcome(
+    window: QualificationWindowRecord,
+    slot_n: int,
+    github_run: GithubRunMetadata,
+    sentinel_run_evidence: Sequence[SentinelRunEvidence],
+    cost_rows: Sequence[CostRow],
+    *,
+    window_already_consumed: bool,
+) -> "tuple[str, str] | None":
+    """P5-B Part 3/3 adapter seam (revision c, seam 2): owns ONLY the
+    already-landed early branch order — consumed-window, event,
+    workflow/ref/source, run_attempt, Sentinel evidence count,
+    terminality, source, judgment mode, and runtime CostRow count.
+    Extracted from ``_compute_outcome`` verbatim, not duplicated: this
+    is the single source for that branch order, and it is never given
+    a successor bundle to read.
+
+    Returns a concrete ``(outcome, reason)`` pair when one of those
+    branches is final; returns ``None`` when a valid successor bundle
+    is required to continue classification — the caller must then
+    validate the successor chain BEFORE ever reaching timing, exactly
+    as before this extraction."""
+    if window_already_consumed:
+        return "STATE_CHAIN_FAILURE", "window already consumed"
+    if github_run.event != "schedule":
+        return "WRONG_PROVENANCE_NONQUALIFYING", "wrong event"
+    if (
+        github_run.workflow_identity != window.scheduled_workflow_identity
+        or github_run.ref != window.ref
+        or github_run.source_sha != window.source_sha
+    ):
+        return "WRONG_PROVENANCE_NONQUALIFYING", "wrong workflow/ref/sha"
+    if github_run.run_attempt != 1:
+        return "DUPLICATE_NONQUALIFYING", "run_attempt > 1"
+
+    matching = [e for e in sentinel_run_evidence if e.github_run_id == github_run.github_run_id]
+    if len(matching) != 1:
+        return "FAILED_NONTERMINAL", f"{len(matching)} evidence candidates for this run"
+    evidence = matching[0]
+    if evidence.status != "COMPLETED":
+        return "FAILED_NONTERMINAL", "non-terminal Sentinel run"
+    if evidence.source != window.qualifying_source:
+        return "WRONG_PROVENANCE_NONQUALIFYING", "not a live run"
+    if evidence.judgment_mode != window.qualifying_judgment_mode:
+        return "WRONG_PROVENANCE_NONQUALIFYING", "not agent judgment mode"
+        # a scheduled stub run never qualifies even with perfect GitHub provenance
+
+    cost_matches = [r for r in cost_rows if r.run_id == evidence.run_id]
+    if len(cost_matches) != 1:
+        return "COSTROW_INVALID", f"{len(cost_matches)} matching CostRows"
+
+    return None
+
+
+def derive_timing_outcome(
+    window: QualificationWindowRecord, slot_n: int, github_run: GithubRunMetadata
+) -> "tuple[str, str, int | None]":
+    """P5-B Part 3/3 adapter seam (revision c, seam 2): owns ONLY the
+    already-landed negative-delay / within-tolerance / outside-tolerance
+    calculation. Extracted verbatim from ``_compute_outcome`` — the
+    caller must reach this only AFTER the successor chain (predecessor
+    hash, artifact identity, control-state transition, carried CostRow
+    agreement) has already validated; this function never validates
+    that chain and never runs ahead of it."""
+    expected = next(s for s in window.expected_slots if s.slot_index == slot_n)
+    delay = minutes_between(expected.expected_at_utc, github_run.created_at)
+    if delay < 0:
+        return "WRONG_PROVENANCE_NONQUALIFYING", "observed before expected slot", None
+    if delay <= window.tolerance_minutes:
+        return "QUALIFYING", "within tolerance", delay
+    return "LATE_NONQUALIFYING", "outside tolerance", delay
+
+
 def _compute_outcome(
     window: QualificationWindowRecord,
     slot_n: int,
@@ -210,39 +283,27 @@ def _compute_outcome(
     window_already_consumed: bool,
     now: datetime,
 ) -> QualificationSlotOutcome:
-    """Deterministic. NEVER reads a supplied successor's claimed outcome."""
+    """Deterministic. NEVER reads a supplied successor's claimed outcome.
+
+    Same semantic order as before the Part-3 extraction: early branches
+    (``derive_pre_successor_outcome``) -> require/validate successor ->
+    predecessor + transition + carried CostRow validation -> timing
+    (``derive_timing_outcome``). Timing is reached only when every
+    earlier branch, including the full successor-chain validation, has
+    already passed."""
     wid = window.window_id
 
-    if window_already_consumed:
-        return _outcome("STATE_CHAIN_FAILURE", wid, slot_n, "window already consumed", now=now)
-    if github_run.event != "schedule":
-        return _outcome("WRONG_PROVENANCE_NONQUALIFYING", wid, slot_n, "wrong event", now=now)
-    if (
-        github_run.workflow_identity != window.scheduled_workflow_identity
-        or github_run.ref != window.ref
-        or github_run.source_sha != window.source_sha
-    ):
-        return _outcome("WRONG_PROVENANCE_NONQUALIFYING", wid, slot_n, "wrong workflow/ref/sha", now=now)
-    if github_run.run_attempt != 1:
-        return _outcome("DUPLICATE_NONQUALIFYING", wid, slot_n, "run_attempt > 1", now=now)
-
-    matching = [e for e in sentinel_run_evidence if e.github_run_id == github_run.github_run_id]
-    if len(matching) != 1:
-        return _outcome(
-            "FAILED_NONTERMINAL", wid, slot_n, f"{len(matching)} evidence candidates for this run", now=now
-        )
-    evidence = matching[0]
-    if evidence.status != "COMPLETED":
-        return _outcome("FAILED_NONTERMINAL", wid, slot_n, "non-terminal Sentinel run", now=now)
-    if evidence.source != window.qualifying_source:
-        return _outcome("WRONG_PROVENANCE_NONQUALIFYING", wid, slot_n, "not a live run", now=now)
-    if evidence.judgment_mode != window.qualifying_judgment_mode:
-        return _outcome("WRONG_PROVENANCE_NONQUALIFYING", wid, slot_n, "not agent judgment mode", now=now)
-        # a scheduled stub run never qualifies even with perfect GitHub provenance
-
-    cost_matches = [r for r in cost_rows if r.run_id == evidence.run_id]
-    if len(cost_matches) != 1:
-        return _outcome("COSTROW_INVALID", wid, slot_n, f"{len(cost_matches)} matching CostRows", now=now)
+    early = derive_pre_successor_outcome(
+        window,
+        slot_n,
+        github_run,
+        sentinel_run_evidence,
+        cost_rows,
+        window_already_consumed=window_already_consumed,
+    )
+    if early is not None:
+        outcome, reason = early
+        return _outcome(outcome, wid, slot_n, reason, now=now)
 
     # from here a VALID successor bundle is required for qualification
     if successor is None:
@@ -253,6 +314,9 @@ def _compute_outcome(
             "no successor bundle for an otherwise qualification-ready run",
             now=now,
         )
+
+    evidence = next(e for e in sentinel_run_evidence if e.github_run_id == github_run.github_run_id)
+    cost_matches = [r for r in cost_rows if r.run_id == evidence.run_id]
 
     try:
         validate_successor_context(
@@ -295,13 +359,11 @@ def _compute_outcome(
             "STATE_CHAIN_FAILURE", wid, slot_n, "broken predecessor/successor state chain", now=now
         )
 
-    expected = next(s for s in window.expected_slots if s.slot_index == slot_n)
-    delay = minutes_between(expected.expected_at_utc, github_run.created_at)
-    if delay < 0:
-        return _outcome("WRONG_PROVENANCE_NONQUALIFYING", wid, slot_n, "observed before expected slot", now=now)
-    if delay <= window.tolerance_minutes:
-        return _outcome("QUALIFYING", wid, slot_n, "within tolerance", now=now, delay_minutes=delay)
-    return _outcome("LATE_NONQUALIFYING", wid, slot_n, "outside tolerance", now=now, delay_minutes=delay)
+    # STATE_CHAIN_FAILURE above (an invalid successor/predecessor/transition)
+    # is never overwritten by manufacturing a timing-based outcome — timing
+    # is reached only once the successor chain has already validated clean.
+    outcome, reason, delay = derive_timing_outcome(window, slot_n, github_run)
+    return _outcome(outcome, wid, slot_n, reason, now=now, delay_minutes=delay)
 
 
 def classify_run(

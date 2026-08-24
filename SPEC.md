@@ -97,11 +97,14 @@ model-free bounded-loop technical gate recorded PASS; all 33 frozen
 predicates passed; all four mapped Phase-4 artifacts landed and passed
 their applicable artifact and publication controls; and the Phase-4
 public gate post landed. Phase 5 is IN PROGRESS as of 2026-08-23 under
-`adr/0011-phase5-unattended-operation-contract.md`. The contract is
-adopted prospectively; no Phase-5 implementation, Actions rehearsal,
-WIF probe, official Sonnet gate, scheduler cutover or qualifying
-scheduled run has occurred yet. The overall production-readiness
-program remains OPEN, and no production-ready claim is permitted.
+`adr/0011-phase5-unattended-operation-contract.md`. P5-B (the
+model-free implementation: the Actions scheduler/state-chain/
+qualification/cost-cadence machinery, the WIF plumbing, and the five
+Phase-5 workflow files) is COMPLETE across all three parts; Actions
+rehearsal, the WIF probe, the official Sonnet gate, the scheduler
+cutover and a qualifying scheduled run have still not occurred. The
+overall production-readiness program remains OPEN, and no
+production-ready claim is permitted.
 `max_regates: 1` and every historical re-gate fact above are unchanged.
 BLUEPRINT governs where this file diverges.
 
