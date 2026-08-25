@@ -203,8 +203,9 @@ def test_download_artifact_rejects_too_many_entries(tmp_path):
 
 
 # ======================================================================
-# Redirect-safe transport regression (dispatch
-# q77-p5d-premarker-artifact-redirect-repair-a).
+# Redirect-safe transport regression (dispatches
+# q77-p5d-premarker-artifact-redirect-repair-a,
+# q77-p5d-premarker-redirect-origin-tighten-a).
 #
 # This repo's autouse `block_network` fixture (tests/conftest.py)
 # structurally forbids ANY real socket.connect from a test, including
@@ -227,7 +228,9 @@ def test_stdlib_default_redirect_handler_forwards_authorization():
     run 32869033063's HTTP 401: the plain stdlib
     ``HTTPRedirectHandler.redirect_request`` -- called exactly as
     ``http_error_302`` calls it internally -- copies the original
-    request's ``Authorization`` header onto the redirected request."""
+    request's ``Authorization`` header onto the redirected request,
+    across the exact cross-origin redirect that actually occurred
+    (api.github.com -> a different storage origin)."""
     original = urllib.request.Request(
         "https://api.github.com/repos/acme/repo/actions/artifacts/1/zip",
         headers={"Authorization": "Bearer SUPER-SECRET-TOKEN"},
@@ -239,20 +242,21 @@ def test_stdlib_default_redirect_handler_forwards_authorization():
     assert redirected.get_header("Authorization") == "Bearer SUPER-SECRET-TOKEN"
 
 
-def test_no_auth_on_redirect_handler_strips_authorization_but_preserves_url():
-    """Proves the repair, called the exact same way: ``_NoAuthOnRedirectHandler``
-    (1) never carries Authorization onto the redirected request, and
-    (3) still preserves the redirected URL/query string exactly --
-    it reuses the stdlib's own logic via ``super()`` and strips only
-    the one header."""
-    from sentinel.phase5.github_evidence import _NoAuthOnRedirectHandler
+def test_no_auth_on_cross_origin_redirect_strips_authorization_but_preserves_url():
+    """Proves the repair on the exact cross-origin redirect that
+    actually occurred: ``_NoAuthOnCrossOriginRedirectHandler`` (B)
+    strips Authorization when the redirect target is a different
+    origin, (D) still preserves the redirected URL/query string and
+    every other header exactly -- it reuses the stdlib's own logic via
+    ``super()`` and strips only the one header, only cross-origin."""
+    from sentinel.phase5.github_evidence import _NoAuthOnCrossOriginRedirectHandler
 
     original = urllib.request.Request(
         "https://api.github.com/repos/acme/repo/actions/artifacts/1/zip",
         headers={"Authorization": "Bearer SUPER-SECRET-TOKEN", "Accept": "application/vnd.github+json"},
     )
     redirect_url = "https://blob.storage.example/artifact.zip?sig=deadbeef-signed-query"
-    redirected = _NoAuthOnRedirectHandler().redirect_request(
+    redirected = _NoAuthOnCrossOriginRedirectHandler().redirect_request(
         original, io.BytesIO(b""), 302, "Found", {}, redirect_url,
     )
     assert redirected is not None
@@ -263,21 +267,47 @@ def test_no_auth_on_redirect_handler_strips_authorization_but_preserves_url():
     assert redirected.get_header("Accept") == "application/vnd.github+json"
 
 
+@pytest.mark.parametrize("same_origin_url", [
+    "https://api.github.com/repos/acme/repo/actions/artifacts/1/download-here",
+    "https://api.github.com:443/repos/acme/repo/actions/artifacts/1/download-here",  # explicit default HTTPS port
+])
+def test_no_auth_on_cross_origin_redirect_preserves_authorization_same_origin(same_origin_url):
+    """(C) A same-origin redirect (identical scheme + hostname +
+    effective port -- a different path, and an explicit default port
+    written out, both still count as the same origin) MUST keep the
+    Authorization header. GitHub REST redirects don't currently do
+    this in practice, but the invariant (A) still holds: Authorization
+    reaches the initial authenticated endpoint AND survives an
+    in-origin hop, unlike a cross-origin one."""
+    from sentinel.phase5.github_evidence import _NoAuthOnCrossOriginRedirectHandler
+
+    original = urllib.request.Request(
+        "https://api.github.com/repos/acme/repo/actions/artifacts/1/zip",
+        headers={"Authorization": "Bearer SUPER-SECRET-TOKEN"},
+    )
+    redirected = _NoAuthOnCrossOriginRedirectHandler().redirect_request(
+        original, io.BytesIO(b""), 302, "Found", {}, same_origin_url,
+    )
+    assert redirected is not None
+    assert redirected.get_header("Authorization") == "Bearer SUPER-SECRET-TOKEN"
+    assert redirected.full_url == same_origin_url
+
+
 def test_default_opener_is_wired_to_the_no_auth_redirect_handler():
     """Proves the fix is actually plugged into GithubEvidenceClient's
     default construction path, not merely defined-but-unused: the
     constructor's default ``opener`` argument is a bound
     ``OpenerDirector.open`` method whose installed handlers include
-    ``_NoAuthOnRedirectHandler`` and exclude the plain stdlib
-    ``HTTPRedirectHandler`` (which ``build_opener`` would otherwise
-    install by default)."""
-    from sentinel.phase5.github_evidence import _NoAuthOnRedirectHandler
+    ``_NoAuthOnCrossOriginRedirectHandler`` and exclude the plain
+    stdlib ``HTTPRedirectHandler`` (which ``build_opener`` would
+    otherwise install by default)."""
+    from sentinel.phase5.github_evidence import _NoAuthOnCrossOriginRedirectHandler
 
     default_opener = GithubEvidenceClient.__init__.__kwdefaults__["opener"]
     director = default_opener.__self__  # OpenerDirector.open is a bound method
     assert isinstance(director, urllib.request.OpenerDirector)
     handler_types = [type(h) for h in director.handlers]
-    assert _NoAuthOnRedirectHandler in handler_types
+    assert _NoAuthOnCrossOriginRedirectHandler in handler_types
     assert urllib.request.HTTPRedirectHandler not in handler_types  # only the subclass, no duplicate
 
 
