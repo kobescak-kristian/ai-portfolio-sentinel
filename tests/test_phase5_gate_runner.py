@@ -6,10 +6,20 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from contracts.schemas import CostRow
+from sentinel.phase5.evidence_records import GateEvidenceRecord, ProbeEvidenceRecord
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE_RUNNER_PATH = REPO_ROOT / "scripts" / "run_phase5_official_gate.py"
+
+_SHA = "a" * 40
+_WIF = "github-actions-wif-federation"
 
 
 def _load_module():
@@ -17,6 +27,40 @@ def _load_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _cost_row(run_id: str = "run1") -> CostRow:
+    return CostRow(
+        schema_version=1, run_id=run_id, recorded_at_utc=datetime.now(timezone.utc),
+        run_kind="dev", model="claude-sonnet-5", input_tokens=1, output_tokens=1, cost_eur_micros=2_000,
+    )
+
+
+def _gate_kwargs(**overrides) -> dict:
+    """Minimal valid GateEvidenceRecord kwargs (dispatch
+    q77-p5d-s1-evidence-repair-a) — every test overrides only the
+    field(s) it is actually exercising."""
+    base = dict(
+        schema_version=1, workflow_identity=".github/workflows/sentinel-official-gate.yml",
+        github_run_id="1", run_attempt=1, event="workflow_dispatch", ref="refs/heads/main",
+        source_sha=_SHA, created_at_utc=datetime.now(timezone.utc), steps=(),
+        expected_source_sha=_SHA, model="claude-sonnet-5", profile_name="sonnet-official-gate",
+        run_ids=("run1", "run2"), scoring={"emitted": 1}, thresholds={},
+        invariant_results={"ok": True}, execution_validity={"valid": True},
+        miss_patterns=(), failed_checks=(), cost_rows=(_cost_row(),),
+        accounted_total_eur_micros=2_000, disposition="GREEN", auth_mode=_WIF,
+    )
+    base.update(overrides)
+    return base
+
+
+class _FakeCall:
+    """Minimal stand-in for ``AgentCallRow`` carrying only the one
+    attribute ``_derive_auth_mode``/``_recover_partial_auth_mode``
+    inspect."""
+
+    def __init__(self, auth_mode: str) -> None:
+        self.auth_mode = auth_mode
 
 
 def test_adr_pinned_path_exists_verbatim():
@@ -103,3 +147,240 @@ def test_official_gate_disposition_vocabulary_is_closed():
     text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
     assert '"GREEN" if result["green"] else "HONEST_FAIL"' in text
     assert 'disposition = "INFRASTRUCTURE_FAILURE"' in text
+
+
+# ======================================================================
+# Evidence-readiness repair (dispatch q77-p5d-s1-evidence-repair-a):
+# Defect A (durable auth provenance) and Defect B (HONEST_FAIL
+# recordability for non-scoring failure causes). Every test below is
+# model-free and makes zero network/provider/OIDC/model calls.
+# ======================================================================
+
+# --- AUTH PROVENANCE -------------------------------------------------
+
+def test_green_with_wif_auth_mode_constructs_and_serializes():
+    """(1) GREEN with persisted auth_mode=github-actions-wif-federation
+    constructs and serializes successfully."""
+    record = GateEvidenceRecord(**_gate_kwargs(disposition="GREEN", auth_mode=_WIF))
+    payload = record.model_dump_json()
+    assert _WIF in payload
+
+
+def test_honest_fail_with_wif_auth_constructs_and_serializes():
+    """(2) HONEST_FAIL with persisted WIF auth constructs and
+    serializes successfully."""
+    record = GateEvidenceRecord(**_gate_kwargs(
+        disposition="HONEST_FAIL", auth_mode=_WIF, failed_checks=("pooled_recall: 1/2 -> FAIL",),
+    ))
+    payload = record.model_dump_json()
+    assert _WIF in payload
+    assert record.disposition == "HONEST_FAIL"
+
+
+def test_green_with_none_auth_mode_rejected():
+    """(3) GREEN with auth_mode=None is rejected."""
+    with pytest.raises(ValidationError):
+        GateEvidenceRecord(**_gate_kwargs(disposition="GREEN", auth_mode=None))
+
+
+def test_green_with_non_wif_auth_label_rejected():
+    """(4) GREEN with a non-WIF auth label is rejected."""
+    with pytest.raises(ValidationError):
+        GateEvidenceRecord(**_gate_kwargs(
+            disposition="GREEN", auth_mode="operator-subscription-oauth-assumed",
+        ))
+
+
+@pytest.mark.parametrize("bad_auth_mode", [None, "operator-subscription-oauth-assumed"])
+def test_honest_fail_with_non_wif_or_none_auth_rejected(bad_auth_mode):
+    """(5) HONEST_FAIL with non-WIF/None auth is rejected."""
+    with pytest.raises(ValidationError):
+        GateEvidenceRecord(**_gate_kwargs(
+            disposition="HONEST_FAIL", auth_mode=bad_auth_mode,
+            failed_checks=("pooled_recall: 1/2 -> FAIL",),
+        ))
+
+
+def test_conflicting_auth_labels_cannot_produce_valid_green_or_honest_fail():
+    """(6) Conflicting persisted auth labels cannot produce a valid
+    GREEN/HONEST_FAIL record. Derivation first (matches the runner's
+    own path), then schema rejection of the derived placeholder."""
+    module = _load_module()
+    derived = module._derive_auth_mode([_FakeCall(_WIF), _FakeCall("operator-subscription-oauth-assumed")])
+    assert derived == "conflicting-auth-mode"
+    for disposition, extra in (
+        ("GREEN", {}),
+        ("HONEST_FAIL", {"failed_checks": ("pooled_recall: 1/2 -> FAIL",)}),
+    ):
+        with pytest.raises(ValidationError):
+            GateEvidenceRecord(**_gate_kwargs(disposition=disposition, auth_mode=derived, **extra))
+
+
+def test_infrastructure_failure_with_zero_model_call_rows_remains_recordable():
+    """(7) INFRASTRUCTURE_FAILURE with zero model-call rows (a pre-
+    provider preflight/source/WIF/OIDC/FX/setup stop) remains
+    recordable — no auth provenance requirement applies."""
+    module = _load_module()
+    assert module._derive_auth_mode([]) is None
+    record = GateEvidenceRecord(**_gate_kwargs(
+        disposition="INFRASTRUCTURE_FAILURE", run_ids=(), scoring={}, execution_validity={},
+        miss_patterns=(), failed_checks=(), cost_rows=(), accounted_total_eur_micros=0, auth_mode=None,
+    ))
+    assert record.disposition == "INFRASTRUCTURE_FAILURE"
+
+
+def test_gate_runner_derives_auth_mode_from_persisted_calls_not_hardcoded():
+    """(8) The gate runner derives auth provenance from persisted
+    agent_calls rows, never by hard-coding the configured auth
+    profile's label."""
+    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
+    assert "_derive_auth_mode(all_calls)" in text
+    assert "all_calls.extend(ledger.list_agent_calls_for_run(conn, run_id))" in text
+    assert f'auth_mode="{_WIF}"' not in text
+    assert "auth_mode=SONNET_OFFICIAL_GATE" not in text
+    # Post-marker INFRASTRUCTURE_FAILURE recovery path is wired too.
+    assert "recovered_auth_mode = _recover_partial_auth_mode(args.gate_root)" in text
+    assert "auth_mode=(result[\"auth_mode\"] if result else recovered_auth_mode)" in text
+
+
+def test_recover_partial_auth_mode_helper_is_best_effort(tmp_path):
+    """``_recover_partial_auth_mode`` never raises and returns None
+    when the gate ledger was never created (failure occurred before
+    any provider work began)."""
+    module = _load_module()
+    assert module._recover_partial_auth_mode(tmp_path / "never-created") is None
+
+
+# --- HONEST-FAIL SHAPES -----------------------------------------------
+
+def test_failed_check_messages_extracts_only_failed_entries():
+    """Pure-function proof for ``_failed_check_messages`` covering all
+    four failure categories independently — no gate-session/DB/fixture
+    harness required."""
+    module = _load_module()
+    checks = [
+        (True, "pooled_precision: 2/2 -> PASS"),
+        (False, "pooled_recall: 1/2 -> FAIL"),
+        (True, "invariant[every_task_terminal]: PASS"),
+        (False, "invariant[idempotent_rerun]: FAIL"),
+        (True, "gate_session_cost_within_cap: 1000 micro-EUR (<= 5000000) -> PASS"),
+        (False, "execution_validity[source_pinned]: FAIL"),
+    ]
+    assert module._failed_check_messages(checks) == (
+        "pooled_recall: 1/2 -> FAIL",
+        "invariant[idempotent_rerun]: FAIL",
+        "execution_validity[source_pinned]: FAIL",
+    )
+    assert module._failed_check_messages([(True, "a"), (True, "b")]) == ()
+
+
+def test_scoring_only_honest_failure_produces_valid_artifact():
+    """(9) Scoring-only honest failure produces a valid HONEST_FAIL
+    artifact with structured analysis."""
+    module = _load_module()
+    checks = [(False, "pooled_recall: 1/2 -> FAIL"), (True, "invariant[x]: PASS"), (True, "cost: PASS")]
+    failed = module._failed_check_messages(checks)
+    record = GateEvidenceRecord(**_gate_kwargs(
+        disposition="HONEST_FAIL", miss_patterns=("stale-STATE-marker|synthetic-01|README.md",),
+        failed_checks=failed,
+    ))
+    assert record.failed_checks == failed
+    assert record.miss_patterns
+
+
+def test_invariant_only_honest_failure_with_perfect_scoring_produces_valid_artifact():
+    """(10) Invariant-only honest failure with otherwise perfect
+    scoring produces a valid HONEST_FAIL artifact — the Defect-B
+    regression: empty miss_patterns no longer blocks construction."""
+    module = _load_module()
+    checks = [
+        (True, "pooled_precision: 2/2 -> PASS"), (True, "pooled_recall: 2/2 -> PASS"),
+        (False, "invariant[idempotent_rerun]: FAIL"), (True, "cost: PASS"),
+    ]
+    failed = module._failed_check_messages(checks)
+    record = GateEvidenceRecord(**_gate_kwargs(
+        disposition="HONEST_FAIL", miss_patterns=(), failed_checks=failed,
+    ))
+    assert record.miss_patterns == ()
+    assert record.failed_checks == ("invariant[idempotent_rerun]: FAIL",)
+
+
+def test_execution_validity_only_honest_failure_with_perfect_scoring_produces_valid_artifact():
+    """(11) Execution-validity-only honest failure with otherwise
+    perfect scoring produces a valid HONEST_FAIL artifact."""
+    module = _load_module()
+    checks = [
+        (True, "pooled_precision: 2/2 -> PASS"), (True, "pooled_recall: 2/2 -> PASS"),
+        (True, "invariant[x]: PASS"), (True, "cost: PASS"),
+        (False, "execution_validity[source_pinned]: FAIL"),
+    ]
+    failed = module._failed_check_messages(checks)
+    record = GateEvidenceRecord(**_gate_kwargs(
+        disposition="HONEST_FAIL", miss_patterns=(), failed_checks=failed,
+    ))
+    assert record.miss_patterns == ()
+    assert record.failed_checks == ("execution_validity[source_pinned]: FAIL",)
+
+
+def test_cost_only_honest_failure_preserves_exact_over_cap_total():
+    """(12) Cost-only honest failure with accounted_total >
+    5,000,000 micro-EUR produces a valid HONEST_FAIL artifact,
+    preserving the exact over-cap total rather than clamping/rejecting
+    it."""
+    module = _load_module()
+    checks = [
+        (True, "pooled_precision: 2/2 -> PASS"), (True, "pooled_recall: 2/2 -> PASS"),
+        (True, "invariant[x]: PASS"),
+        (False, "gate_session_cost_within_cap: 6000000 micro-EUR (<= 5000000) -> FAIL"),
+    ]
+    failed = module._failed_check_messages(checks)
+    over_cap_row = CostRow(
+        schema_version=1, run_id="run1", recorded_at_utc=datetime.now(timezone.utc),
+        run_kind="dev", model="claude-sonnet-5", input_tokens=1, output_tokens=1, cost_eur_micros=6_000_000,
+    )
+    record = GateEvidenceRecord(**_gate_kwargs(
+        disposition="HONEST_FAIL", miss_patterns=(), failed_checks=failed,
+        cost_rows=(over_cap_row,), accounted_total_eur_micros=6_000_000,
+    ))
+    assert record.accounted_total_eur_micros == 6_000_000  # never clamped to the 5,000,000 cap
+    assert record.failed_checks == ("gate_session_cost_within_cap: 6000000 micro-EUR (<= 5000000) -> FAIL",)
+
+
+def test_honest_fail_with_no_failure_analysis_rejected():
+    """(13) HONEST_FAIL with no mechanically supported failure
+    analysis (empty failed_checks) is rejected — the fix must not
+    weaken HONEST_FAIL to permit an evidence-free failure."""
+    with pytest.raises(ValidationError):
+        GateEvidenceRecord(**_gate_kwargs(disposition="HONEST_FAIL", miss_patterns=(), failed_checks=()))
+
+
+def test_green_still_requires_cost_ok_in_source():
+    """(14) GREEN/frozen scoring-threshold-model-budget behavior is
+    unchanged: cost remains part of overall_pass, unmodified by this
+    repair."""
+    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
+    assert 'overall_pass = scoring_pass and cost_ok and validity["valid"]' in text
+    assert "GATE_TOTAL_EUR_MICROS = 5_000_000" in text
+    assert "GATE_RESERVE_EUR_MICROS = 1_000_000" in text
+
+
+def test_probe_evidence_record_compatibility_intact():
+    """(15) ProbeEvidenceRecord / P5-C compatibility remains intact —
+    untouched by this repair."""
+    probe_row = _cost_row(run_id="r-p5c-1")
+    record = ProbeEvidenceRecord(
+        schema_version=1, workflow_identity=".github/workflows/sentinel-wif-probe.yml",
+        github_run_id="1", run_attempt=1, event="workflow_dispatch", ref="refs/heads/main",
+        source_sha=_SHA, created_at_utc=datetime.now(timezone.utc), steps=(),
+        expected_source_sha=_SHA, disposition="CAPABILITY_PASS",
+        cost_rows=(probe_row,), accounted_total_eur_micros=2_000, auth_mode=_WIF,
+    )
+    assert record.disposition == "CAPABILITY_PASS"
+    with pytest.raises(ValidationError):
+        ProbeEvidenceRecord(
+            schema_version=1, workflow_identity=".github/workflows/sentinel-wif-probe.yml",
+            github_run_id="1", run_attempt=1, event="workflow_dispatch", ref="refs/heads/main",
+            source_sha=_SHA, created_at_utc=datetime.now(timezone.utc), steps=(),
+            expected_source_sha=_SHA, disposition="CAPABILITY_PASS",
+            cost_rows=(probe_row,), accounted_total_eur_micros=2_000, auth_mode=None,
+        )

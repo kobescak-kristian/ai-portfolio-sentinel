@@ -269,6 +269,7 @@ def test_freeze_succeeds_and_produces_a_validate_bundle_clean_genesis(tmp_path, 
         model="claude-sonnet-5", profile_name="sonnet-official-gate", run_ids=("run1", "run2"),
         scoring={"emitted": 1}, thresholds={}, invariant_results={"ok": True}, execution_validity={"valid": True},
         miss_patterns=("x|y|z",), cost_rows=(gate_row,), accounted_total_eur_micros=2000, disposition="GREEN",
+        auth_mode="github-actions-wif-federation",
     )
     gate_evidence_dir = tmp_path / "src-gate-evidence"
     gate_evidence_dir.mkdir()

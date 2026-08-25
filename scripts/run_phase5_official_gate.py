@@ -125,6 +125,69 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         return 2
 
 
+def _derive_auth_mode(calls) -> "str | None":
+    """Derive auth_mode from this gate session's persisted agent_calls
+    rows across both designated runs, never by assuming the configured
+    auth profile's label. Same discipline as the P5-C probe's
+    ``run_phase5_wif_probe._derive_auth_mode`` (dispatch
+    q77-p5c-execute-a, C0-C): zero rows means no call was ever
+    attempted; a single agreed label is reported as-is; disagreement
+    across rows (never expected in normal operation) reports a
+    deterministic non-WIF placeholder that can never satisfy
+    GREEN/HONEST_FAIL."""
+    if not calls:
+        return None
+    modes = {c.auth_mode for c in calls}
+    if len(modes) == 1:
+        return next(iter(modes))
+    return "conflicting-auth-mode"
+
+
+def _recover_partial_auth_mode(gate_root: Path) -> "str | None":
+    """Best-effort auth-provenance recovery for a post-marker
+    INFRASTRUCTURE_FAILURE (dispatch q77-p5d-s1-evidence-repair-a).
+    ``gate_root`` is asserted fresh at the start of every gate session
+    (``_assert_fresh_evidence_dir``), so any ``gate.sqlite3`` found
+    here belongs to no run but this one — a plain distinct-value scan
+    over the whole table is exact, with no run_id needed and no risk
+    of cross-session contamination. Returns None if the ledger was
+    never created (the failure occurred before any provider work
+    began) or is unreadable; never raises, so a recovery failure can
+    never mask the real INFRASTRUCTURE_FAILURE cause."""
+    db_path = gate_root / "gate.sqlite3"
+    if not db_path.exists():
+        return None
+    try:
+        from sentinel import ledger
+
+        conn = ledger.open_ledger(db_path, create=False)
+        try:
+            modes = {row[0] for row in conn.execute("SELECT DISTINCT auth_mode FROM agent_calls")}
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - recovery is best-effort, never fatal
+        return None
+    if not modes:
+        return None
+    if len(modes) == 1:
+        return next(iter(modes))
+    return "conflicting-auth-mode"
+
+
+def _failed_check_messages(checks: "list[tuple[bool, str]]") -> "tuple[str, ...]":
+    """Machine-derived record of every failed check line — scoring,
+    invariants, cost, execution-validity alike (dispatch
+    q77-p5d-s1-evidence-repair-a). Never empty when any entry in
+    ``checks`` failed, regardless of which category failed, so a gate
+    that fails solely on cost or an invariant or an execution-validity
+    predicate — with otherwise perfect scoring, and therefore empty
+    ``miss_patterns`` — still yields a non-empty, schema-satisfying
+    analysis. Extracted as a pure function (rather than inlined) so it
+    is directly unit-testable against a synthetic ``checks`` list,
+    with no gate-session/DB/fixture harness required."""
+    return tuple(msg for ok, msg in checks if not ok)
+
+
 def _run_gate_session(*, gate_root: Path, coordinator, session, expected_source_sha: str) -> dict:
     from agents.checker import auth
     from agents.checker.config import SONNET_OFFICIAL_GATE
@@ -215,7 +278,9 @@ def _run_gate_session(*, gate_root: Path, coordinator, session, expected_source_
         scoring_pass = all(ok for ok, _ in checks)
 
         cost_rows = []
+        all_calls = []
         for run_id in (run1_id, run2_id):
+            all_calls.extend(ledger.list_agent_calls_for_run(conn, run_id))
             if costs.has_agent_calls_for_run(conn, run_id):
                 cost_rows.append(
                     costs.build_agent_cost_row(
@@ -223,6 +288,7 @@ def _run_gate_session(*, gate_root: Path, coordinator, session, expected_source_
                     )
                 )
         accounted_total = sum(r.cost_eur_micros for r in cost_rows)
+        auth_mode = _derive_auth_mode(all_calls)
         cost_ok = accounted_total <= GATE_TOTAL_EUR_MICROS
         checks.append((cost_ok, (
             f"gate_session_cost_within_cap: {accounted_total} micro-EUR "
@@ -237,6 +303,7 @@ def _run_gate_session(*, gate_root: Path, coordinator, session, expected_source_
 
         overall_pass = scoring_pass and cost_ok and validity["valid"]
         miss_patterns = tuple(f"{c}|{s}|{loc}" for c, s, loc in score.unmatched_findings)
+        failed_checks = _failed_check_messages(checks)
 
         return {
             "run_ids": (run1_id, run2_id),
@@ -250,8 +317,10 @@ def _run_gate_session(*, gate_root: Path, coordinator, session, expected_source_
             "invariant_results": invariants,
             "execution_validity": validity,
             "miss_patterns": miss_patterns,
+            "failed_checks": failed_checks,
             "cost_rows": tuple(cost_rows),
             "accounted_total_eur_micros": accounted_total,
+            "auth_mode": auth_mode,
             "green": overall_pass,
             "check_lines": [msg for _, msg in checks],
         }
@@ -269,6 +338,7 @@ def cmd_execute(args: argparse.Namespace) -> int:
     session = None
     disposition = "INFRASTRUCTURE_FAILURE"
     result: dict | None = None
+    recovered_auth_mode: "str | None" = None
     try:
         client = build_evidence_client(env)  # pops GITHUB_TOKEN
         ctx = derive_github_context(env)
@@ -297,6 +367,10 @@ def cmd_execute(args: argparse.Namespace) -> int:
         disposition = "GREEN" if result["green"] else "HONEST_FAIL"
     except Exception as exc:  # noqa: BLE001 - any pre-scoring failure is INFRASTRUCTURE_FAILURE
         print(f"GATE EXECUTE FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # Best-effort: preserve whatever auth provenance was actually
+        # persisted before this failure, if any model call was ever
+        # reached (dispatch q77-p5d-s1-evidence-repair-a).
+        recovered_auth_mode = _recover_partial_auth_mode(args.gate_root)
     finally:
         if session is not None:
             session.shutdown(env)
@@ -318,9 +392,11 @@ def cmd_execute(args: argparse.Namespace) -> int:
         invariant_results=result["invariant_results"] if result else {},
         execution_validity=result["execution_validity"] if result else {},
         miss_patterns=result["miss_patterns"] if result else (),
+        failed_checks=result["failed_checks"] if result else (),
         cost_rows=result["cost_rows"] if result else (),
         accounted_total_eur_micros=result["accounted_total_eur_micros"] if result else 0,
         disposition=disposition,
+        auth_mode=(result["auth_mode"] if result else recovered_auth_mode),
     )
     args.artifacts_dir.mkdir(parents=True, exist_ok=True)
     evidence_path = args.artifacts_dir / "phase5_official_gate.json"

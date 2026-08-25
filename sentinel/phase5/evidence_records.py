@@ -156,7 +156,31 @@ class GateEvidenceRecord(_IdentityFields):
     execution to have actually entered the frozen gate — schema-
     unconstructible otherwise; ``INFRASTRUCTURE_FAILURE`` is the only
     disposition permitted for a source/preflight/WIF/OIDC/FX/setup
-    failure, and it can never satisfy P5-D."""
+    failure, and it can never satisfy P5-D.
+
+    ``auth_mode`` and ``failed_checks`` (dispatch
+    q77-p5d-s1-evidence-repair-a) are additive and optional for
+    schema-version compatibility, mirroring ``ProbeEvidenceRecord``'s
+    own ``auth_mode`` precedent:
+
+    - ``auth_mode`` carries the gate session's own persisted-row-
+      derived auth provenance (never an assumed or hard-coded label),
+      so an independent verifier can establish it from the uploaded
+      artifact alone after the ephemeral runner is gone. ``GREEN`` and
+      ``HONEST_FAIL`` are additionally schema-unconstructible unless it
+      exactly equals the WIF federation label —
+      ``INFRASTRUCTURE_FAILURE`` carries no such requirement, since a
+      pre-provider failure legitimately has none.
+    - ``failed_checks`` is the machine-derived record of every gate
+      check line that did not pass (scoring, invariants, cost,
+      execution-validity alike — whatever the gate's own ``checks``
+      ledger actually failed), distinct from ``miss_patterns`` (which
+      stays scoped to unmatched *scoring* findings only, unchanged).
+      A gate that fails solely on cost or an invariant or execution-
+      validity predicate — with perfect scoring, and therefore empty
+      ``miss_patterns`` — remains a legitimate, schema-constructible
+      ``HONEST_FAIL`` because ``failed_checks`` is never empty when the
+      gate did not pass."""
 
     expected_source_sha: str
     model: str
@@ -167,9 +191,11 @@ class GateEvidenceRecord(_IdentityFields):
     invariant_results: dict
     execution_validity: dict
     miss_patterns: tuple[str, ...]
+    failed_checks: tuple[str, ...] = ()
     cost_rows: tuple[CostRow, ...]
     accounted_total_eur_micros: int = Field(ge=0)
     disposition: Literal["GREEN", "HONEST_FAIL", "INFRASTRUCTURE_FAILURE"]
+    auth_mode: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "GateEvidenceRecord":
@@ -182,8 +208,15 @@ class GateEvidenceRecord(_IdentityFields):
                     f"{self.disposition} requires run_ids, scoring, execution_validity "
                     "and cost_rows to be non-empty — the gate must have actually run"
                 )
-        if self.disposition == "HONEST_FAIL" and not self.miss_patterns:
-            raise ValueError("HONEST_FAIL requires non-empty miss_patterns evidence")
+            if self.auth_mode != "github-actions-wif-federation":
+                raise ValueError(
+                    f"{self.disposition} requires auth_mode == 'github-actions-wif-federation'"
+                )
+        if self.disposition == "HONEST_FAIL" and not self.failed_checks:
+            raise ValueError(
+                "HONEST_FAIL requires non-empty failed_checks evidence — the "
+                "machine-derived record of which gate check(s) actually failed"
+            )
         return self
 
 
