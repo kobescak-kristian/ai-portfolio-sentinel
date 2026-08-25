@@ -5,3 +5,9 @@ pydantic==2.13.4
 claude-agent-sdk==0.2.110
 anyio==4.14.0
 certifi==2026.6.17
+# Phase 5 (dispatch q77-p5d-premarker-dependency-repair-a) -- runtime
+# dependency of scripts/run_phase5_official_gate.py's import of
+# scripts/run_phase3_dev_gate.py (yaml.safe_load in _load_eval_config).
+# Every Phase-5 GitHub Actions workflow installs only this file, never
+# requirements-dev.txt, so this must live here, not only there.
+PyYAML==6.0.3

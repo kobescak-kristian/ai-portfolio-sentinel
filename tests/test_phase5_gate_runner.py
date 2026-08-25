@@ -5,7 +5,9 @@ ADR-0011 Section 7 pins this exact path; Part 3 never executes it.
 from __future__ import annotations
 
 import ast
+import importlib.metadata
 import importlib.util
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +22,104 @@ GATE_RUNNER_PATH = REPO_ROOT / "scripts" / "run_phase5_official_gate.py"
 
 _SHA = "a" * 40
 _WIF = "github-actions-wif-federation"
+
+# Every top-level package that lives IN this repository, never a
+# third-party distribution (dispatch
+# q77-p5d-premarker-dependency-repair-a): reachable from the official
+# gate runner's own import graph.
+_LOCAL_TOP_LEVEL_PACKAGES = frozenset(
+    {"scripts", "sentinel", "agents", "contracts", "checks", "telemetry", "runner"}
+)
+
+
+def _normalize_dist_name(name: str) -> str:
+    return name.strip().lower().replace("_", "-")
+
+
+def _requirements_txt_top_level_names() -> set[str]:
+    """Distribution names directly declared in requirements.txt
+    (normalized), ignoring comments and ``-r`` includes."""
+    return {
+        _normalize_dist_name(line.split("==")[0])
+        for line in (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#") and not line.strip().startswith("-r")
+    }
+
+
+def _local_module_file(dotted: str, base_dir: Path) -> Path | None:
+    rel = Path(*dotted.split("."))
+    candidate = base_dir / rel.with_suffix(".py")
+    if candidate.is_file():
+        return candidate
+    candidate = base_dir / rel / "__init__.py"
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def _collect_local_third_party_imports(entry_file: Path) -> set[str]:
+    """Statically walk only files that live under this repository's
+    own top-level packages, starting at ``entry_file``, collecting
+    every third-party top-level import name literally written in THIS
+    repo's own source -- never descending into an already-third-party
+    package's own internals (dispatch
+    q77-p5d-premarker-dependency-repair-a).
+
+    This is a deliberately narrower scope than a full runtime
+    ``sys.modules`` diff: a diff over the whole transitive graph also
+    captures optional/soft imports deep inside already-declared
+    dependencies (e.g. ``uvicorn`` opportunistically importing
+    ``watchfiles``/``rich`` if present, harmless if absent) -- noise
+    unrelated to what THIS repo's own unconditional top-level imports
+    actually require. Every import statement this repo's own source
+    writes at module level is unconditional (no repo file wraps one in
+    try/except), so a plain literal-import walk is the correct,
+    precise proof of the real invariant: exactly the failure mode that
+    crashed GitHub Actions run 32863558192."""
+    stdlib = set(sys.stdlib_module_names)
+    seen: set[Path] = set()
+    third_party: set[str] = set()
+    stack = [entry_file.resolve()]
+    while stack:
+        current = stack.pop()
+        if current in seen or not current.is_file():
+            continue
+        seen.add(current)
+        tree = ast.parse(current.read_text(encoding="utf-8"), filename=str(current))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    top = alias.name.split(".")[0]
+                    if top in _LOCAL_TOP_LEVEL_PACKAGES:
+                        target = _local_module_file(alias.name, REPO_ROOT)
+                        if target is not None:
+                            stack.append(target)
+                    elif top not in stdlib:
+                        third_party.add(top)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level and node.level >= 1:
+                    base_dir = current.parent
+                    for _ in range(node.level - 1):
+                        base_dir = base_dir.parent
+                    if node.module:
+                        target = _local_module_file(node.module, base_dir)
+                        if target is not None:
+                            stack.append(target)
+                    else:
+                        for alias in node.names:
+                            target = _local_module_file(alias.name, base_dir)
+                            if target is not None:
+                                stack.append(target)
+                    continue
+                if node.module:
+                    top = node.module.split(".")[0]
+                    if top in _LOCAL_TOP_LEVEL_PACKAGES:
+                        target = _local_module_file(node.module, REPO_ROOT)
+                        if target is not None:
+                            stack.append(target)
+                    elif top not in stdlib:
+                        third_party.add(top)
+    return third_party
 
 
 def _load_module():
@@ -147,6 +247,41 @@ def test_official_gate_disposition_vocabulary_is_closed():
     text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
     assert '"GREEN" if result["green"] else "HONEST_FAIL"' in text
     assert 'disposition = "INFRASTRUCTURE_FAILURE"' in text
+
+
+def test_official_gate_runtime_import_closure_matches_requirements_txt():
+    """Dispatch q77-p5d-premarker-dependency-repair-a: proves the exact
+    invariant whose absence (PyYAML) crashed GitHub Actions run
+    32863558192 at ``ModuleNotFoundError: No module named 'yaml'``
+    inside ``preflight``, before the one-shot marker was ever uploaded
+    -- every Phase-5 workflow installs only ``requirements.txt``, never
+    ``requirements-dev.txt``. Fully offline and deterministic: a
+    static AST walk of this repo's own source (see
+    ``_collect_local_third_party_imports``), never a network call or
+    venv build."""
+    third_party = _collect_local_third_party_imports(GATE_RUNNER_PATH)
+    declared_top_level = _requirements_txt_top_level_names()
+
+    import_name_to_dists = importlib.metadata.packages_distributions()
+    missing = []
+    for top_name in sorted(third_party):
+        candidate_dists = {_normalize_dist_name(d) for d in import_name_to_dists.get(top_name, ())}
+        if not candidate_dists:
+            missing.append(f"{top_name} (no installed distribution metadata found for this import)")
+        elif not (candidate_dists & declared_top_level):
+            missing.append(
+                f"{top_name} -> {sorted(candidate_dists)} (not declared in requirements.txt)"
+            )
+    assert not missing, (
+        "official-gate runtime import closure not covered by requirements.txt: "
+        + "; ".join(missing)
+    )
+    # The specific regression this dispatch fixes: yaml must actually
+    # be reachable from this exact import graph (a sanity check that
+    # the walk above is exercising the real defect's code path, not
+    # vacuously passing because nothing third-party was found).
+    assert "yaml" in third_party
+    assert "pyyaml" in declared_top_level
 
 
 # ======================================================================
