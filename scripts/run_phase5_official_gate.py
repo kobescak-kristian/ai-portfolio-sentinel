@@ -39,6 +39,7 @@ from scripts._phase5_common import (  # noqa: E402
     assert_marker_visible_for_this_run,
     build_evidence_client,
     discover_oneshot_markers,
+    prepare_fresh_work_root,
     write_json_artifact,
     write_marker_json,
 )
@@ -88,6 +89,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
         _assert_fresh_evidence_dir(args.gate_root, "gate-root")
         _assert_fresh_evidence_dir(args.artifacts_dir, "artifacts-dir")
+        prepare_fresh_work_root(args.work_root)
 
         markers = discover_oneshot_markers(client, args.work_root)
         assert_purpose_not_yet_consumed(PURPOSE, markers)

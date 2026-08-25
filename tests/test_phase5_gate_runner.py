@@ -7,7 +7,10 @@ from __future__ import annotations
 import ast
 import importlib.metadata
 import importlib.util
+import io
+import json
 import sys
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -487,6 +490,160 @@ def test_honest_fail_with_no_failure_analysis_rejected():
     weaken HONEST_FAIL to permit an evidence-free failure."""
     with pytest.raises(ValidationError):
         GateEvidenceRecord(**_gate_kwargs(disposition="HONEST_FAIL", miss_patterns=(), failed_checks=()))
+
+
+class _FakeResponse:
+    """Minimal fake urllib response (local copy of the equivalent
+    helper in test_phase5_github_evidence.py, kept local here to avoid
+    cross-test-file coupling)."""
+
+    def __init__(self, status: int, body: bytes):
+        self.status = status
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _make_zip(entries: dict) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+# ======================================================================
+# Work-root initialization regression (dispatch
+# q77-p5d-premarker-workroot-init-repair-a): a real preflight
+# rehearsal against a non-empty live repository state (an actual
+# existing P5-C marker to discover) crashed with
+# ``BundleSafetyError: destination trusted root does not exist`` inside
+# ``create_fresh_root``, called from ``discover_oneshot_markers`` with
+# ``work_root`` itself as the trusted anchor -- but nothing had ever
+# established that ``work_root`` (GitHub Actions' ``WORK_ROOT``, a
+# subdirectory of the runner-guaranteed ``runner.temp`` that no
+# workflow step creates) actually existed yet. This never fired
+# before: P5-C's own run discovered zero markers, and both P5-D
+# attempts failed earlier (missing PyYAML; then the Authorization-
+# redirect leak, both before this exact call).
+# ======================================================================
+
+def test_prepare_fresh_work_root_creates_fresh_directory_beneath_existing_parent(tmp_path):
+    """(1) trusted parent (tmp_path) exists; (2) work_root initially
+    does NOT exist; (3) preparation succeeds; (4) work_root now exists
+    as a real directory. Accessed via ``_load_module()`` (never
+    ``from scripts... import``) -- this repo's dependency-surface
+    governance (``tests/test_dependency_surface.py``) forbids test
+    files from importing the ``scripts`` root at all, exactly why
+    every existing test in this file already uses this pattern."""
+    module = _load_module()
+
+    work_root = tmp_path / "p5-gate"
+    assert tmp_path.is_dir()
+    assert not work_root.exists()
+    result = module.prepare_fresh_work_root(work_root)
+    assert result == work_root
+    assert work_root.is_dir()
+
+
+def test_old_unprepared_work_root_reproduces_the_real_crash_new_prepared_one_does_not(tmp_path):
+    """The exact regression: calling ``create_fresh_root(work_root,
+    work_root / "marker-0")`` directly against an unprepared
+    ``work_root`` -- precisely what ``discover_oneshot_markers`` ->
+    ``download_artifact`` did before this repair -- reproduces
+    ``BundleSafetyError`` exactly as the real rehearsal observed.
+    ``prepare_fresh_work_root`` first, then the identical call,
+    succeeds: (5) marker-0 extraction beneath work_root succeeds and
+    (6) the resulting marker parses correctly."""
+    from sentinel.phase5.bundle import BundleSafetyError, create_fresh_root
+    from sentinel.phase5.github_evidence import ArtifactRef, GithubEvidenceClient
+    from sentinel.phase5.models import OneShotMarker
+
+    module = _load_module()
+    work_root = tmp_path / "p5-gate"
+
+    # OLD behavior (pre-repair): reproduces the real crash exactly.
+    with pytest.raises(BundleSafetyError):
+        create_fresh_root(work_root, work_root / "marker-0")
+    assert not work_root.exists()  # the failed attempt left nothing behind
+
+    # REPAIRED behavior: prepare first, then the same download/extract
+    # sequence discover_oneshot_markers performs succeeds.
+    module.prepare_fresh_work_root(work_root)
+    marker_payload = {
+        "schema_version": 1, "purpose": "P5C_WIF_PROBE",
+        "created_at_utc": "2026-08-24T22:09:19.953584Z",
+        "workflow_identity": ".github/workflows/sentinel-wif-probe.yml",
+        "github_run_id": "1", "run_attempt": 1, "event": "workflow_dispatch",
+        "source_sha": "a" * 40,
+    }
+    zip_bytes = _make_zip({"marker.json": json.dumps(marker_payload).encode("utf-8")})
+
+    def opener(request, timeout=None):
+        return _FakeResponse(200, zip_bytes)
+
+    client = GithubEvidenceClient(api_url="https://api.github.com", repository="acme/repo", token="tkn", opener=opener)
+    ref = ArtifactRef(id=1, name="sentinel-p5-oneshot-p5c-wif-probe-r1", workflow_run_id="1")
+    root = client.download_artifact(ref, work_root, work_root / "marker-0")
+    marker = OneShotMarker.model_validate_json((root / "marker.json").read_text(encoding="utf-8"))
+    assert marker.purpose == "P5C_WIF_PROBE"
+
+
+def test_prepare_fresh_work_root_refuses_pre_existing_directory(tmp_path):
+    """(7) a pre-existing work_root is refused -- never silently
+    reused."""
+    module = _load_module()
+
+    work_root = tmp_path / "p5-gate"
+    work_root.mkdir()
+    with pytest.raises(module.Phase5ScriptError):
+        module.prepare_fresh_work_root(work_root)
+
+
+def test_prepare_fresh_work_root_refuses_symlink(tmp_path):
+    """(8) a symlink work_root is refused where platform semantics
+    permit (skips, rather than fails, if this environment cannot
+    create a symlink without elevated privileges)."""
+    module = _load_module()
+
+    real_dir = tmp_path / "elsewhere"
+    real_dir.mkdir()
+    work_root = tmp_path / "p5-gate"
+    try:
+        work_root.symlink_to(real_dir, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation not permitted in this environment")
+    with pytest.raises(module.Phase5ScriptError):
+        module.prepare_fresh_work_root(work_root)
+
+
+def test_prepare_fresh_work_root_refuses_missing_parent(tmp_path):
+    """(9) a missing trusted parent is refused."""
+    module = _load_module()
+
+    work_root = tmp_path / "does-not-exist-parent" / "p5-gate"
+    with pytest.raises(module.Phase5ScriptError):
+        module.prepare_fresh_work_root(work_root)
+
+
+def test_official_gate_preflight_prepares_work_root_before_discovery():
+    """Static proof the wiring is actually in place, in the correct
+    order: ``prepare_fresh_work_root`` is called before
+    ``discover_oneshot_markers`` inside ``cmd_preflight``."""
+    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
+    preflight_start = text.index("def cmd_preflight")
+    preflight_end = text.index("def _run_gate_session")
+    body = text[preflight_start:preflight_end]
+    prepare_idx = body.index("prepare_fresh_work_root(args.work_root)")
+    discover_idx = body.index("discover_oneshot_markers(client, args.work_root)")
+    assert prepare_idx < discover_idx
 
 
 def test_green_still_requires_cost_ok_in_source():

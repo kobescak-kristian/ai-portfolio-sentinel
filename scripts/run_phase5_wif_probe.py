@@ -36,6 +36,7 @@ from scripts._phase5_common import (  # noqa: E402
     build_evidence_client,
     assert_marker_visible_for_this_run,
     discover_oneshot_markers,
+    prepare_fresh_work_root,
     write_json_artifact,
     write_marker_json,
 )
@@ -61,6 +62,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         assert_expected_source_live(client, args.expected_source_sha)
         ctx = derive_github_context(env)
 
+        prepare_fresh_work_root(args.work_root)
         markers = discover_oneshot_markers(client, args.work_root)
         assert_purpose_not_yet_consumed(PURPOSE, markers)
 

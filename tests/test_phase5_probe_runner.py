@@ -95,6 +95,23 @@ def test_probe_uses_haiku_model_not_sonnet():
     assert "SONNET_OFFICIAL_GATE" not in text
 
 
+def test_probe_preflight_prepares_work_root_before_discovery():
+    """Dispatch q77-p5d-premarker-workroot-init-repair-a: the shared
+    work-root trusted-anchor gap (discover_oneshot_markers ->
+    download_artifact -> create_fresh_root, requiring work_root to
+    already exist) applies equally to this probe runner's own
+    cmd_preflight -- it calls the exact same shared
+    discover_oneshot_markers helper against the exact same
+    per-workflow WORK_ROOT shape. Fixed consistently rather than
+    leaving this completed P5-C runner with the same latent
+    non-empty-state defect (its one-shot is already consumed, but the
+    Python code path itself is shared and must not silently diverge)."""
+    text = PROBE_RUNNER_PATH.read_text(encoding="utf-8")
+    prepare_idx = text.index("prepare_fresh_work_root(args.work_root)")
+    discover_idx = text.index("discover_oneshot_markers(client, args.work_root)")
+    assert prepare_idx < discover_idx
+
+
 def test_disposition_vocabulary_is_closed_pass_or_fail():
     text = PROBE_RUNNER_PATH.read_text(encoding="utf-8")
     assert '"CAPABILITY_PASS"' in text

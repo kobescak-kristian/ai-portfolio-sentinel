@@ -25,7 +25,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from agents.checker import oidc  # noqa: E402
 from sentinel.phase5 import artifact_names  # noqa: E402
-from sentinel.phase5.bundle import create_fresh_root  # noqa: E402
+from sentinel.phase5.bundle import BundleSafetyError, create_fresh_root  # noqa: E402
 from sentinel.phase5.github_context import GithubContextError, derive_github_context  # noqa: E402
 from sentinel.phase5.github_evidence import GithubEvidenceClient  # noqa: E402
 from sentinel.phase5.models import OneShotMarker  # noqa: E402
@@ -79,6 +79,41 @@ def assert_expected_source_live(client: GithubEvidenceClient, expected_source_sh
         raise Phase5ScriptError(
             f"live origin/main head {live_head} != expected_source_sha {expected_source_sha}"
         )
+
+
+def prepare_fresh_work_root(work_root: Path) -> Path:
+    """Safely establish ``work_root`` as a fresh directory beneath its
+    already-existing trusted parent, using the SAME anchored-creation
+    safety primitive (``bundle.create_fresh_root``) that later governs
+    extracting downloaded artifact content beneath it (dispatch
+    q77-p5d-premarker-workroot-init-repair-a).
+
+    ``discover_oneshot_markers`` treats ``work_root`` as a trusted
+    extraction anchor, but nothing previously established that
+    ``work_root`` itself was ever safely created — on GitHub Actions,
+    ``WORK_ROOT`` (``${{ runner.temp }}/p5-gate`` or ``.../p5-probe``)
+    is a subdirectory of the runner-guaranteed ``runner.temp``, never
+    created by any workflow step. ``create_fresh_root`` requires its
+    OWN destination_trusted_root argument to already exist, so calling
+    it with ``work_root`` itself as that argument (as every existing
+    caller previously did, unconditionally) fails whenever
+    ``work_root`` does not yet exist -- exactly the
+    ``BundleSafetyError: destination trusted root does not exist``
+    crash observed in a real preflight rehearsal the instant a real
+    marker existed to discover (P5-C's own run never hit this because
+    it discovered zero markers).
+
+    This call must run BEFORE any one-shot discovery. It fails closed
+    (raises ``Phase5ScriptError``, caught by the same
+    ``except Phase5ScriptError`` every other preflight check already
+    uses) if ``work_root`` already exists, is a symlink, or its parent
+    is missing/unsafe -- never silently reused, and never using
+    ``mkdir(parents=True, exist_ok=True)`` as a substitute for that
+    freshness contract."""
+    try:
+        return create_fresh_root(work_root.parent, work_root)
+    except BundleSafetyError as exc:
+        raise Phase5ScriptError(f"work-root preparation failed: {exc}") from exc
 
 
 def discover_oneshot_markers(client: GithubEvidenceClient, work_root: Path) -> list[OneShotMarker]:
