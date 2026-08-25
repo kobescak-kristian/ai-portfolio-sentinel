@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import urllib.request
 import zipfile
 from datetime import datetime, timezone
 
@@ -199,6 +200,85 @@ def test_download_artifact_rejects_too_many_entries(tmp_path):
     ref = ArtifactRef(id=4, name="too-many", workflow_run_id="1")
     with pytest.raises(ArtifactUnsafe):
         client.download_artifact(ref, tmp_path, tmp_path / "bundle")
+
+
+# ======================================================================
+# Redirect-safe transport regression (dispatch
+# q77-p5d-premarker-artifact-redirect-repair-a).
+#
+# This repo's autouse `block_network` fixture (tests/conftest.py)
+# structurally forbids ANY real socket.connect from a test, including
+# 127.0.0.1 loopback -- proven by test_r22_block_network_guard_is_active
+# (test_adr0008.py) and its twin in test_phase3_gate_runner.py. A real
+# two-origin HTTP-server fixture is therefore not an available option
+# here. Instead these tests call the REAL production classes'
+# REAL methods directly with REAL urllib.request.Request objects --
+# proving the exact mechanism (what a redirect handler's
+# `redirect_request` returns) deterministically and fully offline,
+# never touching a socket. This is precisely where the defect and the
+# fix both live: `_get_bytes` calls its opener exactly once and never
+# sees the intermediate redirect at all -- redirect handling happens
+# entirely inside the opener's installed HTTPRedirectHandler, which is
+# what these tests target directly.
+# ======================================================================
+
+def test_stdlib_default_redirect_handler_forwards_authorization():
+    """Proves the actual vulnerability mechanism behind GitHub Actions
+    run 32869033063's HTTP 401: the plain stdlib
+    ``HTTPRedirectHandler.redirect_request`` -- called exactly as
+    ``http_error_302`` calls it internally -- copies the original
+    request's ``Authorization`` header onto the redirected request."""
+    original = urllib.request.Request(
+        "https://api.github.com/repos/acme/repo/actions/artifacts/1/zip",
+        headers={"Authorization": "Bearer SUPER-SECRET-TOKEN"},
+    )
+    redirected = urllib.request.HTTPRedirectHandler().redirect_request(
+        original, io.BytesIO(b""), 302, "Found", {},
+        "https://blob.storage.example/artifact.zip?sig=deadbeef-signed-query",
+    )
+    assert redirected.get_header("Authorization") == "Bearer SUPER-SECRET-TOKEN"
+
+
+def test_no_auth_on_redirect_handler_strips_authorization_but_preserves_url():
+    """Proves the repair, called the exact same way: ``_NoAuthOnRedirectHandler``
+    (1) never carries Authorization onto the redirected request, and
+    (3) still preserves the redirected URL/query string exactly --
+    it reuses the stdlib's own logic via ``super()`` and strips only
+    the one header."""
+    from sentinel.phase5.github_evidence import _NoAuthOnRedirectHandler
+
+    original = urllib.request.Request(
+        "https://api.github.com/repos/acme/repo/actions/artifacts/1/zip",
+        headers={"Authorization": "Bearer SUPER-SECRET-TOKEN", "Accept": "application/vnd.github+json"},
+    )
+    redirect_url = "https://blob.storage.example/artifact.zip?sig=deadbeef-signed-query"
+    redirected = _NoAuthOnRedirectHandler().redirect_request(
+        original, io.BytesIO(b""), 302, "Found", {}, redirect_url,
+    )
+    assert redirected is not None
+    assert redirected.get_header("Authorization") is None
+    assert redirected.full_url == redirect_url
+    # Non-credential headers are still carried over, exactly like the
+    # stdlib default -- only Authorization is special-cased.
+    assert redirected.get_header("Accept") == "application/vnd.github+json"
+
+
+def test_default_opener_is_wired_to_the_no_auth_redirect_handler():
+    """Proves the fix is actually plugged into GithubEvidenceClient's
+    default construction path, not merely defined-but-unused: the
+    constructor's default ``opener`` argument is a bound
+    ``OpenerDirector.open`` method whose installed handlers include
+    ``_NoAuthOnRedirectHandler`` and exclude the plain stdlib
+    ``HTTPRedirectHandler`` (which ``build_opener`` would otherwise
+    install by default)."""
+    from sentinel.phase5.github_evidence import _NoAuthOnRedirectHandler
+
+    default_opener = GithubEvidenceClient.__init__.__kwdefaults__["opener"]
+    director = default_opener.__self__  # OpenerDirector.open is a bound method
+    assert isinstance(director, urllib.request.OpenerDirector)
+    handler_types = [type(h) for h in director.handlers]
+    assert _NoAuthOnRedirectHandler in handler_types
+    assert urllib.request.HTTPRedirectHandler not in handler_types  # only the subclass, no duplicate
 
 
 def test_tampered_downloaded_bundle_fails_validate_bundle(tmp_path):

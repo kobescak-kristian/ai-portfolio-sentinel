@@ -31,6 +31,47 @@ _MAX_ARTIFACT_ENTRIES = 64
 _MAX_ARTIFACT_UNCOMPRESSED_BYTES = 64 * 1024 * 1024  # 64 MiB — generous, still bounded
 
 
+class _NoAuthOnRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Redirects exactly like ``urllib.request``'s stdlib default,
+    except the ``Authorization`` header is never carried over to the
+    redirected request (dispatch
+    q77-p5d-premarker-artifact-redirect-repair-a).
+
+    GitHub's artifact-download endpoint
+    (``GET /repos/{repo}/actions/artifacts/{id}/zip``) responds with a
+    302 to a pre-signed, time-limited storage URL that authenticates
+    via its own query-string signature and rejects an unexpected
+    ``Authorization`` header with HTTP 401. The stdlib default
+    ``HTTPRedirectHandler.redirect_request`` copies every original
+    header except ``Content-Length``/``Content-Type`` onto the
+    redirected request, so ``Authorization`` is forwarded by default
+    (confirmed by reading ``inspect.getsource`` of that method,
+    2026-08) — this override reuses that exact logic via ``super()``
+    and strips only the one header that must never leave the original
+    host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is not None:
+            new_req.remove_header("Authorization")
+        return new_req
+
+
+def _redirect_safe_default_opener() -> Callable:
+    """The default network opener for ``GithubEvidenceClient``: behaves
+    exactly like ``urllib.request.urlopen`` for every existing call
+    site, except a redirect never carries the bearer token to its
+    destination (see ``_NoAuthOnRedirectHandler``). Built once at
+    import time — ``OpenerDirector.open`` has the same
+    ``(request, timeout=...)`` call signature ``urlopen`` does, so
+    every test that injects its own fake ``opener`` (replacing this
+    default entirely) is completely unaffected."""
+    return urllib.request.build_opener(_NoAuthOnRedirectHandler).open
+
+
+_DEFAULT_OPENER = _redirect_safe_default_opener()
+
+
 class GithubEvidenceError(RuntimeError):
     """A GitHub REST call failed, returned an unexpected shape, or a
     downloaded artifact failed the local safety checks below. Never
@@ -85,7 +126,7 @@ class GithubEvidenceClient:
         repository: str,
         token: str,
         *,
-        opener: Callable = urllib.request.urlopen,
+        opener: Callable = _DEFAULT_OPENER,
         page_limit: int = 10,
     ) -> None:
         self._api_url = api_url.rstrip("/")
