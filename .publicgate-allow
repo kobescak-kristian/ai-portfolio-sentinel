@@ -51,6 +51,10 @@ STATE.md |   No qualifying Phase-5 scheduled run exists. Q-83 is untouched. The 
 .github/workflows/sentinel-schedule.yml | # ADR-0011 Section 2; Q-77 owner ruling 4 (2026-08-23) is the dated | owner ruling 2026-08-24; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
 STATE.md |   group `sentinel-schedule`, 20-minute timeout, matching Q-77 owner | owner ruling 2026-08-24; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
 STATE.md |   invoked against the committed ledger. Q-83 untouched. No unrelated | owner ruling 2026-08-24; Q-83 historical non-event provenance in ai-portfolio-sentinel only
+STATE.md |   existing Q-77 quality methodology more closely than 3B, and Option 4 | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
+STATE.md |   Q-77 quality decision surface (model contract, fixtures, answer key, | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
+STATE.md |   ruling applies to Q-77 only — it does not retroactively convert Q-77 | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
+STATE.md |   STARTED. Q-77 remains OPEN. Production-ready claim NOT PERMITTED. | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
 
 # adjudicated-secrets
 tests/test_auth_wif.py |     canary_value = "sk-ant-oat01-super-secret-canary-value" | tests/test_auth_wif.py:186 | def test_credential_and_token_values_never_appear_in_any_error_message(token_file): | owner ruling 2026-08-24

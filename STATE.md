@@ -3194,3 +3194,151 @@ merges every change."
   Next action: P5-D as its own child dispatch; the corresponding
   governance truth record for this evidence is recorded separately, in
   a later dispatch, in the private operations OS.
+- 2026-08-26 - P5-D ORIGINAL OFFICIAL GATE EXECUTION-INVALID, FORENSICS
+  COMPLETE, OPTION-3A OWNER RULING FROZEN (dispatch
+  q77-p5d-invalid-run-record-a).
+  Original official Sonnet gate dispatch, Actions run `32880880053`
+  (job `97909823422`, workflow `sentinel-official-gate`, event
+  `workflow_dispatch`, attempt 1, source SHA
+  `eef88a289cf465ad352ee223221d5497465469b3`): preflight SUCCESS,
+  `P5D_OFFICIAL_SONNET_GATE` one-shot marker upload SUCCESS, execute
+  entered the real Sonnet path, GitHub externally terminated the job at
+  the configured 30-minute job ceiling (execute conclusion CANCELLED),
+  and the final gate-evidence upload FAILED because `_run_gate_session`
+  never returned and no evidence file was ever written. The marker
+  (`sentinel-p5-oneshot-p5d-official-sonnet-gate-r32880880053`) exists
+  and was independently verified by download; the one-shot for this
+  purpose is therefore permanently CONSUMED. Disposition:
+  `EXECUTION_INVALID / NO_QUALITY_RESULT` — explicitly not GREEN, not
+  HONEST_FAIL, not a valid scored result, and not evidence Sonnet
+  passed or failed.
+  Read-only forensic investigation (two rounds) respected the
+  quality-content firewall throughout: no Sonnet prompt/response
+  content from this run was inspected or recovered; only
+  infrastructure/non-content metadata (job/step timing, the pinned
+  `claude-agent-sdk==0.2.110` source, and the operator's own Anthropic
+  Console Usage export for the `sentinel` workspace) was used.
+  Findings: the gate runs two sequential evaluation passes of 23
+  sequential model-path judgments each (46 total, no concurrency at any
+  level). A pre-existing, committed historical data point
+  (`artifacts/phase3_gate_diagnosis.json`, run
+  `r-8f646359aef946178f2863acd75887c4`, 2026-08-05) records 17 real
+  Haiku calls in 637s (~37.5s/call); naive same-rate extrapolation to
+  46 sequential calls is ~28m44s, already brushing the 30-minute
+  ceiling — this evidence existed before the P5-D dispatch and was not
+  checked against the job timeout during readiness. The operator's
+  Anthropic Usage CSV for the incident window shows real, paid Sonnet
+  activity (42,797 input tokens, 10,062 output tokens across nine
+  minute-bucketed usage rows at 18:00-18:24 UTC) continuing until close
+  to the 18:27:15 UTC external kill; exact logical-judgment/call
+  boundaries are NOT established by this minute-bucketed data and are
+  recorded as UNKNOWN, not guessed. Rate-limit evidence showed
+  utilization orders of magnitude below configured Sonnet limits,
+  disconfirming provider throttling as a cause; workspace cost
+  increased approximately USD 0.19 over a window that also contains
+  unrelated Haiku activity, so exact Sonnet-only cost is not separately
+  attributed. Direct inspection of the pinned SDK confirmed its
+  model-message read path carries no elapsed-time deadline, and
+  Sentinel's own bounds (turn count, tool-call count, EUR budget) are
+  not time bounds either — no wall-clock ceiling exists anywhere
+  beneath the GitHub Actions 30-minute job ceiling. HIGH-CONFIDENCE
+  INFERENCE: ordinary cumulative real-model runtime is sufficient to
+  explain the timeout and is the leading causal explanation; a
+  pathologically slow/stuck invocation cannot be fully excluded but is
+  not required to explain the result. Separately, `gate_root`
+  (`gate.sqlite3`, `gate.jsonl`, `FINDINGS.md`, `cost_ledger.jsonl`)
+  accumulates real incremental state during execution, but the
+  workflow's artifact contract uploads only the final `ARTIFACTS_DIR`,
+  never `gate_root`; because GitHub killed the job before
+  `_run_gate_session` returned, that incremental evidence was lost with
+  the ephemeral runner. Permanently unknowable from surviving evidence:
+  exact completed-judgment count, exact stopping point in run 1 vs run
+  2, per-request timestamps/latencies, whether a specific invocation
+  stalled, and whether a completed run would have scored GREEN or
+  HONEST_FAIL.
+  Readiness correction: the prior Stage-5 `TECHNICAL_READY`
+  determination (dispatch `q77-p5d-s5-rereadiness-c`) is superseded for
+  authorizing any replacement execution. The checks it actually
+  performed (pre-marker path completeness, post-marker
+  ordinary-exception handling, `_run_gate_session` ordinary-mechanics
+  coverage) remain valid within their tested scope and were not
+  falsified by this incident. It omitted two material dimensions never
+  posed as questions: wall-clock/runtime-envelope feasibility of the
+  real cumulative workload, and evidence survivability under external
+  process/job termination as distinct from an ordinary in-process
+  exception. Recorded as a readiness/design gap, not unavoidable
+  platform bad luck.
+  Independent governance red-team, completed after forensics, ranked
+  four options — 1 (permanently block P5-D), 3A (one exceptional
+  replacement single-run gate), 3B (replace the methodology with a
+  prospectively frozen multi-run campaign), 4 (retroactively close
+  P5-D from the timed-out execution) — `3A > 1 > 3B >>> 4`, on the
+  grounds that the original execution produced no usable quality
+  observation, no quality content was inspected, replacement rests on
+  objectively established execution invalidity, 3A preserves the
+  existing Q-77 quality methodology more closely than 3B, and Option 4
+  is evidentially invalid.
+  Frozen owner ruling `q77-p5d-replacement-owner-ruling-a`, status
+  FROZEN/APPROVED: one replacement P5-D official Sonnet gate execution
+  MAY eventually be conducted, but only after execution/evidence
+  defects are repaired and fresh technical readiness is independently
+  re-established — an exceptional replacement of an execution-invalid
+  measurement, never an ordinary rerun, confirmation run, or additional
+  attempt after an unfavorable valid result. Binding conditions:
+  original run `32880880053` remains permanently visible as
+  `EXECUTION_INVALID / NO_QUALITY_RESULT` with its marker permanently
+  consumed; no original Sonnet quality content may be recovered,
+  inspected, reconstructed, or used to influence the replacement; the
+  Q-77 quality decision surface (model contract, fixtures, answer key,
+  prompts, scorer/checker semantics, thresholds, pass/fail rule,
+  two-run workload methodology) stays frozen — any repair discovering a
+  genuinely required quality-affecting change must STOP and return to
+  owner governance rather than making it; repair scope is limited to
+  execution/evidence-envelope defects needed to make the frozen
+  evaluation reliably executable and evidentially recoverable; fresh
+  re-readiness is mandatory before replacement dispatch; exactly ONE
+  replacement official execution is authorized after readiness is
+  accepted, using a distinct replacement identity/marker tied
+  explicitly to original run `32880880053`; a valid replacement result
+  (GREEN or HONEST_FAIL) is terminal, with no confirmation run and no
+  retry merely because a result is close, surprising, or seems like an
+  unlucky stochastic realization; if the replacement is itself
+  execution-invalid, evidence is preserved, P5-D execution stops, no
+  automatic rerun or further automatic replacement occurs, and the
+  matter returns to owner governance for a wholly new ruling;
+  replacement eligibility rests on objective execution invalidity and
+  must be counterfactually defensible even had partial invalid-run
+  evidence appeared unfavorable — a valid unfavorable terminal result
+  may never be relabeled execution-invalid to obtain another attempt;
+  original incident history remains permanently visible; and this
+  ruling applies to Q-77 only — it does not retroactively convert Q-77
+  into a multi-run statistical campaign, and future variance-aware
+  stochastic-gate governance is explicitly deferred.
+  ACTUAL WRITE SET: one path, `STATE.md`. No workflow, code, test, ADR,
+  `requirements*.txt`, or `.publicgate-allow` change; no marker or
+  evidence JSON committed; no new `artifacts/*.json`; no
+  `FINDINGS.md`/`README.md`/`SPEC.md` change; no README Version Log
+  row.
+  NON-EVENTS: no repair implementation; no technical-repair ADR drafted
+  or adopted; no workflow dispatch/rerun/cancel; no OIDC/WIF exchange;
+  no Anthropic/model call; no Sonnet prompt/response content inspected
+  or recovered; no replacement marker created; no replacement execution
+  authorized beyond recording the owner ruling that gates it; no change
+  to the frozen P5-D quality methodology; no multi-run-gate governance
+  work begun; no private-operations-OS write (checked this dispatch:
+  that repo's own github-ops STATE declares Sentinel's STATE.md the
+  sole build truth for this repo, "pointer only" otherwise, and no
+  program-level line there changes because of this incident).
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C
+  COMPLETE. **P5-D remains IN PROGRESS / UNRESOLVED** — original
+  official one-shot CONSUMED, original official run `EXECUTION_INVALID
+  / NO_QUALITY_RESULT`, forensic investigation COMPLETE, governance
+  red-team COMPLETE, Option 3A SELECTED, owner ruling
+  `q77-p5d-replacement-owner-ruling-a` FROZEN, replacement NOT YET
+  READY TO EXECUTE, repair NOT YET IMPLEMENTED, fresh re-readiness NOT
+  YET COMPLETE. P5-E NOT STARTED. Phase 5 IN PROGRESS. Phase 6 NOT
+  STARTED. Q-77 remains OPEN. Production-ready claim NOT PERMITTED.
+  v0.7 NOT TAGGED.
+  Next action: derive/red-team the narrow ADR and technical repair
+  requirements from `q77-p5d-replacement-owner-ruling-a`, as its own
+  child dispatch; not begun here.
