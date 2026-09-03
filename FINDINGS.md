@@ -161,3 +161,75 @@
 - Findings: 0 new · 4 still open · 0 resolved
 
 <!-- /sentinel:run r-39edde70a2e64336aa95f570ac934000 -->
+<!-- sentinel:run r-348fd07f7232411abd018b395db270e0 -->
+## Run r-348fd07f7232411abd018b395db270e0 — 2026-08-26T17:44:26+00:00
+
+- Run kind: **live** — REAL DATA — the operator's own public repositories
+- Ledger status: COMPLETED
+- Tasks: 204 created / 204 terminal (done 204 · failed 0 · dead-letter 0)
+- Findings: 0 new · 4 still open · 0 resolved
+
+<!-- /sentinel:run r-348fd07f7232411abd018b395db270e0 -->
+<!-- sentinel:run r-383c1906e4094de38c1942c6f035f0eb -->
+## Run r-383c1906e4094de38c1942c6f035f0eb — 2026-08-27T19:57:00+00:00
+
+- Run kind: **live** — REAL DATA — the operator's own public repositories
+- Ledger status: COMPLETED
+- Tasks: 204 created / 204 terminal (done 204 · failed 0 · dead-letter 0)
+- Findings: 0 new · 4 still open · 0 resolved
+
+<!-- /sentinel:run r-383c1906e4094de38c1942c6f035f0eb -->
+<!-- sentinel:run r-6e1b1675f36f4d0198659aa9f20971d1 -->
+## Run r-6e1b1675f36f4d0198659aa9f20971d1 — 2026-08-29T02:22:37+00:00
+
+- Run kind: **live** — REAL DATA — the operator's own public repositories
+- Ledger status: COMPLETED
+- Tasks: 204 created / 204 terminal (done 204 · failed 0 · dead-letter 0)
+- Findings: 0 new · 4 still open · 0 resolved
+
+<!-- /sentinel:run r-6e1b1675f36f4d0198659aa9f20971d1 -->
+<!-- sentinel:run r-671291f3f06d46e79bad06cc0e248424 -->
+## Run r-671291f3f06d46e79bad06cc0e248424 — 2026-08-30T02:26:43+00:00
+
+- Run kind: **live** — REAL DATA — the operator's own public repositories
+- Ledger status: COMPLETED
+- Tasks: 204 created / 204 terminal (done 204 · failed 0 · dead-letter 0)
+- Findings: 0 new · 4 still open · 0 resolved
+
+<!-- /sentinel:run r-671291f3f06d46e79bad06cc0e248424 -->
+<!-- sentinel:run r-651d995b279b414fad1cd0fcce485afb -->
+## Run r-651d995b279b414fad1cd0fcce485afb — 2026-08-30T12:44:05+00:00
+
+- Run kind: **live** — REAL DATA — the operator's own public repositories
+- Ledger status: COMPLETED
+- Tasks: 204 created / 204 terminal (done 204 · failed 0 · dead-letter 0)
+- Findings: 0 new · 4 still open · 0 resolved
+
+<!-- /sentinel:run r-651d995b279b414fad1cd0fcce485afb -->
+<!-- sentinel:run r-6953b823c57e4ba8a8a320a0c2ab4e67 -->
+## Run r-6953b823c57e4ba8a8a320a0c2ab4e67 — 2026-08-31T06:54:40+00:00
+
+- Run kind: **live** — REAL DATA — the operator's own public repositories
+- Ledger status: COMPLETED
+- Tasks: 204 created / 204 terminal (done 204 · failed 0 · dead-letter 0)
+- Findings: 0 new · 4 still open · 0 resolved
+
+<!-- /sentinel:run r-6953b823c57e4ba8a8a320a0c2ab4e67 -->
+<!-- sentinel:run r-26de1b32c227445a88aad7b4b7654f20 -->
+## Run r-26de1b32c227445a88aad7b4b7654f20 — 2026-09-01T06:11:07+00:00
+
+- Run kind: **live** — REAL DATA — the operator's own public repositories
+- Ledger status: COMPLETED
+- Tasks: 204 created / 204 terminal (done 204 · failed 0 · dead-letter 0)
+- Findings: 0 new · 4 still open · 0 resolved
+
+<!-- /sentinel:run r-26de1b32c227445a88aad7b4b7654f20 -->
+<!-- sentinel:run r-b582b472d679428aac3ac5d24d2fbbe8 -->
+## Run r-b582b472d679428aac3ac5d24d2fbbe8 — 2026-09-02T06:06:10+00:00
+
+- Run kind: **live** — REAL DATA — the operator's own public repositories
+- Ledger status: COMPLETED
+- Tasks: 204 created / 204 terminal (done 204 · failed 0 · dead-letter 0)
+- Findings: 0 new · 4 still open · 0 resolved
+
+<!-- /sentinel:run r-b582b472d679428aac3ac5d24d2fbbe8 -->

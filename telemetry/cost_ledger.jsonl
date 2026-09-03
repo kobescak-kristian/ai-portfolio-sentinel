@@ -16,3 +16,11 @@
 {"cost_eur_micros":4676,"input_tokens":1811,"model":"claude-haiku-4-5-20251001","output_tokens":600,"recorded_at_utc":"2026-08-24T22:09:31.513508+00:00","run_id":"r-p5c-32783229864","run_kind":"live","schema_version":1}
 {"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-25T09:29:03+00:00","run_id":"r-7cb7b5141a0e421a862c5331d4ccdda0","run_kind":"live","schema_version":1}
 {"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-25T09:30:26+00:00","run_id":"r-39edde70a2e64336aa95f570ac934000","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-26T17:46:03+00:00","run_id":"r-348fd07f7232411abd018b395db270e0","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-27T19:59:30+00:00","run_id":"r-383c1906e4094de38c1942c6f035f0eb","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-29T02:24:01+00:00","run_id":"r-6e1b1675f36f4d0198659aa9f20971d1","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-30T02:29:11+00:00","run_id":"r-671291f3f06d46e79bad06cc0e248424","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-30T12:45:27+00:00","run_id":"r-651d995b279b414fad1cd0fcce485afb","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-31T06:56:15+00:00","run_id":"r-6953b823c57e4ba8a8a320a0c2ab4e67","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-01T06:13:53+00:00","run_id":"r-26de1b32c227445a88aad7b4b7654f20","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-02T06:07:29+00:00","run_id":"r-b582b472d679428aac3ac5d24d2fbbe8","run_kind":"live","schema_version":1}
