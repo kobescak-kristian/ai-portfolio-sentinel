@@ -381,9 +381,10 @@ probe) is COMPLETE.** P5-D (official Sonnet gate) is IN PROGRESS /
 UNRESOLVED: the original official execution is `EXECUTION_INVALID /
 NO_QUALITY_RESULT` with its one-shot consumed, and the Option-3A
 replacement repair path is active under the ADOPTED
-`adr/0012-p5d-replacement-execution-envelope.md`; repair
-implementation is pending, and the replacement is not ready or
-authorized for dispatch. Windows scheduler cutover, prospective
+`adr/0012-p5d-replacement-execution-envelope.md`; repair Stage 1
+(the durable-history foundation) is landed, later execution-envelope,
+rehearsal and readiness stages remain pending, and the replacement is
+not ready or authorized for dispatch. Windows scheduler cutover, prospective
 five-slot live window, evidence finalization and release remain
 P5-E through P5-H and are still pending. Phase 6 is NOT STARTED.
 The overall production-readiness program
@@ -3485,3 +3486,115 @@ merges every change."
   Next action: implement the amended ADR-0012 repair as its own child
   dispatch, creating the historical durable receipts before
   2026-11-22T22:09:06Z; not begun here.
+- 2026-09-15 - ADR-0012 REPAIR STAGE 1 LANDED: DURABLE-HISTORY
+  FOUNDATION (dispatch q77-p5d-repair-stage1-implement-a).
+  Stage 1 of the ADR-0012 Amendment A rule A1 repair is implemented:
+  `sentinel/phase5/receipts.py` (strict, frozen, `extra="forbid"`
+  receipt records; four receipt classes with class-specific cross-field
+  rules; a hash-chained, append-only JSONL registry with complete-chain
+  validation on every load; append = validate whole registry, refuse a
+  duplicate semantic event `(receipt_class, purpose, github_run_id,
+  run_attempt)`, construct exactly one receipt, append one UTF-8/LF
+  line, flush, fsync, reload, require the reloaded head to equal the
+  appended receipt; no update, delete, truncate, replace or repair API;
+  a missing registry is an error for every ordinary read and append,
+  never empty history, with an explicit one-time initial-establishment
+  exception only; read helpers `consumed_purposes`,
+  `is_purpose_consumed`, `marker_receipts`,
+  `authoritative_quality_receipt`, `execution_dispositions`);
+  `scripts/establish_phase5_historical_receipts.py` (local operator
+  utility, GET/download only, OS-temp extraction, no facts file: the
+  reviewed dry run prints a deterministic `FACTS_SHA256` over the
+  canonical ordered four-fact bundle of the twelve immutable
+  source-derived fields, and the real run independently re-verifies
+  every source, recomputes that hash, and stops before any append on
+  mismatch); `tests/test_phase5_receipts.py` (57 model-free,
+  network-blocked tests including chain tampering, duplicate semantic
+  history, missing-registry fail-closed, the pre-push guard predicate
+  in a temporary git repository, and the committed-registry pins);
+  the `.githooks/pre-push` append-only guard (any removed or rewritten
+  registry content line blocks the push, including whole-file
+  deletion; initial creation and pure append pass); and
+  `DATA_RETENTION_POLICY.md` sections 2, 11 and new 16.
+  Historical establishment, executed exactly once after a reviewed dry
+  run whose `FACTS_SHA256`
+  `448f8703dac70922ab8218e4f542bfd332e41bac201741d72c3849e29ee27ea9`
+  the real run reproduced: every source artifact was discovered by
+  exact artifact ID, name and run binding, downloaded through the
+  existing safe extraction path, strict-parsed, and correlated to run
+  path, event `workflow_dispatch`, attempt 1 and head SHA; the P5-C
+  probe CostRow was verified present exactly once, byte-equivalently,
+  in the committed cost ledger; the original P5-D run inventory was
+  verified to be exactly its marker with no surviving gate-evidence
+  artifact; no log, gate_root, model output or Sonnet quality content
+  was inspected. `artifacts/phase5_receipt_registry.jsonl` now holds
+  exactly four receipts, in order:
+  (1) `ONESHOT_MARKER_CONSUMED` / `P5C_WIF_PROBE` / run `32783229864`
+  attempt 1 / source `f5b2ae6e393252594efa5b48e1f86a1f2296f797` /
+  artifact ID `9540505807` / payload `marker.json` SHA-256
+  `b83e321c670a90fa94cdd1095cee7f5f2b90c9a91fbbe444e03e788a9de744cb`
+  / receipt SHA-256
+  `f23b9029f8717110af1f695e614ab9e05cb33fd3f7054edfaba08e6aca486cc8`;
+  (2) `PROBE_EVIDENCE` / `CAPABILITY_PASS` / same run / artifact ID
+  `9540511349` / payload `probe-evidence.json` SHA-256
+  `740da60690b380c4abbf17b81e566185947db6e0907583e0088353980e228da4`
+  / receipt SHA-256
+  `c42ad534a29b2bbdc437c77838efaf2177ec393a7818bea54cc60a65d78d5a25`;
+  (3) `ONESHOT_MARKER_CONSUMED` / `P5D_OFFICIAL_SONNET_GATE` / run
+  `32880880053` attempt 1 / source
+  `eef88a289cf465ad352ee223221d5497465469b3` / artifact ID
+  `9575720463` / payload `marker.json` SHA-256
+  `af74d78e886afc7ef24cbb0f3f2e30e1f709ed3494b144028fd74ca914e2375f`
+  / receipt SHA-256
+  `cd220988c6f4e92a9fd39ec81ba7a092a486429cc40db40e9f01322a82d9b782`;
+  (4) `EXECUTION_DISPOSITION` / `EXECUTION_INVALID / NO_QUALITY_RESULT`
+  / same run / no artifact fields / governance reference
+  `q77-p5d-invalid-run-record-a` / owner ruling
+  `q77-p5d-replacement-owner-ruling-a` / receipt SHA-256
+  `9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39`.
+  Registry head SHA-256
+  `9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39`,
+  four lines, pinned by `tests/test_phase5_receipts.py`. No
+  `GATE_EVIDENCE` receipt exists for run `32880880053`, and none was
+  fabricated. Earliest historical source expiry observed
+  `2026-11-22T22:09:06Z` (P5-C marker and probe evidence); the
+  original P5-D marker expires `2026-11-23T17:56:54Z`. Local
+  verification: 1550 passed, 9 skipped (the existing Windows platform skips; Linux CI carries 0), 91.4% line coverage, `sentinel/phase5/receipts.py` 93.8%; `python -m pip check` PASS; Tier 0
+  validator PASS; Phase-1 freeze guard PASS. CI for this commit is not
+  self-cited here.
+  Executing model: Fable 5.1 (the routing named Sonnet; recorded as
+  observed).
+  ACTUAL WRITE SET: `sentinel/phase5/receipts.py` (new),
+  `scripts/establish_phase5_historical_receipts.py` (new),
+  `artifacts/phase5_receipt_registry.jsonl` (new, tool-written),
+  `tests/test_phase5_receipts.py` (new), `.githooks/pre-push`
+  (append-only guard inserted before the final PASS echo),
+  `DATA_RETENTION_POLICY.md` (sections 2, 11, new 16), `STATE.md` (Plan
+  field wording plus this entry), `.publicgate-allow` (one entry for
+  this entry's program-status line). No workflow, fixture, prompt,
+  scorer, checker, threshold, evaluation, requirements, README,
+  FINDINGS.md, telemetry, official-gate runner or P5-E seam change; no
+  wiring of the registry into one-shot discovery, replacement
+  eligibility, the official gate or P5-E.
+  NON-EVENTS: no replacement execution; no official Sonnet quality
+  gate; no rehearsal execution (neither the GitHub kill rehearsal nor
+  the N=24 Sonnet timing rehearsal); no model or provider call; no
+  OIDC/WIF exchange; no marker created, reset or consumed; no GitHub
+  workflow dispatch, rerun or cancel; no federation-rule, provider-cap,
+  secret, variable or environment mutation; no original Sonnet quality
+  content inspected; no quality-surface change; no P5-E freeze,
+  cutover or release. Read-only GitHub REST listing, metadata and
+  artifact download only.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C
+  COMPLETE. **P5-D remains IN PROGRESS / UNRESOLVED**: original official
+  run `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker
+  CONSUMED, ADR-0012 repair Stage 1 LANDED, model-free GitHub kill
+  rehearsal NOT EXECUTED, Sonnet timing rehearsal NOT EXECUTED, fresh
+  replacement readiness NOT COMPLETE, replacement NOT READY / NOT
+  AUTHORIZED FOR DISPATCH. P5-E NOT STARTED. Phase 5 IN PROGRESS.
+  Phase 6 NOT STARTED. Q-77 remains OPEN. Production-ready claim NOT
+  PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2 of the ADR-0012 repair (execution envelope,
+  journal, finalizer, and wiring of the durable registry into one-shot
+  discovery, replacement eligibility and the P5-E seam) as its own
+  bounded child dispatch; not begun here.

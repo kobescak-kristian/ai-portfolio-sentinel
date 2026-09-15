@@ -25,6 +25,7 @@ never mixed with, any monitored repository's data.
 | Findings report | `FINDINGS.md` | **Yes** | Append-only, operator commits at gate points |
 | Fetched repo/site content | In-memory only, per check | No | Never persisted verbatim |
 | Frozen Phase-1 eval bed | `fixtures/`, `evals/` | Yes (frozen) | Immutable — guarded by `scripts/check_phase1_frozen.py` |
+| Durable Phase-5 receipt registry (§16) | `artifacts/phase5_receipt_registry.jsonl` | **Yes** | Append-only, hash-chained; never truncated or rewritten |
 
 ## 3. Locally persisted data
 
@@ -133,6 +134,7 @@ unaffected because it lives in git.
 | `scripts/sentinel.local.json` | runtime-local, gitignored | may contain a machine-local python path — never tracked |
 | `fixtures/`, `evals/` | committed, **frozen** | Phase-1 boundary; guarded by `scripts/check_phase1_frozen.py` |
 | Actions artifact bundles (GENESIS/slot/refusal/evidence, §15) | GitHub Actions artifact storage, not git | never committed to this repository; retained 90 days (platform maximum for a public repo) |
+| `artifacts/phase5_receipt_registry.jsonl` (§16) | committed, **append-only** | hash-chained receipts of evidence already independently established from artifact bytes; `.githooks/pre-push` blocks any removed or rewritten line, including whole-file deletion |
 
 ## 12. Current limitations (dated, honest)
 
@@ -299,3 +301,60 @@ runs.
 
 Empty (zero rows) for every stub-mode run, including the standing
 scheduled task's runs.
+
+## 16. ADR-0012 Amendment A addition: durable receipt memory
+
+`adr/0012-p5d-replacement-execution-envelope.md` (Amendment A, rule
+A1; landed under dispatch q77-p5d-repair-stage1-implement-a, Stage 1)
+adds one committed data class, `artifacts/phase5_receipt_registry.jsonl`
+(`sentinel/phase5/receipts.py`).
+
+**Why it exists.** Every Phase-5 workflow uploads its artifacts with
+`retention-days: 90`, the maximum GitHub permits for a public
+repository, after which the platform deletes them (§15). An
+artifact-only mechanism therefore cannot truthfully carry permanent
+one-shot consumption or a later reconstruction of the authoritative
+P5-D history.
+
+**What it is, and is not.**
+
+- GitHub Actions artifact bytes remain the primary evidence while they
+  are retained. The registry does not replace them.
+- Actions artifacts expire after the platform retention period. The
+  historical artifacts the registry currently covers expire between
+  2026-11-22T22:09:06Z and 2026-11-23T17:56:54Z.
+- The registry is committed, hash-chained (each receipt carries the
+  SHA-256 of the immediately preceding canonical receipt; the first
+  points at 64 zeroes) and append-only. It is durable memory of
+  evidence that was ALREADY independently established: each receipt
+  records that a named, numbered artifact existed, was downloaded
+  through the safe extraction path, strict-parsed, correlated to its
+  run, and produced the stated disposition, together with the SHA-256
+  of the verified payload bytes.
+- Receipt history is never truncated or rewritten. There is no update,
+  delete, truncate or replace API in the module; a semantic event
+  (receipt class, purpose, run id, run attempt) is immutable once
+  established and a second receipt for it is refused regardless of its
+  other fields; `.githooks/pre-push` blocks any push whose diff removes
+  or rewrites a registry line, including deletion of the file. A
+  missing registry is an error for every ordinary read, never empty
+  history.
+- Artifact expiry never resets one-shot consumption. Consumption truth
+  comes from durable `ONESHOT_MARKER_CONSUMED` receipts, not from
+  artifact retention.
+- Receipts never recreate or infer missing quality content. A receipt
+  carries no marker body, no evidence body, no model output and no
+  finding text: only identity, provenance and hashes.
+- Original official run `32880880053` has marker-consumption memory and
+  an `EXECUTION_INVALID / NO_QUALITY_RESULT` execution-disposition
+  receipt (governance reference `q77-p5d-invalid-run-record-a`, owner
+  ruling `q77-p5d-replacement-owner-ruling-a`) and **no gate-evidence
+  receipt**, because no gate-evidence artifact was ever published for
+  that run. The disposition receipt carries no artifact fields and must
+  never be read as implying that quality evidence existed.
+- Stage 1 lands the registry and its historical contents only. One-shot
+  discovery, replacement eligibility, the official gate and the P5-E
+  seam do not yet consult it; that wiring is a later, separately
+  bounded stage.
+
+No production or production-ready claim follows from this section.

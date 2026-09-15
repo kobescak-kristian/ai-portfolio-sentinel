@@ -24,4 +24,15 @@ if git diff --diff-filter=ACM "$base" HEAD | grep -Eio "$LEAK_PATTERN" >/dev/nul
   exit 1
 fi
 
+# Append-only guard for the durable Phase-5 receipt registry (ADR-0012
+# Amendment A rule A1). Uses the same "$base" selected above. Any removed
+# content line -- a rewritten line or whole-file deletion -- blocks;
+# initial creation and pure append pass. Deliberately NOT --diff-filter=M,
+# because deletion of the registry must block too.
+REGISTRY="artifacts/phase5_receipt_registry.jsonl"
+if git diff "$base" HEAD -- "$REGISTRY" | grep -E '^-[^-]' >/dev/null; then
+  echo "PRE-PUSH BLOCK: $REGISTRY has removed or rewritten established receipt content (append-only)."
+  exit 1
+fi
+
 echo "pre-push: Tier 0 + leak-grep PASS"
