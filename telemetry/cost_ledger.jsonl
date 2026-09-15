@@ -24,3 +24,10 @@
 {"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-08-31T06:56:15+00:00","run_id":"r-6953b823c57e4ba8a8a320a0c2ab4e67","run_kind":"live","schema_version":1}
 {"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-01T06:13:53+00:00","run_id":"r-26de1b32c227445a88aad7b4b7654f20","run_kind":"live","schema_version":1}
 {"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-02T06:07:29+00:00","run_id":"r-b582b472d679428aac3ac5d24d2fbbe8","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-08T06:38:05+00:00","run_id":"r-a6e7ef6bd4df4f0fa4431b8b651799b5","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-08T06:39:28+00:00","run_id":"r-497d2fd7e591458496fc7ef30fec2b71","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-09T10:38:48+00:00","run_id":"r-e618a13e5ae24244a6f888e9a767f40d","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-11T06:03:51+00:00","run_id":"r-7045a944a7cc430ba5dbf596abcf2e67","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-12T14:38:59+00:00","run_id":"r-99262f6a4b2f47b591e36b27fcd7d19e","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-13T17:24:30+00:00","run_id":"r-4c9b1afb6bbf455c864d1557a635c8b0","run_kind":"live","schema_version":1}
+{"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-14T05:47:55+00:00","run_id":"r-cce2bb1558f8417c932b49e831550d22","run_kind":"live","schema_version":1}
