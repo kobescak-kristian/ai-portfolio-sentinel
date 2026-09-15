@@ -610,16 +610,30 @@ class Phase5ControlState(BaseModel):
 
 
 class OneShotMarker(BaseModel):
+    """Purpose literal now includes the structural replacement purpose
+    (ADR-0012 / Amendment A repair, Stage 2A; dispatch
+    q77-p5d-repair-stage2-implement-a). The replacement purpose is
+    NOT armed by this dispatch -- no workflow, script or scheduled
+    lane constructs or consumes it here. ``replacement_of_run_id`` and
+    ``owner_ruling_id`` are additive-optional and mandatory together
+    exactly when ``purpose == "P5D_REPLACEMENT_SONNET_GATE"``; every
+    other purpose must carry neither, so an existing P5C/original-P5D
+    marker byte stream is unaffected and still parses unchanged."""
+
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal[1]
-    purpose: Literal["P5C_WIF_PROBE", "P5D_OFFICIAL_SONNET_GATE"]
+    purpose: Literal[
+        "P5C_WIF_PROBE", "P5D_OFFICIAL_SONNET_GATE", "P5D_REPLACEMENT_SONNET_GATE"
+    ]
     created_at_utc: datetime
     workflow_identity: str
     github_run_id: str
     run_attempt: int = Field(ge=1)
     event: str
     source_sha: str
+    replacement_of_run_id: str | None = None
+    owner_ruling_id: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "OneShotMarker":
@@ -628,4 +642,21 @@ class OneShotMarker(BaseModel):
         _require_identifier(self.github_run_id)
         _require_identifier(self.event)
         _require_hex40(self.source_sha)
+        is_replacement = self.purpose == "P5D_REPLACEMENT_SONNET_GATE"
+        replacement_fields_present = (
+            self.replacement_of_run_id is not None or self.owner_ruling_id is not None
+        )
+        if is_replacement:
+            if self.replacement_of_run_id is None or self.owner_ruling_id is None:
+                raise ValueError(
+                    "purpose P5D_REPLACEMENT_SONNET_GATE requires both "
+                    "replacement_of_run_id and owner_ruling_id"
+                )
+            _require_identifier(self.replacement_of_run_id)
+            _require_identifier(self.owner_ruling_id)
+        elif replacement_fields_present:
+            raise ValueError(
+                "replacement_of_run_id and owner_ruling_id must be null for any "
+                "purpose other than P5D_REPLACEMENT_SONNET_GATE"
+            )
         return self

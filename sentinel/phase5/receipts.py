@@ -16,9 +16,15 @@ frozen records, canonical JSON via ``models.canonical_json_bytes``,
 UTC-only timestamps, SHA-256 over canonical bytes only. No credential,
 token, secret value or local absolute path is ever stored.
 
-Stage-1 boundary: this module is NOT yet consulted by one-shot
-discovery, replacement eligibility, the official gate or the P5-E seam.
-That wiring is a later, separately bounded stage.
+Stage-2A wiring (dispatch q77-p5d-repair-stage2-implement-a): one-shot
+discovery (``scripts/_phase5_common.py``), replacement eligibility
+(``sentinel/phase5/replacement.py``), the official/probe gate
+preflights and the P5-E seam (``scripts/run_phase5_window_freeze.py``)
+now consult this registry before any marker or freeze decision. The
+vocabulary widening below (the replacement purpose and its two
+additional dispositions) is structural only: it is not armed, no
+script constructs a replacement marker, and the historical four-line
+registry is unaffected -- Stage 2A appends no receipt.
 
 Immutability contract:
 
@@ -63,6 +69,20 @@ PROBE_PAYLOAD_FILENAME = "probe-evidence.json"
 GATE_PAYLOAD_FILENAME = "phase5_official_gate.json"
 
 EXECUTION_INVALID_NO_QUALITY_RESULT = "EXECUTION_INVALID / NO_QUALITY_RESULT"
+EXECUTION_INVALID_INFRASTRUCTURE_FAILURE = "EXECUTION_INVALID / INFRASTRUCTURE_FAILURE"
+PUBLICATION_FAILED = "PUBLICATION_FAILED"
+
+# Deliberately duplicated string literals rather than importing from
+# .replacement (this module's own established convention -- see the
+# "Local validator helpers" note below; importing from .replacement
+# would also be circular, since .replacement imports FROM this
+# module). tests/test_phase5_replacement.py cross-pins these against
+# the public constants in sentinel/phase5/replacement.py, the same
+# anti-tautology precedent scripts/run_phase5_official_gate.py already
+# uses for its own local cost literals.
+_REPLACEMENT_PURPOSE = "P5D_REPLACEMENT_SONNET_GATE"
+_REPLACEMENT_OF_RUN_ID = "32880880053"
+_REPLACEMENT_OWNER_RULING_ID = "q77-p5d-replacement-owner-ruling-a"
 
 ReceiptClass = Literal[
     "ONESHOT_MARKER_CONSUMED",
@@ -70,7 +90,9 @@ ReceiptClass = Literal[
     "GATE_EVIDENCE",
     "EXECUTION_DISPOSITION",
 ]
-ReceiptPurpose = Literal["P5C_WIF_PROBE", "P5D_OFFICIAL_SONNET_GATE"]
+ReceiptPurpose = Literal[
+    "P5C_WIF_PROBE", "P5D_OFFICIAL_SONNET_GATE", "P5D_REPLACEMENT_SONNET_GATE"
+]
 ReceiptDisposition = Literal[
     "CONSUMED",
     "CAPABILITY_PASS",
@@ -79,6 +101,8 @@ ReceiptDisposition = Literal[
     "HONEST_FAIL",
     "INFRASTRUCTURE_FAILURE",
     "EXECUTION_INVALID / NO_QUALITY_RESULT",
+    "EXECUTION_INVALID / INFRASTRUCTURE_FAILURE",
+    "PUBLICATION_FAILED",
 ]
 
 _HEX40 = re.compile(r"[0-9a-f]{40}")
@@ -199,11 +223,36 @@ class Phase5Receipt(BaseModel):
         _require_hex40(self.source_sha)
         _require_hex64(self.prev_receipt_sha256)
         _require_utc(self.recorded_at_utc)
-        for optional in (self.replacement_of_run_id, self.owner_ruling_id, self.governance_ref):
-            if optional is not None:
-                _require_identifier(optional)
-        if self.replacement_of_run_id is not None:
-            _require_run_id(self.replacement_of_run_id)
+        if self.governance_ref is not None:
+            _require_identifier(self.governance_ref)
+
+        # Purpose-keyed replacement provenance (ADR-0012 section 18;
+        # dispatch q77-p5d-repair-stage2-implement-a). Every receipt
+        # class for the replacement purpose must bind the exact frozen
+        # original-run id and owner ruling id; every other purpose
+        # (including the original P5-D purpose) must never carry
+        # replacement_of_run_id at all -- receipt 4's own
+        # owner_ruling_id stays valid and unrestricted in shape.
+        is_replacement_purpose = self.purpose == _REPLACEMENT_PURPOSE
+        if is_replacement_purpose:
+            if self.replacement_of_run_id != _REPLACEMENT_OF_RUN_ID:
+                raise ValueError(
+                    f"purpose {_REPLACEMENT_PURPOSE!r} requires replacement_of_run_id == "
+                    f"{_REPLACEMENT_OF_RUN_ID!r}"
+                )
+            if self.owner_ruling_id != _REPLACEMENT_OWNER_RULING_ID:
+                raise ValueError(
+                    f"purpose {_REPLACEMENT_PURPOSE!r} requires owner_ruling_id == "
+                    f"{_REPLACEMENT_OWNER_RULING_ID!r}"
+                )
+        else:
+            if self.replacement_of_run_id is not None:
+                raise ValueError(
+                    "replacement_of_run_id must be null for any purpose other than "
+                    f"{_REPLACEMENT_PURPOSE!r}"
+                )
+            if self.owner_ruling_id is not None:
+                _require_identifier(self.owner_ruling_id)
 
         cls = self.receipt_class
         if cls == "ONESHOT_MARKER_CONSUMED":
@@ -221,8 +270,12 @@ class Phase5Receipt(BaseModel):
                 probe_evidence_name(self.github_run_id, self.run_attempt), PROBE_PAYLOAD_FILENAME
             )
         elif cls == "GATE_EVIDENCE":
-            if self.purpose != "P5D_OFFICIAL_SONNET_GATE":
-                raise ValueError("GATE_EVIDENCE requires purpose P5D_OFFICIAL_SONNET_GATE")
+            if self.purpose != _REPLACEMENT_PURPOSE:
+                raise ValueError(
+                    f"GATE_EVIDENCE requires purpose {_REPLACEMENT_PURPOSE!r} -- the "
+                    "original P5-D purpose is permanently non-qualifying and can never "
+                    "acquire gate evidence (ADR-0012 Amendment A1 rule 4)"
+                )
             if self.disposition not in ("GREEN", "HONEST_FAIL", "INFRASTRUCTURE_FAILURE"):
                 raise ValueError(
                     "GATE_EVIDENCE disposition must be GREEN, HONEST_FAIL or INFRASTRUCTURE_FAILURE"
@@ -231,10 +284,20 @@ class Phase5Receipt(BaseModel):
                 gate_evidence_name(self.github_run_id, self.run_attempt), GATE_PAYLOAD_FILENAME
             )
         else:  # EXECUTION_DISPOSITION
-            if self.disposition != EXECUTION_INVALID_NO_QUALITY_RESULT:
+            if is_replacement_purpose:
+                if self.disposition not in (
+                    EXECUTION_INVALID_INFRASTRUCTURE_FAILURE,
+                    PUBLICATION_FAILED,
+                ):
+                    raise ValueError(
+                        "EXECUTION_DISPOSITION for the replacement purpose must be "
+                        f"{EXECUTION_INVALID_INFRASTRUCTURE_FAILURE!r} or {PUBLICATION_FAILED!r}"
+                    )
+            elif self.disposition != EXECUTION_INVALID_NO_QUALITY_RESULT:
                 raise ValueError(
                     "EXECUTION_DISPOSITION requires disposition "
-                    f"{EXECUTION_INVALID_NO_QUALITY_RESULT!r}"
+                    f"{EXECUTION_INVALID_NO_QUALITY_RESULT!r} for any purpose other than "
+                    f"{_REPLACEMENT_PURPOSE!r}"
                 )
             if any(
                 field is not None

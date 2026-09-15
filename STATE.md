@@ -382,9 +382,12 @@ UNRESOLVED: the original official execution is `EXECUTION_INVALID /
 NO_QUALITY_RESULT` with its one-shot consumed, and the Option-3A
 replacement repair path is active under the ADOPTED
 `adr/0012-p5d-replacement-execution-envelope.md`; repair Stage 1
-(the durable-history foundation) is landed, later execution-envelope,
-rehearsal and readiness stages remain pending, and the replacement is
-not ready or authorized for dispatch. Windows scheduler cutover, prospective
+(the durable-history foundation) and repair Stage 2A (durable-history
+wiring into one-shot discovery, replacement eligibility and the P5-E
+seam; the replacement purpose is structural only and unarmed) are
+landed, later execution-envelope, journal, finalizer, rehearsal and
+readiness stages remain pending, and the replacement is not ready or
+authorized for dispatch. Windows scheduler cutover, prospective
 five-slot live window, evidence finalization and release remain
 P5-E through P5-H and are still pending. Phase 6 is NOT STARTED.
 The overall production-readiness program
@@ -3598,3 +3601,137 @@ merges every change."
   journal, finalizer, and wiring of the durable registry into one-shot
   discovery, replacement eligibility and the P5-E seam) as its own
   bounded child dispatch; not begun here.
+- 2026-09-15 - ADR-0012 REPAIR STAGE 2A LANDED: DURABLE-HISTORY WIRING
+  (dispatch q77-p5d-repair-stage2-implement-a).
+  Stage 2A of the ADR-0012 Amendment A repair is implemented, per the
+  independently-planned and owner-corrected Stage-2 plan
+  (q77-p5d-repair-stage2-plan-a, revision 2): the committed durable
+  receipt registry is now wired into one-shot discovery, structural
+  replacement eligibility, and the repaired P5-E seam. This dispatch
+  arms nothing.
+  Landed: `sentinel/phase5/models.py` (`OneShotMarker.purpose` widens
+  to include a new structural purpose,
+  `P5D_REPLACEMENT_SONNET_GATE`, with additive optional
+  `replacement_of_run_id` / `owner_ruling_id` fields required together
+  exactly for that purpose and forbidden for every other purpose);
+  `sentinel/phase5/artifact_names.py` (the matching slug
+  `p5d-replacement-sonnet-gate` and parse pattern); new
+  `sentinel/phase5/replacement.py` (the frozen replacement identity
+  constants -- `REPLACEMENT_OF_RUN_ID = 32880880053`,
+  `OWNER_RULING_ID = q77-p5d-replacement-owner-ruling-a` -- and
+  `replacement_history_verdict`, a pure function computing from durable
+  receipts plus live markers alone whether history currently permits
+  the single future replacement; never itself an authorization);
+  `sentinel/phase5/receipts.py` (the receipt purpose/disposition
+  vocabularies widen additively -- the new purpose and two new
+  dispositions, `EXECUTION_INVALID / INFRASTRUCTURE_FAILURE` and
+  `PUBLICATION_FAILED` -- with a purpose-keyed provenance rule binding
+  the replacement purpose to the exact frozen identity and forbidding
+  it everywhere else, and `GATE_EVIDENCE` now requires the replacement
+  purpose, since the original P5-D purpose can never carry gate
+  evidence, ADR-0012 Amendment A1 rule 4); `sentinel/phase5/oneshot.py`
+  (`assert_purpose_not_yet_consumed_durably`, checking the durable
+  registry first and falling through to the existing live-marker check
+  only when the registry shows no consumption -- artifact expiry can
+  never reset it); `sentinel/phase5/evidence_records.py`
+  (`GateEvidenceRecord` gains six additive optional replacement
+  provenance fields plus `observed_signals`, and the new function
+  `validate_replacement_provenance`, the strict seam-facing gate kept
+  separate from the record's own permissive schema); `scripts/_phase5_common.py`
+  (`load_durable_history`, `assert_oneshot_not_consumed_durably`,
+  `assert_replacement_history_permits`); `scripts/run_phase5_official_gate.py`
+  and `scripts/run_phase5_wif_probe.py` (both preflights now load
+  durable history and consult it before any live-marker check, ahead
+  of any marker write; `PURPOSE` is unchanged in both -- the official
+  gate keeps `P5D_OFFICIAL_SONNET_GATE`); `scripts/run_phase5_window_freeze.py`
+  (the seam-3 provider-phase-prerequisite check is rebuilt around
+  durable receipts as the authoritative source of existence, count and
+  correlation truth, with any still-retained live artifact additionally
+  hash-verified against its own receipt as defense in depth; requires,
+  in order, exactly one consumed P5-C marker/evidence pair, exactly one
+  consumed original-P5D marker plus its non-qualifying disposition with
+  zero gate-evidence receipts for that purpose, and exactly one
+  consumed replacement marker plus one correlated GREEN/HONEST_FAIL
+  gate-evidence receipt -- GREEN and HONEST_FAIL accepted identically);
+  `DATA_RETENTION_POLICY.md` section 16 extended.
+  Independent-review correction applied before landing (owner-ruled,
+  2026-09-15, ADR-0012 Amendment A2 rule 6): a generic, manual, forced
+  or unknown cancellation is never, by itself, evidence of objective
+  infrastructure invalidity. `termination_source` (objective:
+  `SESSION_DEADLINE`, `INVOCATION_STALL_DEADLINE`, `WATCHDOG`,
+  `PRE_PROVIDER_FAILURE`, `RUNNER_EXCEPTION`) and `observed_signals`
+  (descriptive only: `SIGINT`, `SIGTERM`,
+  `UNKNOWN_EXTERNAL_TERMINATION`) are disjoint closed vocabularies, so
+  a raw signal can never even be assigned as a termination cause; a
+  replacement `INFRASTRUCTURE_FAILURE` claim is accepted only with a
+  positively established `termination_source`, verified both at the
+  schema level and by `validate_replacement_provenance`. A defect this
+  correction fixed was also found and fixed while implementing it:
+  `validate_replacement_provenance` raises `ValueError`, not
+  `Phase5ScriptError`, and the seam caller was missing the wrap --
+  fixed so a real refusal reaches the existing `freeze_refusal.json`
+  path instead of an unhandled traceback.
+  Verified against the real committed registry (read-only): both
+  historical purposes (`P5C_WIF_PROBE`, `P5D_OFFICIAL_SONNET_GATE`)
+  remain durably consumed with zero live markers required to prove it;
+  the replacement purpose has zero receipts of any class and
+  `replacement_history_verdict` correctly permits exactly one future
+  replacement from history alone; the repaired seam, run against the
+  real committed registry, correctly refuses today with "expected
+  exactly one durable replacement marker receipt, found 0". A synthetic
+  registry additionally proved the full accept path end-to-end (GREEN
+  and HONEST_FAIL alike) and the live-artifact hash-verification path.
+  Local verification: 1608 passed, 9 skipped (the existing Windows
+  platform skips; Linux CI carries 0), 91.5% line coverage
+  (`sentinel/phase5/replacement.py` 96.3%, `receipts.py` 93.0%,
+  `evidence_records.py` 92.4%, `models.py` 95.9%); `python -m pip
+  check` PASS; Tier 0 validator PASS; Phase-1 freeze guard PASS
+  (fixtures/evals byte-identical, 41/41 blobs). Registry byte-unchanged:
+  `artifacts/phase5_receipt_registry.jsonl` still exactly four lines,
+  head SHA-256
+  `9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39`.
+  CI for this commit is not self-cited here.
+  Executing model: Claude Sonnet 5 (the routing named Sonnet; recorded
+  as observed -- the preceding plan revisions in this same work item
+  were executed under Fable 5.1, also recorded as observed).
+  ACTUAL WRITE SET (exactly the 19 paths declared and check-write-set
+  verified, staged and post-commit): `sentinel/phase5/models.py`,
+  `sentinel/phase5/artifact_names.py`, `sentinel/phase5/receipts.py`,
+  `sentinel/phase5/oneshot.py`, `sentinel/phase5/evidence_records.py`,
+  `sentinel/phase5/replacement.py` (new), `scripts/_phase5_common.py`,
+  `scripts/run_phase5_official_gate.py`, `scripts/run_phase5_wif_probe.py`,
+  `scripts/run_phase5_window_freeze.py`, `tests/test_phase5_receipts.py`,
+  `tests/test_phase5_artifact_names.py`, `tests/test_phase5_window_freeze.py`,
+  `tests/test_phase5_gate_runner.py`, `tests/test_phase5_probe_runner.py`,
+  `tests/test_phase5_replacement.py` (new), `DATA_RETENTION_POLICY.md`,
+  `STATE.md` (Plan field wording plus this entry), `.publicgate-allow`
+  (one entry for this entry's program-status line). No workflow,
+  fixture, prompt, scorer, checker, threshold, evaluation, requirements,
+  README, FINDINGS.md, telemetry, journal, envelope, finalizer or
+  rehearsal change; the committed receipt registry is byte-unchanged.
+  NON-EVENTS: no Stage 2B or 2C work (journal, envelope, watchdog,
+  finalizer, quality-neutral execute step, cancellation handling all
+  remain pending); no replacement marker created, reset or consumed; no
+  replacement execution; no official Sonnet quality gate; no rehearsal
+  execution (neither the GitHub kill rehearsal nor the N=24 Sonnet
+  timing rehearsal); no model or provider call; no OIDC/WIF exchange;
+  no GitHub workflow dispatch, rerun or cancel; no federation-rule,
+  provider-cap, secret, variable or environment mutation; no original
+  Sonnet quality content inspected; no frozen quality-surface change;
+  no P5-E freeze, cutover or release; the official gate's `PURPOSE`
+  constant is unchanged and the replacement purpose remains
+  unreachable from any script's own constants.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C
+  COMPLETE. **P5-D remains IN PROGRESS / UNRESOLVED**: original official
+  run `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker
+  CONSUMED, ADR-0012 repair Stage 1 and Stage 2A LANDED, model-free
+  GitHub kill rehearsal NOT EXECUTED, Sonnet timing rehearsal NOT
+  EXECUTED, fresh replacement readiness NOT COMPLETE, replacement NOT
+  READY / NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2A landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2B of the ADR-0012 repair (operational journal,
+  atomic terminal-evidence writer, execution/publication state model
+  including the consumed-but-unclassified termination path, the
+  quality-neutral execute step, and the workflow finalizer/confirm
+  steps) as its own bounded child dispatch; not begun here.

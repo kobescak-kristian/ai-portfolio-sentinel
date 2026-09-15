@@ -236,6 +236,56 @@ def test_marker_written_before_provider_construction_in_preflight():
     assert fx_idx < marker_idx
 
 
+def test_durable_history_precedes_replacement_check_precedes_marker_write():
+    """Dispatch q77-p5d-repair-stage2-implement-a: the durable receipt
+    registry is loaded, then the durable one-shot consumption check
+    runs, then the structural replacement-eligibility check runs, all
+    strictly before write_marker_json in cmd_preflight's source
+    order."""
+    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
+    preflight_start = text.index("def cmd_preflight")
+    preflight_end = text.index("def _run_gate_session")
+    body = text[preflight_start:preflight_end]
+    history_idx = body.index("load_durable_history")
+    oneshot_idx = body.index("assert_oneshot_not_consumed_durably")
+    eligibility_idx = body.index("assert_replacement_history_permits")
+    marker_idx = body.index("write_marker_json")
+    assert history_idx < oneshot_idx < eligibility_idx < marker_idx
+
+
+def test_committed_registry_already_shows_original_p5d_consumed_and_preflight_refuses():
+    """Dispatch q77-p5d-repair-stage2-implement-a: the committed
+    durable receipt registry already carries a consumed
+    P5D_OFFICIAL_SONNET_GATE marker receipt for the original run, so a
+    full preflight run against a zero-live-marker world must still
+    refuse via the durable check -- artifact expiry can never silently
+    re-open a consumed one-shot, and PURPOSE stays the unarmed original
+    value. Model-free: no network, no GitHub call, no OIDC/provider
+    activity, no marker written."""
+    from sentinel.phase5.receipts import load_registry
+
+    module = _load_module()
+    committed = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
+    receipts = load_registry(committed)
+    with pytest.raises(module.Phase5ScriptError):
+        module.assert_oneshot_not_consumed_durably(module.PURPOSE, receipts, [])
+
+
+def test_replacement_not_permitted_for_unarmed_original_purpose():
+    """The structural replacement-eligibility check also independently
+    refuses for the unarmed original purpose (defense in depth beyond
+    the durable one-shot check above): PURPOSE is not the frozen
+    replacement purpose, so ``assert_replacement_history_permits``
+    refuses regardless of what the registry shows."""
+    from sentinel.phase5.receipts import load_registry
+
+    module = _load_module()
+    committed = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
+    receipts = load_registry(committed)
+    with pytest.raises(module.Phase5ScriptError):
+        module.assert_replacement_history_permits(receipts, [], module.PURPOSE)
+
+
 def test_no_generic_model_selector_and_cli_untouched():
     """No --auth-mode / generic model-purpose flag anywhere in this
     script, and sentinel/cli.py remains the guard-tested,

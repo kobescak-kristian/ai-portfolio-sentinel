@@ -51,7 +51,12 @@ def test_refusal_name_roundtrip():
 
 
 @pytest.mark.parametrize(
-    "purpose,slug", [("P5C_WIF_PROBE", "p5c-wif-probe"), ("P5D_OFFICIAL_SONNET_GATE", "p5d-official-sonnet-gate")]
+    "purpose,slug",
+    [
+        ("P5C_WIF_PROBE", "p5c-wif-probe"),
+        ("P5D_OFFICIAL_SONNET_GATE", "p5d-official-sonnet-gate"),
+        ("P5D_REPLACEMENT_SONNET_GATE", "p5d-replacement-sonnet-gate"),
+    ],
 )
 def test_oneshot_marker_name_roundtrip(purpose, slug):
     name = an.oneshot_marker_name(purpose, "42")

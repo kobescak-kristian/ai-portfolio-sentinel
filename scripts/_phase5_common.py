@@ -29,7 +29,19 @@ from sentinel.phase5.bundle import BundleSafetyError, create_fresh_root  # noqa:
 from sentinel.phase5.github_context import GithubContextError, derive_github_context  # noqa: E402
 from sentinel.phase5.github_evidence import GithubEvidenceClient  # noqa: E402
 from sentinel.phase5.models import OneShotMarker  # noqa: E402
-from sentinel.phase5.oneshot import assert_purpose_not_yet_consumed  # noqa: E402
+from sentinel.phase5.oneshot import (  # noqa: E402
+    OneShotAlreadyConsumed,
+    OneShotDiscoveryAmbiguous,
+    assert_purpose_not_yet_consumed,
+    assert_purpose_not_yet_consumed_durably,
+)
+from sentinel.phase5.receipts import (  # noqa: E402
+    DEFAULT_REGISTRY_PATH,
+    Phase5Receipt,
+    ReceiptRegistryError,
+    load_registry,
+)
+from sentinel.phase5.replacement import replacement_history_verdict  # noqa: E402
 
 
 class Phase5ScriptError(RuntimeError):
@@ -130,6 +142,62 @@ def discover_oneshot_markers(client: GithubEvidenceClient, work_root: Path) -> l
             raise Phase5ScriptError(f"one-shot marker artifact {ref.name!r} is missing marker.json")
         markers.append(OneShotMarker.model_validate_json(marker_path.read_text(encoding="utf-8")))
     return markers
+
+
+def load_durable_history(registry_path: "Path | None" = None) -> tuple[Phase5Receipt, ...]:
+    """Strict-load the committed Phase-5 receipt registry (ADR-0012
+    Amendment A1; dispatch q77-p5d-repair-stage2-implement-a). A
+    missing, empty, truncated or chain-broken registry fails closed as
+    ``Phase5ScriptError`` -- absence is never "nothing was consumed".
+    Defaults to the repository's own committed path so every caller
+    consults the SAME registry the pre-push append-only guard
+    protects. Read-only: never writes, never mutates the registry."""
+    path = registry_path if registry_path is not None else (REPO_ROOT / DEFAULT_REGISTRY_PATH)
+    try:
+        return load_registry(path)
+    except ReceiptRegistryError as exc:
+        raise Phase5ScriptError(f"durable receipt registry failed to load: {exc}") from exc
+
+
+def assert_oneshot_not_consumed_durably(
+    purpose: str, receipts: "tuple[Phase5Receipt, ...]", markers: "list[OneShotMarker]"
+) -> None:
+    """Durable-history-first one-shot refusal at the script boundary
+    (dispatch q77-p5d-repair-stage2-implement-a). Wraps
+    ``sentinel.phase5.oneshot.assert_purpose_not_yet_consumed_durably``,
+    translating its exceptions into ``Phase5ScriptError`` so every
+    Phase-5 entrypoint reports refusal through its existing
+    ``except Phase5ScriptError`` path rather than an unhandled
+    traceback. Consumption truth comes from ``receipts`` FIRST --
+    artifact expiry of every live marker can never silently un-consume
+    a purpose -- and only then, defensively, from ``markers``."""
+    try:
+        assert_purpose_not_yet_consumed_durably(purpose, receipts, markers)
+    except OneShotAlreadyConsumed as exc:
+        raise Phase5ScriptError(f"one-shot purpose already consumed: {exc}") from exc
+    except OneShotDiscoveryAmbiguous as exc:
+        raise Phase5ScriptError(f"one-shot discovery ambiguous: {exc}") from exc
+
+
+def assert_replacement_history_permits(
+    receipts: "tuple[Phase5Receipt, ...]", markers: "list[OneShotMarker]", purpose: str
+) -> None:
+    """Structural replacement-eligibility gate (dispatch
+    q77-p5d-repair-stage2-implement-a). NOT ARMED by this dispatch: no
+    script in this repository constructs a marker for the replacement
+    purpose, and ``PURPOSE`` in ``scripts/run_phase5_official_gate.py``
+    stays the original ``P5D_OFFICIAL_SONNET_GATE`` value -- for which
+    this check, and ``assert_oneshot_not_consumed_durably`` ahead of
+    it, both already and correctly refuse today, since the original
+    purpose is durably consumed and permanently non-qualifying. Wired
+    ahead of time so a later, separately governed arming dispatch needs
+    only to switch that constant; this eligibility check requires no
+    further change to do its job then. Raises ``Phase5ScriptError``
+    unless durable history and live markers currently permit exactly
+    one future replacement for ``purpose``."""
+    verdict = replacement_history_verdict(receipts, markers, purpose)
+    if not verdict.permits_one_replacement:
+        raise Phase5ScriptError(f"replacement not permitted by durable history: {verdict.reason}")
 
 
 def assert_marker_visible_for_this_run(client: GithubEvidenceClient, run_id: str, expected_name: str) -> None:

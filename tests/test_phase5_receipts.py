@@ -79,11 +79,25 @@ def probe_fields(run_id="100", **overrides) -> dict:
     return fields
 
 
+# Frozen replacement identity restated verbatim here (dispatch
+# q77-p5d-repair-stage2-implement-a) rather than imported from
+# sentinel.phase5.replacement -- test_phase5_replacement.py separately
+# cross-pins this literal against that module's public constants.
+_REPLACEMENT_PURPOSE = "P5D_REPLACEMENT_SONNET_GATE"
+_REPLACEMENT_OF_RUN_ID = "32880880053"
+_REPLACEMENT_OWNER_RULING_ID = "q77-p5d-replacement-owner-ruling-a"
+
+
 def gate_fields(run_id="200", **overrides) -> dict:
+    # GATE_EVIDENCE now requires the replacement purpose (ADR-0012
+    # Amendment A1 rule 4: the original P5-D purpose is permanently
+    # non-qualifying and can never acquire gate evidence) -- the
+    # builder default reflects that; a caller overriding ``purpose``
+    # to anything else is exercising a refusal path, not a valid shape.
     fields = dict(
         schema_version=1,
         receipt_class="GATE_EVIDENCE",
-        purpose="P5D_OFFICIAL_SONNET_GATE",
+        purpose=_REPLACEMENT_PURPOSE,
         github_run_id=run_id,
         run_attempt=1,
         source_sha=SHA_A,
@@ -92,8 +106,8 @@ def gate_fields(run_id="200", **overrides) -> dict:
         payload_filename="phase5_official_gate.json",
         payload_sha256=HEX64_2,
         disposition="GREEN",
-        replacement_of_run_id=None,
-        owner_ruling_id=None,
+        replacement_of_run_id=_REPLACEMENT_OF_RUN_ID,
+        owner_ruling_id=_REPLACEMENT_OWNER_RULING_ID,
         governance_ref=None,
     )
     fields.update(overrides)
@@ -260,15 +274,15 @@ def test_16_consumed_marker_plus_execution_invalid_remains_consumed_and_unresolv
 def test_authoritative_quality_receipt_selects_exactly_one_and_fails_on_ambiguity(tmp_path):
     path = make_registry(tmp_path, gate_fields(run_id="200"))
     receipts = rc.load_registry(path)
-    assert rc.authoritative_quality_receipt(receipts, "P5D_OFFICIAL_SONNET_GATE").github_run_id == "200"
+    assert rc.authoritative_quality_receipt(receipts, _REPLACEMENT_PURPOSE).github_run_id == "200"
     # INFRASTRUCTURE_FAILURE is never authoritative quality
     path2 = make_registry(tmp_path / "b", gate_fields(run_id="201", disposition="INFRASTRUCTURE_FAILURE"))
-    assert rc.authoritative_quality_receipt(rc.load_registry(path2), "P5D_OFFICIAL_SONNET_GATE") is None
+    assert rc.authoritative_quality_receipt(rc.load_registry(path2), _REPLACEMENT_PURPOSE) is None
     ambiguous = rc.load_registry(
         make_registry(tmp_path / "c", gate_fields(run_id="300"), gate_fields(run_id="301", disposition="HONEST_FAIL"))
     )
     with pytest.raises(rc.AmbiguousQualityHistory):
-        rc.authoritative_quality_receipt(ambiguous, "P5D_OFFICIAL_SONNET_GATE")
+        rc.authoritative_quality_receipt(ambiguous, _REPLACEMENT_PURPOSE)
 
 
 # ======================================================================

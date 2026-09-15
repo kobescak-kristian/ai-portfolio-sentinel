@@ -33,9 +33,11 @@ from scripts._phase5_common import (  # noqa: E402
     Phase5ScriptError,
     assert_expected_source_live,
     assert_expected_source_on_disk,
+    assert_oneshot_not_consumed_durably,
     build_evidence_client,
     assert_marker_visible_for_this_run,
     discover_oneshot_markers,
+    load_durable_history,
     prepare_fresh_work_root,
     write_json_artifact,
     write_marker_json,
@@ -43,7 +45,7 @@ from scripts._phase5_common import (  # noqa: E402
 from sentinel.phase5 import artifact_names  # noqa: E402
 from sentinel.phase5.github_context import derive_github_context  # noqa: E402
 from sentinel.phase5.models import OneShotMarker  # noqa: E402
-from sentinel.phase5.oneshot import assert_purpose_not_yet_consumed, is_eligible_marker_creation  # noqa: E402
+from sentinel.phase5.oneshot import is_eligible_marker_creation  # noqa: E402
 
 PURPOSE = "P5C_WIF_PROBE"
 PROBE_TOTAL_EUR_MICROS = 150_000
@@ -63,8 +65,14 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         ctx = derive_github_context(env)
 
         prepare_fresh_work_root(args.work_root)
+        # Durable-history-first one-shot discovery (ADR-0012 Amendment
+        # A1; dispatch q77-p5d-repair-stage2-implement-a): the P5-C
+        # probe purpose is already durably consumed in the committed
+        # receipt registry, so this correctly refuses today even after
+        # the live marker artifact's 90-day retention window expires.
+        receipts = load_durable_history()
         markers = discover_oneshot_markers(client, args.work_root)
-        assert_purpose_not_yet_consumed(PURPOSE, markers)
+        assert_oneshot_not_consumed_durably(PURPOSE, receipts, markers)
 
         candidate = OneShotMarker(
             schema_version=1,

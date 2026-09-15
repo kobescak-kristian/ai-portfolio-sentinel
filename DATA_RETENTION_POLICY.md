@@ -352,9 +352,25 @@ P5-D history.
   receipt**, because no gate-evidence artifact was ever published for
   that run. The disposition receipt carries no artifact fields and must
   never be read as implying that quality evidence existed.
-- Stage 1 lands the registry and its historical contents only. One-shot
-  discovery, replacement eligibility, the official gate and the P5-E
-  seam do not yet consult it; that wiring is a later, separately
-  bounded stage.
+- Stage 1 landed the registry and its historical contents only.
+  **Stage 2A** (dispatch q77-p5d-repair-stage2-implement-a) wires the
+  registry into one-shot discovery (`scripts/_phase5_common.py`), the
+  structural replacement-eligibility check
+  (`sentinel/phase5/replacement.py`), and the repaired P5-E seam
+  (`scripts/run_phase5_window_freeze.py`) — durable receipts are
+  consulted FIRST for existence, count and correlation truth, with any
+  still-retained live artifact hash-verified against its receipt as
+  defense in depth. This wiring is structural only: it arms nothing.
+  The official gate's `PURPOSE` constant stays the original,
+  permanently consumed `P5D_OFFICIAL_SONNET_GATE` value; a new
+  structural replacement purpose, `P5D_REPLACEMENT_SONNET_GATE`, is
+  defined but no script anywhere constructs or consumes a marker for
+  it. The registry's own schema widens additively (two new receipt
+  dispositions, `EXECUTION_INVALID / INFRASTRUCTURE_FAILURE` and
+  `PUBLICATION_FAILED`, and the new purpose literal) without touching
+  any of the four committed historical lines — registry head stays
+  `9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39`.
+  Journal, execution envelope, finalizer, and rehearsal implementation
+  remain later, separately bounded stages (2B/2C).
 
 No production or production-ready claim follows from this section.

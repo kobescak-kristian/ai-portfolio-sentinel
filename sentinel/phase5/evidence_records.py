@@ -150,6 +150,35 @@ class ProbeEvidenceRecord(_IdentityFields):
         return self
 
 
+# Replacement-provenance vocabularies (ADR-0012 section 18; Amendment A2
+# rule 6; dispatch q77-p5d-repair-stage2-implement-a). Kept as two
+# DISJOINT closed Literals so a raw observed signal can never even be
+# assigned to ``termination_source`` -- the type system itself makes
+# "SIGINT proves infrastructure failure" unconstructible, independent
+# of any validator logic. A generic, manual, forced or unknown
+# cancellation is never, by itself, evidence of objective
+# infrastructure invalidity (owner-ruled correction, 2026-09-15).
+TerminationCause = Literal[
+    "SESSION_DEADLINE",
+    "INVOCATION_STALL_DEADLINE",
+    "WATCHDOG",
+    "PRE_PROVIDER_FAILURE",
+    "RUNNER_EXCEPTION",
+]
+
+ObservedSignal = Literal["SIGINT", "SIGTERM", "UNKNOWN_EXTERNAL_TERMINATION"]
+
+# Deliberately duplicated string literals (this package's established
+# convention -- see receipts.py's own duplicated-vs-imported note) so
+# this module carries no new intra-package import edge.
+# tests/test_phase5_replacement.py cross-pins these against
+# sentinel/phase5/replacement.py's public constants.
+_REPLACEMENT_WORKFLOW_IDENTITY = ".github/workflows/sentinel-official-gate.yml"
+_REPLACEMENT_OF_RUN_ID = "32880880053"
+_REPLACEMENT_OWNER_RULING_ID = "q77-p5d-replacement-owner-ruling-a"
+_REPLACEMENT_MARKER_PURPOSE = "P5D_REPLACEMENT_SONNET_GATE"
+
+
 class GateEvidenceRecord(_IdentityFields):
     """Seam 3 (revision c): the full reproducible gate result, never a
     summary integer. ``HONEST_FAIL`` requires the designated Sonnet
@@ -197,6 +226,24 @@ class GateEvidenceRecord(_IdentityFields):
     disposition: Literal["GREEN", "HONEST_FAIL", "INFRASTRUCTURE_FAILURE"]
     auth_mode: str | None = None
 
+    # Replacement-provenance fields (ADR-0012 section 18; Amendment A2
+    # rule 6; dispatch q77-p5d-repair-stage2-implement-a). Additive and
+    # optional for schema-version compatibility -- the base schema
+    # stays backward compatible and permissive; the SEPARATE, stricter
+    # ``validate_replacement_provenance`` function below is what the
+    # P5-E seam and (later) the finalizer actually apply to decide
+    # replacement eligibility. Nothing in this dispatch's untouched
+    # ``scripts/run_phase5_official_gate.py::cmd_execute`` sets any of
+    # these fields, so its existing INFRASTRUCTURE_FAILURE construction
+    # path is unaffected.
+    replacement_of_run_id: str | None = None
+    owner_ruling_id: str | None = None
+    marker_purpose: str | None = None
+    envelope_id: str | None = None
+    envelope_version: str | None = None
+    termination_source: TerminationCause | None = None
+    observed_signals: tuple[ObservedSignal, ...] = ()
+
     @model_validator(mode="after")
     def _validate(self) -> "GateEvidenceRecord":
         _require_hex40(self.expected_source_sha)
@@ -217,7 +264,85 @@ class GateEvidenceRecord(_IdentityFields):
                 "HONEST_FAIL requires non-empty failed_checks evidence — the "
                 "machine-derived record of which gate check(s) actually failed"
             )
+        if self.termination_source is not None and self.disposition != "INFRASTRUCTURE_FAILURE":
+            raise ValueError(
+                "termination_source may be set only when disposition is INFRASTRUCTURE_FAILURE"
+            )
         return self
+
+
+def validate_replacement_provenance(
+    record: GateEvidenceRecord, *, expected_source_sha: str
+) -> None:
+    """Strict replacement-provenance validation (ADR-0012 section 18;
+    Amendment A2 rule 6; dispatch q77-p5d-repair-stage2-implement-a).
+
+    Separate from, and stricter than, ``GateEvidenceRecord``'s own
+    permissive schema: a record that parses is not automatically
+    eligible replacement evidence. Raises ``ValueError`` on the first
+    defect found (never returns a boolean), so a caller cannot
+    accidentally ignore a falsy result. Stage 2A wires this into the
+    P5-E seam (``scripts/run_phase5_window_freeze.py``) for any
+    retained replacement evidence artifact; it constructs, uploads, or
+    consumes no evidence itself.
+
+    Correction (owner-ruled, 2026-09-15, ADR-0012 Amendment A2 rule 6):
+    a generic, manual, forced or unknown cancellation is never, by
+    itself, evidence of objective infrastructure invalidity. This
+    function therefore never treats a value in ``observed_signals``
+    (SIGINT, SIGTERM, UNKNOWN_EXTERNAL_TERMINATION) as satisfying or
+    substituting for ``termination_source``: an INFRASTRUCTURE_FAILURE
+    claim is accepted only when ``termination_source`` carries a
+    positively-established ``TerminationCause`` value. The type system
+    already makes assigning a raw signal name to ``termination_source``
+    unconstructible, since ``TerminationCause`` and ``ObservedSignal``
+    are disjoint closed vocabularies.
+    """
+    if not _HEX40.fullmatch(expected_source_sha):
+        raise ValueError("expected_source_sha is not exactly 40 lowercase hexadecimal characters")
+    if record.workflow_identity != _REPLACEMENT_WORKFLOW_IDENTITY:
+        raise ValueError(
+            f"replacement evidence workflow_identity must be exactly "
+            f"{_REPLACEMENT_WORKFLOW_IDENTITY!r}"
+        )
+    if record.run_attempt != 1:
+        raise ValueError("replacement evidence run_attempt must be exactly 1")
+    if record.source_sha != expected_source_sha or record.expected_source_sha != expected_source_sha:
+        raise ValueError("replacement evidence source_sha does not match expected_source_sha")
+    if record.replacement_of_run_id != _REPLACEMENT_OF_RUN_ID:
+        raise ValueError(
+            f"replacement evidence replacement_of_run_id must be exactly "
+            f"{_REPLACEMENT_OF_RUN_ID!r}"
+        )
+    if record.owner_ruling_id != _REPLACEMENT_OWNER_RULING_ID:
+        raise ValueError(
+            f"replacement evidence owner_ruling_id must be exactly "
+            f"{_REPLACEMENT_OWNER_RULING_ID!r}"
+        )
+    if record.marker_purpose != _REPLACEMENT_MARKER_PURPOSE:
+        raise ValueError(
+            f"replacement evidence marker_purpose must be exactly "
+            f"{_REPLACEMENT_MARKER_PURPOSE!r}"
+        )
+    if record.envelope_id is None or not record.envelope_id.strip():
+        raise ValueError("replacement evidence requires a non-empty envelope_id")
+    if record.envelope_version is None or not record.envelope_version.strip():
+        raise ValueError("replacement evidence requires a non-empty envelope_version")
+
+    if record.disposition == "INFRASTRUCTURE_FAILURE":
+        if record.termination_source is None:
+            raise ValueError(
+                "replacement INFRASTRUCTURE_FAILURE evidence requires a positively "
+                "established termination_source; a raw observed signal alone "
+                "(ADR-0012 Amendment A2 rule 6) is never sufficient proof"
+            )
+    elif record.disposition in ("GREEN", "HONEST_FAIL"):
+        if record.termination_source is not None:
+            raise ValueError(
+                f"{record.disposition} replacement evidence must not carry a termination_source"
+            )
+    else:
+        raise ValueError(f"unrecognized disposition for replacement evidence: {record.disposition!r}")
 
 
 class FreezeRefusalEvidence(_IdentityFields):

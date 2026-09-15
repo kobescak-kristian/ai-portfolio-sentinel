@@ -37,8 +37,11 @@ from scripts._phase5_common import (  # noqa: E402
     assert_expected_source_live,
     assert_expected_source_on_disk,
     assert_marker_visible_for_this_run,
+    assert_oneshot_not_consumed_durably,
+    assert_replacement_history_permits,
     build_evidence_client,
     discover_oneshot_markers,
+    load_durable_history,
     prepare_fresh_work_root,
     write_json_artifact,
     write_marker_json,
@@ -57,7 +60,7 @@ from scripts.run_phase3_dev_gate import (  # noqa: E402
 from sentinel.phase5 import artifact_names  # noqa: E402
 from sentinel.phase5.github_context import derive_github_context  # noqa: E402
 from sentinel.phase5.models import OneShotMarker  # noqa: E402
-from sentinel.phase5.oneshot import assert_purpose_not_yet_consumed, is_eligible_marker_creation  # noqa: E402
+from sentinel.phase5.oneshot import is_eligible_marker_creation  # noqa: E402
 
 PURPOSE = "P5D_OFFICIAL_SONNET_GATE"
 
@@ -91,8 +94,19 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         _assert_fresh_evidence_dir(args.artifacts_dir, "artifacts-dir")
         prepare_fresh_work_root(args.work_root)
 
+        # Durable-history-first one-shot discovery and replacement
+        # eligibility (ADR-0012 Amendment A1; dispatch
+        # q77-p5d-repair-stage2-implement-a). The original P5-D purpose
+        # is durably consumed in the committed receipt registry, so
+        # this refuses today exactly as it must -- the replacement
+        # purpose is NOT armed by this dispatch; PURPOSE stays
+        # P5D_OFFICIAL_SONNET_GATE. This wiring exists so a later,
+        # separately governed arming dispatch needs only to switch
+        # PURPOSE, not add new eligibility logic.
+        receipts = load_durable_history()
         markers = discover_oneshot_markers(client, args.work_root)
-        assert_purpose_not_yet_consumed(PURPOSE, markers)
+        assert_oneshot_not_consumed_durably(PURPOSE, receipts, markers)
+        assert_replacement_history_permits(receipts, markers, PURPOSE)
 
         candidate = OneShotMarker(
             schema_version=1, purpose=PURPOSE, created_at_utc=datetime.now(timezone.utc),

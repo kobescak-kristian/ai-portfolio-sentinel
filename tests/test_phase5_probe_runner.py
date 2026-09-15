@@ -8,6 +8,8 @@ import ast
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROBE_RUNNER_PATH = REPO_ROOT / "scripts" / "run_phase5_wif_probe.py"
 
@@ -27,22 +29,43 @@ def test_purpose_string_and_totals_exact():
 
 
 def test_fx_and_wif_and_oneshot_checks_precede_marker_write_in_preflight():
-    """Seam 7: every retryable preflight (expected-source, one-shot
-    discovery, WIF config, FX resolution + coordinator construction)
-    must run BEFORE write_marker_json in cmd_preflight's source order."""
+    """Seam 7: every retryable preflight (expected-source, durable
+    one-shot discovery, WIF config, FX resolution + coordinator
+    construction) must run BEFORE write_marker_json in cmd_preflight's
+    source order. Durable-history-first (dispatch
+    q77-p5d-repair-stage2-implement-a): the registry load precedes the
+    durable consumption check, which precedes the marker write."""
     text = PROBE_RUNNER_PATH.read_text(encoding="utf-8")
     start = text.index("def cmd_preflight")
     end = text.index("def cmd_execute")
     body = text[start:end]
     source_idx = body.index("assert_expected_source_on_disk")
-    oneshot_idx = body.index("assert_purpose_not_yet_consumed")
+    history_idx = body.index("load_durable_history")
+    oneshot_idx = body.index("assert_oneshot_not_consumed_durably")
     wif_idx = body.index("auth.assert_wif_config_ready")
     fx_idx = body.index("resolve_ecb_usd_per_eur")
     marker_idx = body.index("write_marker_json")
     assert source_idx < marker_idx
-    assert oneshot_idx < marker_idx
+    assert history_idx < oneshot_idx < marker_idx
     assert wif_idx < marker_idx
     assert fx_idx < marker_idx
+
+
+def test_committed_registry_already_shows_p5c_consumed_and_preflight_refuses():
+    """Dispatch q77-p5d-repair-stage2-implement-a: the committed
+    durable receipt registry already carries a consumed P5C_WIF_PROBE
+    marker receipt, so a full ``cmd_preflight`` run against a
+    zero-live-marker world must still refuse -- artifact expiry can
+    never silently re-open a consumed one-shot. Model-free: no
+    network, no GitHub call, no OIDC/provider activity, no marker
+    written."""
+    from sentinel.phase5.receipts import load_registry
+
+    module = _load_module()
+    committed = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
+    receipts = load_registry(committed)
+    with pytest.raises(module.Phase5ScriptError):
+        module.assert_oneshot_not_consumed_durably("P5C_WIF_PROBE", receipts, [])
 
 
 def test_marker_visibility_confirmed_before_oidc_in_execute():

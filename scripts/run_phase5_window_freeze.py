@@ -10,13 +10,18 @@ independent expected-source verification (disk and live), the five
 Windows-migration-evidence fields (all populated, exact shapes),
 second-window protection (an intact active window can only be
 superseded by explicitly naming it), the P5-C/P5-D provider-phase
-prerequisite verification (seam 3), and the EUR40 five-slot freeze
-headroom check.
+prerequisite verification (seam 3, repaired -- ADR-0012 Amendment A1
+and section 19; dispatch q77-p5d-repair-stage2-implement-a: the
+committed durable receipt registry is now consulted FIRST for
+existence, count and correlation truth, with any still-retained live
+artifact hash-verified against its receipt as defense in depth), and
+the EUR40 five-slot freeze headroom check.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -32,6 +37,7 @@ from scripts._phase5_common import (  # noqa: E402
     assert_expected_source_live,
     assert_expected_source_on_disk,
     build_evidence_client,
+    load_durable_history,
 )
 from sentinel.phase5 import artifact_names  # noqa: E402
 from sentinel.phase5.bundle import (  # noqa: E402
@@ -99,61 +105,210 @@ def _validate_migration_evidence(args: argparse.Namespace) -> dict:
     }
 
 
-def _verify_provider_phase_prerequisites(client, work_root: Path) -> tuple:
-    """Seam 3: exactly one CAPABILITY_PASS P5-C marker+evidence pair
-    and exactly one GREEN/HONEST_FAIL P5-D marker+evidence pair, both
-    correlated to a real marker by (github_run_id, run_attempt), with
-    every carried CostRow verified present exactly once, byte-
-    equivalently, in the currently committed cost ledger. Returns the
-    combined tuple of CostRow objects to fold into headroom."""
-    from sentinel.phase5.models import OneShotMarker
+def _artifact_ref_for_receipt(client, receipt):
+    """Best-effort LIVE discovery of the exact artifact a durable
+    receipt names (dispatch q77-p5d-repair-stage2-implement-a). Returns
+    ``None`` if it is no longer discoverable (expired past the
+    platform's 90-day retention) -- that is never treated as
+    consumption reset or disposition change (ADR-0012 Amendment A1):
+    the receipt alone remains authoritative regardless."""
+    refs = client.list_artifacts_for_run(receipt.github_run_id)
+    for ref in refs:
+        if ref.id == receipt.artifact_id and ref.name == receipt.artifact_name:
+            return ref
+    return None
+
+
+def _verify_retained_payload(client, work_root: Path, receipt, model_cls, label: str):
+    """If ``receipt``'s exact artifact is still live-discoverable,
+    download it, strict-parse it as ``model_cls``, and require its
+    bytes to hash-match the receipt's own ``payload_sha256`` -- defense
+    in depth while artifact bytes remain the primary evidence. Returns
+    the parsed record, or ``None`` once the artifact has expired, in
+    which case the durable receipt alone is trusted and nothing here
+    invents or reconstructs the missing bytes (dispatch
+    q77-p5d-repair-stage2-implement-a)."""
+    ref = _artifact_ref_for_receipt(client, receipt)
+    if ref is None:
+        return None
+    root = client.download_artifact(ref, work_root, work_root / f"receipt-verify-{label}")
+    payload_path = root / receipt.payload_filename
+    if not payload_path.exists():
+        raise Phase5ScriptError(
+            f"artifact {receipt.artifact_id} for {receipt.receipt_class} receipt is missing "
+            f"its expected payload file {receipt.payload_filename!r}"
+        )
+    payload = payload_path.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != receipt.payload_sha256:
+        raise Phase5ScriptError(
+            f"artifact {receipt.artifact_id} payload bytes do not match its durable receipt "
+            f"SHA-256 {receipt.payload_sha256!r}"
+        )
+    return model_cls.model_validate_json(payload.decode("utf-8"))
+
+
+def _verify_provider_phase_prerequisites(
+    client, work_root: Path, receipts, expected_source_sha: str
+) -> tuple:
+    """Seam 3, repaired for durable history (ADR-0012 Amendment A1 and
+    section 19; dispatch q77-p5d-repair-stage2-implement-a).
+
+    Durable receipts are the authoritative source of existence, count
+    and correlation truth -- never live artifact counts alone, since a
+    live artifact expires after at most 90 days while the receipt does
+    not. Where a receipt's exact named artifact is still
+    live-discoverable, its bytes are additionally hash-verified against
+    the receipt's own ``payload_sha256`` as defense in depth; an
+    expired artifact is never treated as "never happened" and never
+    resets consumption.
+
+    Three durable facts are required, in order:
+
+    1. P5-C: exactly one consumed ``P5C_WIF_PROBE`` marker receipt and
+       exactly one ``CAPABILITY_PASS`` ``PROBE_EVIDENCE`` receipt
+       correlated to it by (github_run_id, run_attempt).
+    2. Original P5-D: exactly one consumed
+       ``P5D_OFFICIAL_SONNET_GATE`` marker receipt for the frozen
+       original run, exactly one ``EXECUTION_DISPOSITION`` receipt for
+       that same run under the frozen owner ruling, and ZERO
+       ``GATE_EVIDENCE`` receipts for that purpose -- the original run
+       is permanently non-qualifying and this seam never treats it as
+       having produced quality evidence (ADR-0012 Amendment A1 rule 4).
+    3. Replacement: exactly one consumed
+       ``P5D_REPLACEMENT_SONNET_GATE`` marker receipt and exactly one
+       ``GATE_EVIDENCE`` receipt for that purpose with disposition
+       GREEN or HONEST_FAIL, correlated to the marker by
+       (github_run_id, run_attempt); if its artifact is still retained,
+       its bytes must independently pass
+       ``validate_replacement_provenance`` and its parsed disposition
+       must equal the durable receipt's own disposition.
+
+    Any count other than exactly one, or any correlation mismatch,
+    fails closed. GREEN and HONEST_FAIL are accepted identically, so
+    downstream consequence at this seam is unchanged from before the
+    incident -- this is provenance plumbing, not a methodology change.
+    This dispatch arms nothing: durable history today shows zero
+    replacement receipts of any class, so step 3 above always refuses
+    until a later, separately governed dispatch actually produces one.
+
+    Returns the combined tuple of ``CostRow`` objects recovered from
+    whichever evidence records are still live-verifiable, to fold into
+    headroom -- the byte-identity-in-committed-ledger contract is
+    unchanged. Once an evidence artifact expires, its own cost rows can
+    no longer be independently recovered (a durable receipt never
+    carries payload content such as cost rows, by design), so this
+    check is skipped for that evidence and the earlier one-time
+    recording into the committed ledger (via
+    ``scripts/record_phase5_cost_evidence.py``, run before expiry) is
+    trusted from then on.
+    """
+    from sentinel.phase5.evidence_records import (
+        GateEvidenceRecord,
+        ProbeEvidenceRecord,
+        validate_replacement_provenance,
+    )
+    from sentinel.phase5.receipts import evidence_receipts, execution_dispositions, marker_receipts
+    from sentinel.phase5.replacement import (
+        ORIGINAL_PURPOSE,
+        OWNER_RULING_ID,
+        REPLACEMENT_OF_RUN_ID,
+        REPLACEMENT_PURPOSE,
+    )
     from telemetry.cost_ledger import read_cost_rows, serialize_cost_row
 
-    def _load_markers(purpose: str):
-        refs = client.list_artifacts(artifact_names.ONESHOT_PREFIX)
-        out = []
-        for i, ref in enumerate(refs):
-            root = client.download_artifact(ref, work_root, work_root / f"marker-{purpose}-{i}")
-            marker = OneShotMarker.model_validate_json((root / "marker.json").read_text(encoding="utf-8"))
-            if marker.purpose == purpose:
-                out.append((marker, ref))
-        return out
-
-    def _load_evidence(prefix: str, model_cls, marker, known_filename: str):
-        refs = [r for r in client.list_artifacts(prefix)]
-        matches = []
-        for i, ref in enumerate(refs):
-            parsed = artifact_names.parse_artifact_name(ref.name)
-            if parsed is None or parsed.run_id != marker.github_run_id or parsed.attempt != marker.run_attempt:
-                continue
-            root = client.download_artifact(ref, work_root, work_root / f"evidence-{ref.name}-{i}")
-            candidate_path = root / known_filename
-            if not candidate_path.exists():
-                continue
-            matches.append(model_cls.model_validate_json(candidate_path.read_text(encoding="utf-8")))
-        return matches
-
-    from sentinel.phase5.evidence_records import GateEvidenceRecord, ProbeEvidenceRecord
-
-    probe_markers = _load_markers("P5C_WIF_PROBE")
+    # -- 1. P5-C probe ---------------------------------------------------
+    probe_markers = marker_receipts(receipts, "P5C_WIF_PROBE")
     if len(probe_markers) != 1:
-        raise Phase5ScriptError(f"expected exactly one P5C_WIF_PROBE marker, found {len(probe_markers)}")
-    probe_evidence = _load_evidence(
-        artifact_names.PROBE_EVIDENCE_PREFIX, ProbeEvidenceRecord, probe_markers[0][0], "probe-evidence.json"
+        raise Phase5ScriptError(
+            f"expected exactly one durable P5C_WIF_PROBE marker receipt, found {len(probe_markers)}"
+        )
+    probe_marker = probe_markers[0]
+    probe_evidence_receipts = [
+        r
+        for r in evidence_receipts(receipts, "PROBE_EVIDENCE")
+        if r.github_run_id == probe_marker.github_run_id and r.run_attempt == probe_marker.run_attempt
+    ]
+    if len(probe_evidence_receipts) != 1 or probe_evidence_receipts[0].disposition != "CAPABILITY_PASS":
+        raise Phase5ScriptError(
+            "expected exactly one CAPABILITY_PASS durable PROBE_EVIDENCE receipt correlated "
+            "to the P5-C marker"
+        )
+    probe_record = _verify_retained_payload(
+        client, work_root, probe_evidence_receipts[0], ProbeEvidenceRecord, "probe"
     )
-    if len(probe_evidence) != 1 or probe_evidence[0].disposition != "CAPABILITY_PASS":
-        raise Phase5ScriptError("P5-C probe evidence missing, ambiguous, or not CAPABILITY_PASS")
 
-    gate_markers = _load_markers("P5D_OFFICIAL_SONNET_GATE")
-    if len(gate_markers) != 1:
-        raise Phase5ScriptError(f"expected exactly one P5D_OFFICIAL_SONNET_GATE marker, found {len(gate_markers)}")
-    gate_evidence = _load_evidence(
-        artifact_names.GATE_EVIDENCE_PREFIX, GateEvidenceRecord, gate_markers[0][0], "phase5_official_gate.json"
+    # -- 2. original P5-D: visible, permanently non-qualifying -----------
+    original_markers = [
+        r for r in marker_receipts(receipts, ORIGINAL_PURPOSE) if r.github_run_id == REPLACEMENT_OF_RUN_ID
+    ]
+    if len(original_markers) != 1:
+        raise Phase5ScriptError(
+            f"expected exactly one durable original P5-D marker receipt for run "
+            f"{REPLACEMENT_OF_RUN_ID!r}, found {len(original_markers)}"
+        )
+    original_dispositions = [
+        r
+        for r in execution_dispositions(receipts, REPLACEMENT_OF_RUN_ID)
+        if r.purpose == ORIGINAL_PURPOSE and r.owner_ruling_id == OWNER_RULING_ID
+    ]
+    if len(original_dispositions) != 1:
+        raise Phase5ScriptError(
+            "expected exactly one durable EXECUTION_DISPOSITION receipt for the original "
+            f"P5-D run {REPLACEMENT_OF_RUN_ID!r} under owner ruling {OWNER_RULING_ID!r}"
+        )
+    original_gate_evidence = [
+        r for r in evidence_receipts(receipts, "GATE_EVIDENCE") if r.purpose == ORIGINAL_PURPOSE
+    ]
+    if original_gate_evidence:
+        raise Phase5ScriptError(
+            "a GATE_EVIDENCE receipt exists for the original P5-D purpose -- it is permanently "
+            "non-qualifying and must never be treated as quality evidence"
+        )
+
+    # -- 3. replacement: exactly one proven marker + terminal evidence ---
+    replacement_markers = marker_receipts(receipts, REPLACEMENT_PURPOSE)
+    if len(replacement_markers) != 1:
+        raise Phase5ScriptError(
+            f"expected exactly one durable replacement marker receipt, found "
+            f"{len(replacement_markers)} -- the P5-E seam requires exactly one properly "
+            "proven replacement"
+        )
+    replacement_marker = replacement_markers[0]
+    replacement_gate_receipts = [
+        r
+        for r in evidence_receipts(receipts, "GATE_EVIDENCE")
+        if r.purpose == REPLACEMENT_PURPOSE
+        and r.github_run_id == replacement_marker.github_run_id
+        and r.run_attempt == replacement_marker.run_attempt
+    ]
+    if len(replacement_gate_receipts) != 1 or replacement_gate_receipts[0].disposition not in (
+        "GREEN",
+        "HONEST_FAIL",
+    ):
+        raise Phase5ScriptError(
+            "expected exactly one GREEN or HONEST_FAIL durable GATE_EVIDENCE receipt "
+            "correlated to the replacement marker"
+        )
+    replacement_gate_receipt = replacement_gate_receipts[0]
+    replacement_record = _verify_retained_payload(
+        client, work_root, replacement_gate_receipt, GateEvidenceRecord, "replacement-gate"
     )
-    if len(gate_evidence) != 1 or gate_evidence[0].disposition not in ("GREEN", "HONEST_FAIL"):
-        raise Phase5ScriptError("P5-D gate evidence missing, ambiguous, or not GREEN/HONEST_FAIL")
+    if replacement_record is not None:
+        try:
+            validate_replacement_provenance(replacement_record, expected_source_sha=expected_source_sha)
+        except ValueError as exc:
+            raise Phase5ScriptError(f"replacement evidence provenance invalid: {exc}") from exc
+        if replacement_record.disposition != replacement_gate_receipt.disposition:
+            raise Phase5ScriptError(
+                "live replacement evidence disposition does not match its durable receipt"
+            )
 
-    all_rows = list(probe_evidence[0].cost_rows) + list(gate_evidence[0].cost_rows)
+    # -- cost-ledger byte-identity (unchanged contract, best-effort) -----
+    all_rows: tuple = ()
+    if probe_record is not None:
+        all_rows = all_rows + tuple(probe_record.cost_rows)
+    if replacement_record is not None:
+        all_rows = all_rows + tuple(replacement_record.cost_rows)
     committed_path = REPO_ROOT / "telemetry" / "cost_ledger.jsonl"
     committed_rows = read_cost_rows(committed_path) if committed_path.exists() else []
     committed_serialized = [serialize_cost_row(r) for r in committed_rows]
@@ -164,7 +319,7 @@ def _verify_provider_phase_prerequisites(client, work_root: Path) -> tuple:
                 f"CostRow for run {row.run_id!r} appears {occurrences} times in the committed "
                 "ledger (expected exactly once) — the P5-C/P5-D handoff is incomplete or duplicated"
             )
-    return tuple(all_rows)
+    return all_rows
 
 
 def main(argv: list[str]) -> int:
@@ -247,8 +402,11 @@ def main(argv: list[str]) -> int:
         elif args.supersedes:
             return refuse("SUPERSEDES_TARGET_NOT_FOUND", ctx)
 
-        # -- P5-C/P5-D prerequisite verification (seam 3) -------------
-        provider_cost_rows = _verify_provider_phase_prerequisites(client, work_root)
+        # -- P5-C/P5-D prerequisite verification (seam 3, durable) ----
+        receipts = load_durable_history()
+        provider_cost_rows = _verify_provider_phase_prerequisites(
+            client, work_root, receipts, args.expected_source_sha
+        )
 
         # -- headroom ---------------------------------------------------
         committed_ledger = REPO_ROOT / "telemetry" / "cost_ledger.jsonl"

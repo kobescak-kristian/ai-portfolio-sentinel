@@ -35,6 +35,7 @@ _WINDOW_ID_RE = re.compile(rf"^{_WINDOW_ID}$")
 _PURPOSE_SLUGS = {
     "P5C_WIF_PROBE": "p5c-wif-probe",
     "P5D_OFFICIAL_SONNET_GATE": "p5d-official-sonnet-gate",
+    "P5D_REPLACEMENT_SONNET_GATE": "p5d-replacement-sonnet-gate",
 }
 _SLUG_TO_PURPOSE = {slug: purpose for purpose, slug in _PURPOSE_SLUGS.items()}
 
@@ -150,7 +151,10 @@ _PATTERNS: tuple[tuple[ArtifactKind, re.Pattern], ...] = (
     ("CONTROL_REFUSAL", re.compile(rf"^sentinel-p5-refusal-(?P<window_id>{_WINDOW_ID})-r(?P<run_id>{_RUN_ID})$")),
     (
         "ONESHOT_MARKER",
-        re.compile(r"^sentinel-p5-oneshot-(?P<slug>p5c-wif-probe|p5d-official-sonnet-gate)-r(?P<run_id>" + _RUN_ID + ")$"),
+        re.compile(
+            r"^sentinel-p5-oneshot-(?P<slug>p5c-wif-probe|p5d-official-sonnet-gate|"
+            r"p5d-replacement-sonnet-gate)-r(?P<run_id>" + _RUN_ID + ")$"
+        ),
     ),
     ("ATTEMPT_EVIDENCE", re.compile(rf"^sentinel-p5-attempt-r(?P<run_id>{_RUN_ID})-a(?P<attempt>{_ATTEMPT})$")),
     ("PREWINDOW_EVIDENCE", re.compile(rf"^sentinel-p5-prewindow-r(?P<run_id>{_RUN_ID})-a(?P<attempt>{_ATTEMPT})$")),
