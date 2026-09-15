@@ -404,6 +404,7 @@ def _replacement_gate_kwargs(**overrides) -> dict:
         accounted_total_eur_micros=2_000, disposition="GREEN", auth_mode=WIF,
         replacement_of_run_id=repl.REPLACEMENT_OF_RUN_ID, owner_ruling_id=repl.OWNER_RULING_ID,
         marker_purpose=repl.REPLACEMENT_PURPOSE, envelope_id="env-1", envelope_version="v1",
+        terminal_writer="RUNNER",
     )
     base.update(overrides)
     return base

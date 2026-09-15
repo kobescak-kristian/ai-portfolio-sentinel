@@ -71,6 +71,11 @@ GATE_PAYLOAD_FILENAME = "phase5_official_gate.json"
 EXECUTION_INVALID_NO_QUALITY_RESULT = "EXECUTION_INVALID / NO_QUALITY_RESULT"
 EXECUTION_INVALID_INFRASTRUCTURE_FAILURE = "EXECUTION_INVALID / INFRASTRUCTURE_FAILURE"
 PUBLICATION_FAILED = "PUBLICATION_FAILED"
+# Stage 2B-1 (dispatch q77-p5d-repair-stage2b1-implement-a): durable
+# memory vocabulary for a consumed-but-unclassified replacement
+# termination. Structural only -- no receipt is appended here.
+EXECUTION_INVALID_UNCLASSIFIED_TERMINATION = "EXECUTION_INVALID / UNCLASSIFIED_TERMINATION"
+UNCLASSIFIED_TERMINATION = "UNCLASSIFIED_TERMINATION"
 
 # Deliberately duplicated string literals rather than importing from
 # .replacement (this module's own established convention -- see the
@@ -103,6 +108,8 @@ ReceiptDisposition = Literal[
     "EXECUTION_INVALID / NO_QUALITY_RESULT",
     "EXECUTION_INVALID / INFRASTRUCTURE_FAILURE",
     "PUBLICATION_FAILED",
+    "UNCLASSIFIED_TERMINATION",
+    "EXECUTION_INVALID / UNCLASSIFIED_TERMINATION",
 ]
 
 _HEX40 = re.compile(r"[0-9a-f]{40}")
@@ -276,9 +283,12 @@ class Phase5Receipt(BaseModel):
                     "original P5-D purpose is permanently non-qualifying and can never "
                     "acquire gate evidence (ADR-0012 Amendment A1 rule 4)"
                 )
-            if self.disposition not in ("GREEN", "HONEST_FAIL", "INFRASTRUCTURE_FAILURE"):
+            if self.disposition not in (
+                "GREEN", "HONEST_FAIL", "INFRASTRUCTURE_FAILURE", UNCLASSIFIED_TERMINATION
+            ):
                 raise ValueError(
-                    "GATE_EVIDENCE disposition must be GREEN, HONEST_FAIL or INFRASTRUCTURE_FAILURE"
+                    "GATE_EVIDENCE disposition must be GREEN, HONEST_FAIL, INFRASTRUCTURE_FAILURE "
+                    "or UNCLASSIFIED_TERMINATION"
                 )
             self._require_artifact_fields(
                 gate_evidence_name(self.github_run_id, self.run_attempt), GATE_PAYLOAD_FILENAME
@@ -287,11 +297,13 @@ class Phase5Receipt(BaseModel):
             if is_replacement_purpose:
                 if self.disposition not in (
                     EXECUTION_INVALID_INFRASTRUCTURE_FAILURE,
+                    EXECUTION_INVALID_UNCLASSIFIED_TERMINATION,
                     PUBLICATION_FAILED,
                 ):
                     raise ValueError(
                         "EXECUTION_DISPOSITION for the replacement purpose must be "
-                        f"{EXECUTION_INVALID_INFRASTRUCTURE_FAILURE!r} or {PUBLICATION_FAILED!r}"
+                        f"{EXECUTION_INVALID_INFRASTRUCTURE_FAILURE!r}, "
+                        f"{EXECUTION_INVALID_UNCLASSIFIED_TERMINATION!r} or {PUBLICATION_FAILED!r}"
                     )
             elif self.disposition != EXECUTION_INVALID_NO_QUALITY_RESULT:
                 raise ValueError(

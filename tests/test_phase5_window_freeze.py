@@ -572,6 +572,7 @@ def test_seam3_hash_verifies_live_retained_replacement_evidence(tmp_path):
         disposition="GREEN", auth_mode="github-actions-wif-federation",
         replacement_of_run_id=REPLACEMENT_OF_RUN_ID, owner_ruling_id=OWNER_RULING_ID,
         marker_purpose=REPLACEMENT_PURPOSE, envelope_id="env-1", envelope_version="v1",
+        terminal_writer="RUNNER",
     )
     payload_bytes = evidence.model_dump_json().encode("utf-8")
     payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()

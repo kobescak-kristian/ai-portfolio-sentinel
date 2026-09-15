@@ -168,6 +168,19 @@ TerminationCause = Literal[
 
 ObservedSignal = Literal["SIGINT", "SIGTERM", "UNKNOWN_EXTERNAL_TERMINATION"]
 
+# Consumed-but-unclassified termination (ADR-0012 Amendment A2 rule 6;
+# dispatch q77-p5d-repair-stage2b1-implement-a). ``unclassified_basis``
+# says only WHY no trusted runner terminal evidence exists -- never a
+# cause. ``terminal_writer`` names which process authored a terminal
+# record; the finalizer is structurally incapable of authoring quality.
+UnclassifiedBasis = Literal[
+    "OBSERVED_SIGNAL",
+    "RUNNER_TERMINAL_EVIDENCE_ABSENT",
+    "RUNNER_TERMINAL_EVIDENCE_UNTRUSTED",
+]
+TerminalWriter = Literal["RUNNER", "FINALIZER"]
+_RUNNER_OBSERVED_CAUSES = frozenset({"PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION"})
+
 # Deliberately duplicated string literals (this package's established
 # convention -- see receipts.py's own duplicated-vs-imported note) so
 # this module carries no new intra-package import edge.
@@ -209,7 +222,15 @@ class GateEvidenceRecord(_IdentityFields):
       validity predicate — with perfect scoring, and therefore empty
       ``miss_patterns`` — remains a legitimate, schema-constructible
       ``HONEST_FAIL`` because ``failed_checks`` is never empty when the
-      gate did not pass."""
+      gate did not pass.
+
+    ``UNCLASSIFIED_TERMINATION`` (dispatch
+    q77-p5d-repair-stage2b1-implement-a; ADR-0012 Amendment A2 rule 6)
+    records a consumed execution whose terminal state cannot be
+    classified as objective infrastructure failure: a signal or an
+    unknown cancellation was observed, or trusted runner terminal
+    evidence is absent or untrusted. It carries no termination_source,
+    no quality content, and is never runner-authored."""
 
     expected_source_sha: str
     model: str
@@ -223,7 +244,7 @@ class GateEvidenceRecord(_IdentityFields):
     failed_checks: tuple[str, ...] = ()
     cost_rows: tuple[CostRow, ...]
     accounted_total_eur_micros: int = Field(ge=0)
-    disposition: Literal["GREEN", "HONEST_FAIL", "INFRASTRUCTURE_FAILURE"]
+    disposition: Literal["GREEN", "HONEST_FAIL", "INFRASTRUCTURE_FAILURE", "UNCLASSIFIED_TERMINATION"]
     auth_mode: str | None = None
 
     # Replacement-provenance fields (ADR-0012 section 18; Amendment A2
@@ -243,6 +264,11 @@ class GateEvidenceRecord(_IdentityFields):
     envelope_version: str | None = None
     termination_source: TerminationCause | None = None
     observed_signals: tuple[ObservedSignal, ...] = ()
+    # Stage 2B-1 (dispatch q77-p5d-repair-stage2b1-implement-a). Both
+    # optional for general/historical parsing; the strict replacement
+    # requirements live in ``validate_replacement_provenance``.
+    unclassified_basis: UnclassifiedBasis | None = None
+    terminal_writer: TerminalWriter | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "GateEvidenceRecord":
@@ -267,6 +293,43 @@ class GateEvidenceRecord(_IdentityFields):
         if self.termination_source is not None and self.disposition != "INFRASTRUCTURE_FAILURE":
             raise ValueError(
                 "termination_source may be set only when disposition is INFRASTRUCTURE_FAILURE"
+            )
+        if len(set(self.observed_signals)) != len(self.observed_signals):
+            raise ValueError("observed_signals must not contain duplicates")
+        if self.termination_source in _RUNNER_OBSERVED_CAUSES and self.observed_signals:
+            raise ValueError(
+                f"termination_source {self.termination_source} must not be combined with an "
+                "observed signal -- an exception seen alongside a signal is never an objective cause"
+            )
+        if self.unclassified_basis is not None and self.disposition != "UNCLASSIFIED_TERMINATION":
+            raise ValueError(
+                "unclassified_basis may be set only when disposition is UNCLASSIFIED_TERMINATION"
+            )
+        if self.disposition == "UNCLASSIFIED_TERMINATION":
+            if self.unclassified_basis is None:
+                raise ValueError("UNCLASSIFIED_TERMINATION requires unclassified_basis")
+            if self.unclassified_basis == "OBSERVED_SIGNAL" and not self.observed_signals:
+                raise ValueError("unclassified_basis OBSERVED_SIGNAL requires at least one observed signal")
+            if self.unclassified_basis == "RUNNER_TERMINAL_EVIDENCE_ABSENT" and self.observed_signals:
+                raise ValueError(
+                    "unclassified_basis RUNNER_TERMINAL_EVIDENCE_ABSENT requires no observed signal"
+                )
+            if (
+                self.run_ids or self.scoring or self.thresholds or self.invariant_results
+                or self.execution_validity or self.miss_patterns or self.failed_checks
+                or self.cost_rows or self.accounted_total_eur_micros != 0
+            ):
+                raise ValueError(
+                    "UNCLASSIFIED_TERMINATION must carry no quality content -- run_ids, scoring, "
+                    "thresholds, invariant_results, execution_validity, miss_patterns, "
+                    "failed_checks and cost_rows must be empty and accounted total zero"
+                )
+            if self.terminal_writer == "RUNNER":
+                raise ValueError("UNCLASSIFIED_TERMINATION is never authored by the RUNNER")
+        if self.terminal_writer == "FINALIZER" and self.disposition in ("GREEN", "HONEST_FAIL"):
+            raise ValueError(
+                f"{self.disposition} can never be authored by the FINALIZER -- the finalizer is "
+                "structurally incapable of authoring a quality result"
             )
         return self
 
@@ -297,6 +360,13 @@ def validate_replacement_provenance(
     already makes assigning a raw signal name to ``termination_source``
     unconstructible, since ``TerminationCause`` and ``ObservedSignal``
     are disjoint closed vocabularies.
+
+    Terminal-writer provenance (dispatch
+    q77-p5d-repair-stage2b1-implement-a): replacement GREEN/HONEST_FAIL
+    must be RUNNER-authored, UNCLASSIFIED_TERMINATION must be
+    FINALIZER-authored, and INFRASTRUCTURE_FAILURE must name RUNNER or
+    FINALIZER -- never None. ``terminal_writer`` stays optional for
+    general/historical parsing; only this replacement gate requires it.
     """
     if not _HEX40.fullmatch(expected_source_sha):
         raise ValueError("expected_source_sha is not exactly 40 lowercase hexadecimal characters")
@@ -336,10 +406,30 @@ def validate_replacement_provenance(
                 "established termination_source; a raw observed signal alone "
                 "(ADR-0012 Amendment A2 rule 6) is never sufficient proof"
             )
+        if record.terminal_writer not in ("RUNNER", "FINALIZER"):
+            raise ValueError(
+                "replacement INFRASTRUCTURE_FAILURE evidence requires terminal_writer "
+                "RUNNER or FINALIZER; None is never accepted"
+            )
     elif record.disposition in ("GREEN", "HONEST_FAIL"):
         if record.termination_source is not None:
             raise ValueError(
                 f"{record.disposition} replacement evidence must not carry a termination_source"
+            )
+        if record.terminal_writer != "RUNNER":
+            raise ValueError(
+                f"{record.disposition} replacement evidence requires terminal_writer == 'RUNNER'"
+            )
+    elif record.disposition == "UNCLASSIFIED_TERMINATION":
+        if record.termination_source is not None:
+            raise ValueError(
+                "replacement UNCLASSIFIED_TERMINATION evidence must not carry a termination_source"
+            )
+        if record.unclassified_basis is None:
+            raise ValueError("replacement UNCLASSIFIED_TERMINATION evidence requires unclassified_basis")
+        if record.terminal_writer != "FINALIZER":
+            raise ValueError(
+                "replacement UNCLASSIFIED_TERMINATION evidence requires terminal_writer == 'FINALIZER'"
             )
     else:
         raise ValueError(f"unrecognized disposition for replacement evidence: {record.disposition!r}")

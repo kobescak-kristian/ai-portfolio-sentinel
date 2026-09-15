@@ -382,12 +382,17 @@ UNRESOLVED: the original official execution is `EXECUTION_INVALID /
 NO_QUALITY_RESULT` with its one-shot consumed, and the Option-3A
 replacement repair path is active under the ADOPTED
 `adr/0012-p5d-replacement-execution-envelope.md`; repair Stage 1
-(the durable-history foundation) and repair Stage 2A (durable-history
+(the durable-history foundation), repair Stage 2A (durable-history
 wiring into one-shot discovery, replacement eligibility and the P5-E
-seam; the replacement purpose is structural only and unarmed) are
-landed, later execution-envelope, journal, finalizer, rehearsal and
-readiness stages remain pending, and the replacement is not ready or
-authorized for dispatch. Windows scheduler cutover, prospective
+seam; the replacement purpose is structural only and unarmed) and
+repair Stage 2B-1 (the terminal-publication library: operational
+journal, atomic terminal-evidence writer, execution/publication state
+model, finalizer decision table and strict terminal-writer provenance;
+not wired into any runner or workflow) are landed, later
+journal/finalizer wiring (Stage 2B-2), execution-envelope (Stage 2C),
+rehearsal and readiness stages remain pending, the durable one-way
+single-attempt consumption latch remains a hard pre-arming gate, and
+the replacement is not ready or authorized for dispatch. Windows scheduler cutover, prospective
 five-slot live window, evidence finalization and release remain
 P5-E through P5-H and are still pending. Phase 6 is NOT STARTED.
 The overall production-readiness program
@@ -3735,3 +3740,115 @@ merges every change."
   including the consumed-but-unclassified termination path, the
   quality-neutral execute step, and the workflow finalizer/confirm
   steps) as its own bounded child dispatch; not begun here.
+- 2026-09-15 - ADR-0012 REPAIR STAGE 2B-1 LANDED: TERMINAL-PUBLICATION
+  LIBRARY (dispatch q77-p5d-repair-stage2b1-implement-a).
+  Stage 2B-1 of the ADR-0012 Amendment A repair is implemented, per the
+  independently-planned and owner-corrected Stage-2B plan
+  (q77-p5d-repair-stage2b-plan-a, revision 2). It is library code and
+  schema only: no runner, workflow or entrypoint imports it, and it
+  arms nothing.
+  Landed: new `sentinel/phase5/terminal.py` (the execution/publication
+  state model `PREFLIGHTED` .. `PUBLICATION_FAILED` plus
+  `PUBLICATION_UNCONFIRMED`, with a transition table in which written
+  trusted terminal evidence can never downgrade to invalid; the
+  terminal-evidence file contract -- exactly one candidate path,
+  `phase5_official_gate.json`, with staging and quarantine as
+  same-device siblings that are never publication candidates; strict
+  candidate verification shared by the future finalizer, publication
+  confirmation and receipt recording; an atomic writer -- temp file,
+  write, fsync, atomic replace -- that never replaces a trusted record;
+  publication-root inventory and quarantine; an invalid-record builder
+  with no path to a quality disposition; and the pure finalizer
+  decision table); new `sentinel/phase5/journal.py` (a closed,
+  content-free, serialized, fsynced append-only operational journal
+  whose every field is a closed vocabulary, bounded integer, digest or
+  bounded exception class name; a strict reader that distinguishes an
+  acknowledged trailing fragment from corruption; a finalizer summary;
+  a bounded liveness line; and signal hooks that record SIGINT/SIGTERM
+  and then deliver the original default behaviour unchanged);
+  `sentinel/phase5/evidence_records.py` (`GateEvidenceRecord` gains the
+  disposition `UNCLASSIFIED_TERMINATION` -- a consumed termination that
+  cannot be classified as objective infrastructure failure, with no
+  termination source and no quality content -- plus optional
+  `unclassified_basis` and `terminal_writer`; a runner-observed cause
+  combined with any observed signal is unconstructible; and
+  `validate_replacement_provenance` now requires strict terminal-writer
+  provenance: GREEN/HONEST_FAIL only from the RUNNER,
+  UNCLASSIFIED_TERMINATION only from the FINALIZER,
+  INFRASTRUCTURE_FAILURE from RUNNER or FINALIZER and never unattributed;
+  `terminal_writer` stays optional for general and historical parsing);
+  `sentinel/phase5/receipts.py` (two additive disposition literals for
+  future durable memory of an unclassified replacement termination:
+  `UNCLASSIFIED_TERMINATION` for gate evidence and
+  `EXECUTION_INVALID / UNCLASSIFIED_TERMINATION` for the replacement
+  execution disposition); one fixture line each in
+  `tests/test_phase5_replacement.py` and
+  `tests/test_phase5_window_freeze.py` (`terminal_writer="RUNNER"` on
+  the existing otherwise-valid replacement evidence fixtures, required
+  by the strict writer rule).
+  Signal is never cause: any observed signal or platform-cancelled
+  execute step yields UNCLASSIFIED_TERMINATION in the decision table,
+  never INFRASTRUCTURE_FAILURE, and no Stage-2C deadline or watchdog
+  cause is ever inferred. Under the permanently non-qualifying original
+  purpose, verification trusts no record carrying any replacement
+  provenance or terminal writer; the Stage-2B-2 plan-verify must
+  reconcile this with its runner writer-attribution wiring.
+  Local verification: 1783 passed, 14 skipped (Windows platform skips
+  only, including the new POSIX signal and symlink tests that run on
+  Linux CI), 92.0% line coverage (`terminal.py` 96.7%, `journal.py`
+  95.1%, `evidence_records.py` 94.2%, `receipts.py` 93.1%,
+  `replacement.py` 96.3%); `python -m pip check` PASS; Tier 0 validator
+  PASS; Phase-1 freeze guard PASS (fixtures/evals byte-identical, 41/41
+  blobs). Registry byte-unchanged:
+  `artifacts/phase5_receipt_registry.jsonl` still exactly four lines,
+  head SHA-256
+  `9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39`.
+  The official gate `PURPOSE` constant is unchanged
+  (`P5D_OFFICIAL_SONNET_GATE`). CI for this commit is not self-cited
+  here.
+  Executing model: Claude Opus 5 (the routing named Sonnet; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 10 paths declared and check-write-set
+  verified): `sentinel/phase5/journal.py` (new),
+  `sentinel/phase5/terminal.py` (new), `sentinel/phase5/evidence_records.py`,
+  `sentinel/phase5/receipts.py`, `tests/test_phase5_journal.py` (new),
+  `tests/test_phase5_terminal.py` (new), `tests/test_phase5_replacement.py`,
+  `tests/test_phase5_window_freeze.py`, `STATE.md` (program-status
+  wording plus this entry), `.publicgate-allow` (one entry for this
+  entry's status line). No script, workflow, agent, fixture, prompt,
+  scorer, checker, threshold, evaluation, requirements, retention
+  policy, FINDINGS.md or telemetry change; the committed receipt
+  registry is byte-unchanged.
+  NON-EVENTS: no Stage 2B-2 wiring (quality-neutral execute step,
+  finalizer/confirm script, workflow publication steps); no Stage 2C
+  work (deadlines, watchdog, process-tree kill, SDK cancellation,
+  envelope identity); no durable one-way consumption latch; no
+  replacement marker created, reset or consumed; no replacement
+  execution; no official Sonnet quality gate; no rehearsal execution
+  (neither the GitHub kill rehearsal nor the N=24 Sonnet timing
+  rehearsal); no model or provider call; no OIDC/WIF exchange; no
+  GitHub workflow dispatch, rerun or cancel; no federation-rule,
+  provider-cap, secret, variable or environment mutation; no original
+  Sonnet quality content inspected; no frozen quality-surface change;
+  no P5-E freeze, cutover or release.
+  HARD PRE-ARMING GATE (recorded, not implemented): before the
+  replacement can be armed or receive final owner GO, a separately
+  governed, fail-closed, durable one-way attempt/arming/consumption
+  latch (or an equivalently strong mechanism) must make single-attempt
+  consumption durable even if the replacement marker was consumed,
+  post-run receipt recording fails indefinitely and the live artifact
+  later expires; replacement eligibility must consult it. Committing
+  the receipt promptly is not sufficient.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C
+  COMPLETE. **P5-D remains IN PROGRESS / UNRESOLVED**: original official
+  run `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker
+  CONSUMED, ADR-0012 repair Stage 1, Stage 2A and Stage 2B-1 LANDED,
+  model-free GitHub kill rehearsal NOT EXECUTED, Sonnet timing
+  rehearsal NOT EXECUTED, fresh replacement readiness NOT COMPLETE,
+  replacement NOT READY / NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2B-1 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2B-2 of the ADR-0012 repair (runner journal
+  wiring and quality-neutral execute step, finalizer and publication
+  confirmation, workflow publication steps) as its own bounded child
+  dispatch after a plan-verify against post-2B-1 blobs; not begun here.
