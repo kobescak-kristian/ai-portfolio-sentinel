@@ -377,10 +377,16 @@ CLOSED. Phase 5 is IN PROGRESS as of 2026-08-23 under
 `adr/0011-phase5-unattended-operation-contract.md`. The contract is
 adopted; P5-B (implementation) is COMPLETE across all three parts.
 **P5-C (Actions rehearsal plus the one capped, one-shot WIF capability
-probe) is COMPLETE.** Official Sonnet gate, Windows scheduler cutover,
-prospective five-slot live window, evidence finalization and release
-remain P5-D through P5-H and are still pending; P5-D is
-NEXT. Phase 6 is NOT STARTED. The overall production-readiness program
+probe) is COMPLETE.** P5-D (official Sonnet gate) is IN PROGRESS /
+UNRESOLVED: the original official execution is `EXECUTION_INVALID /
+NO_QUALITY_RESULT` with its one-shot consumed, and the Option-3A
+replacement repair path is active under the ADOPTED
+`adr/0012-p5d-replacement-execution-envelope.md`; repair
+implementation is pending, and the replacement is not ready or
+authorized for dispatch. Windows scheduler cutover, prospective
+five-slot live window, evidence finalization and release remain
+P5-E through P5-H and are still pending. Phase 6 is NOT STARTED.
+The overall production-readiness program
 remains OPEN, and no production or production-ready claim is
 permitted.**
 Activating the
@@ -3342,3 +3348,73 @@ merges every change."
   Next action: derive/red-team the narrow ADR and technical repair
   requirements from `q77-p5d-replacement-owner-ruling-a`, as its own
   child dispatch; not begun here.
+- 2026-09-15 - ADR-0012 ADOPTED: P5-D REPLACEMENT EXECUTION ENVELOPE
+  AND EVIDENCE DURABILITY (dispatch q77-p5d-replacement-adr-b,
+  superseding q77-p5d-replacement-adr-a).
+  `adr/0012-p5d-replacement-execution-envelope.md` is adopted under
+  owner ruling `q77-p5d-replacement-owner-ruling-a`. It freezes the
+  governance and architecture of the execution/evidence repair for the
+  one exceptional P5-D replacement, and implements none of it.
+  Relationship to ADR-0011, source-verified: ADR-0011 did not set the
+  official gate's 30-minute timeout (its only workflow timeout is the
+  20-minute scheduled-workflow value); the 30 minutes lives in
+  `.github/workflows/sentinel-official-gate.yml` and its contract test.
+  ADR-0012 fills the execution-envelope and evidence-durability
+  dimension ADR-0011 left to implementation; ADR-0011 otherwise remains
+  authoritative. Multi-run (option 3B) governance stays deferred.
+  Frozen: the quality surface is unchanged (model `claude-sonnet-5`,
+  fixtures, answer key, prompts, scorer, thresholds, GREEN/HONEST_FAIL
+  rule, two runs of 23 judgment tasks, 46 total, existing bounded
+  second attempt, 5,000,000 micro-EUR gate budget). Runtime basis: up
+  to 92 `query_fn` invocations (46 judgment tasks x
+  `MAX_MODEL_ATTEMPTS_PER_TASK = 2`), attempt 2 source-verified as the
+  same runtime shape, retryable only on `SDK_BUDGET_CEILING`. Envelope:
+  outer job timeout >= 138 x max_observed + 18 min (ceiling in whole
+  minutes); per-invocation deadline max(180 s, 3 x max_observed);
+  session deadline an absolute instant, job_start + (outer - 8 min);
+  feasibility boundary max_observed <= 148 s against the 360-minute
+  GitHub-hosted job limit, margins never reduced to fit. Timeout before
+  authoritative publication maps to EXECUTION_INVALID /
+  INFRASTRUCTURE_FAILURE, never HONEST_FAIL; a result becomes
+  authoritative only on successful external publication of strict-valid
+  terminal evidence, and is then irreversible. Also frozen: the
+  operational-only journal and atomic terminal evidence; the always()
+  finalizer that never overwrites a valid verdict; the narrow durability
+  claim with the runner-destruction residual stated; the model-free
+  GitHub job-level kill rehearsal; the prospectively pre-registered
+  N=24 Sonnet timing rehearsal (max_observed, EUR 1.00 hard budget, any
+  invocation ending at its rehearsal budget ceiling invalidates the
+  rehearsal); the temporary rehearsal-only federation rule and provider
+  cap rules (architecture only, no live mutation); cost classes A/B/C
+  with only C in the gate budget; mandatory replacement provenance
+  (`replacement_of_run_id = 32880880053`, owner ruling id, marker
+  identity, source SHA, run ID, attempt, envelope version, termination
+  source); P5-E seam-3 repair, which today can never pass because the
+  original marker has no correlated evidence, changing only which
+  execution is authoritative; exact readiness/execution binding; the
+  publication state model; the 20-row fresh readiness matrix; and the
+  stop conditions.
+  ACTUAL WRITE SET: `adr/0012-p5d-replacement-execution-envelope.md`
+  (new), `STATE.md` (one Plan-field sentence corrected so P5-D no
+  longer reads as NEXT, plus this entry), `.publicgate-allow` (one
+  entry for this entry's program-status line). No workflow, Python,
+  test, fixture, prompt, evaluation, requirements, README, FINDINGS.md
+  or telemetry change.
+  NON-EVENTS: no repair implementation; no timeout, journal, finalizer,
+  watchdog, marker or rehearsal code; no workflow dispatch, rerun or
+  cancel; no OIDC/WIF exchange; no provider or model call; no marker
+  created, reset or consumed; no federation rule created or changed; no
+  provider cap, console, GitHub variable, secret or environment change;
+  no original Sonnet quality content inspected; no change to the frozen
+  quality surface.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C
+  COMPLETE. ADR-0012 ADOPTED. **P5-D remains IN PROGRESS / UNRESOLVED**:
+  original official run `EXECUTION_INVALID / NO_QUALITY_RESULT`,
+  original marker CONSUMED, repair implementation NOT YET COMPLETE,
+  model-free GitHub kill rehearsal NOT YET EXECUTED, Sonnet timing
+  rehearsal NOT YET EXECUTED, fresh re-readiness NOT YET COMPLETE,
+  replacement NOT READY / NOT AUTHORIZED FOR DISPATCH. P5-E NOT
+  STARTED. Phase 5 IN PROGRESS. Phase 6 NOT STARTED. Q-77 remains OPEN.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: implement the ADR-0012 repair as its own child dispatch;
+  not begun here.
