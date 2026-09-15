@@ -3418,3 +3418,70 @@ merges every change."
   Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
   Next action: implement the ADR-0012 repair as its own child dispatch;
   not begun here.
+- 2026-09-15 - ADR-0012 AMENDMENT A ADOPTED: INDEPENDENT-REVIEW
+  CORRECTIONS (dispatch q77-p5d-adr0012-amend-a).
+  An independent Fable 5.1 conformance review of ADR-0012 as adopted
+  at `4a2c1c2` returned PASS WITH REQUIRED CORRECTIONS. The owner
+  accepted corrections B1 and B2 and the complete amendment package,
+  before any implementation or rehearsal provider call. Amendment A is
+  appended to `adr/0012-p5d-replacement-execution-envelope.md`; the
+  original adopted text is preserved, and the amendment controls where
+  they conflict.
+  Amended rules: (A1) successful workflow-artifact publication remains
+  the quality-authority boundary, and a committed machine-readable
+  durable receipt registry now carries permanent memory of established
+  evidence, because public-repo artifacts expire after at most 90 days;
+  receipts for the P5-C probe marker and evidence and for the original
+  P5-D consumed marker and its EXECUTION_INVALID / NO_QUALITY_RESULT
+  disposition (claiming no gate evidence) must be created and verified
+  while their artifacts are downloadable, earliest observed expiry
+  2026-11-22T22:09:06Z, else STOP; artifact expiry never resets
+  consumed status. (A2) pre-publication quality exposure is prohibited
+  on every operator-visible surface, including the execute step's
+  current `DISPOSITION` print and 0/1 exit-code split; generic, manual,
+  forced or unknown cancellation cannot create replacement eligibility.
+  (A3) the timing rehearsal stays N=24, sequential, two strata of 12,
+  max_observed, every observation counting; its class B budget is
+  amended EUR 1.00 -> EUR 2.50 (2,500,000 micro-EUR); per-invocation
+  allowance stays production-equivalent (1,000,000 micro-EUR), and no
+  invocation starts unless the full allowance can be granted; the
+  original "only one invocation" budget claim is corrected against
+  `RunBudgetCoordinator.reserve()`. (A4) per-invocation stall deadline
+  amended to min(remaining_to_session_deadline, max(600 s, 10 x
+  max_observed)); outer formula and max_observed <= 148 s unchanged.
+  (A5) cancellation-path finalization and publication must fit the
+  platform's 5-minute cancellation window and its SIGINT/SIGTERM
+  sequence, demonstrated by the real GitHub rehearsal. (A6) the
+  finalizer never creates a competing invalid record beside trusted
+  terminal evidence, and staging files are never terminal evidence.
+  (A7) original class A spend stays a labelled estimate; no CostRow is
+  fabricated. (A8) readiness binding expanded to the resolved model
+  identifier, runner image, resolved dependency set, pinned SDK and
+  bundled CLI identity, and absence of silent CLI/runtime auto-update.
+  (A9) readiness matrix rows 21-23 added.
+  Quality surface UNCHANGED: model `claude-sonnet-5`, fixtures, answer
+  key, prompts, scorer, thresholds, GREEN/HONEST_FAIL rule, two runs of
+  23 judgment tasks, bounded second attempt, EUR 5 gate budget, EUR 1
+  per-call reservation, one replacement, Option 3A.
+  ACTUAL WRITE SET: `adr/0012-p5d-replacement-execution-envelope.md`
+  (Amendment A appended; original text unchanged), `STATE.md` (this
+  entry only), `.publicgate-allow` (one entry for this entry's
+  program-status line). No workflow, Python, test, fixture, prompt,
+  evaluation, requirements, README, FINDINGS.md or telemetry change.
+  NON-EVENTS: no repair implementation; no rehearsal executed; no
+  workflow dispatch, rerun or cancel; no OIDC/WIF exchange; no provider
+  or model call; no marker created, reset or consumed; no receipt
+  created; no provider cap, console, GitHub variable, secret or
+  environment change. Read-only GitHub API artifact listing only.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C
+  COMPLETE. ADR-0012 ADOPTED WITH AMENDMENT A. **P5-D remains IN
+  PROGRESS / UNRESOLVED**: original official run `EXECUTION_INVALID /
+  NO_QUALITY_RESULT`, original marker CONSUMED, repair implementation
+  NOT STARTED, model-free GitHub kill rehearsal NOT EXECUTED, Sonnet
+  timing rehearsal NOT EXECUTED, fresh re-readiness NOT COMPLETE,
+  replacement NOT READY / NOT AUTHORIZED FOR DISPATCH. P5-E NOT
+  STARTED. Phase 5 IN PROGRESS. Phase 6 NOT STARTED. Q-77 remains
+  OPEN. Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: implement the amended ADR-0012 repair as its own child
+  dispatch, creating the historical durable receipts before
+  2026-11-22T22:09:06Z; not begun here.

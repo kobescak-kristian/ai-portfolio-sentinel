@@ -626,3 +626,357 @@ P5-D remains in progress and unresolved. The original run remains
 `EXECUTION_INVALID / NO_QUALITY_RESULT`, and its marker remains
 consumed. P5-E is not started, and no production or production-ready
 claim is permitted.
+
+## Amendment A - 2026-09-15 independent-review corrections
+
+Status: ADOPTED
+
+Date: 2026-09-15
+
+This amendment is part of ADR-0012. It records corrections required by
+an independent conformance review of the adopted text (verdict: PASS
+WITH REQUIRED CORRECTIONS), all of which the owner accepted before any
+implementation or rehearsal provider call.
+
+The original decision text above is preserved unchanged as historical
+decision evidence. Where it conflicts with this amendment, this
+amendment controls.
+
+This amendment does not change the frozen quality surface (section 2),
+does not change the Option 3A owner ruling, keeps exactly one
+replacement as the maximum authorization, and authorizes no
+implementation, rehearsal, marker action, provider or platform
+mutation.
+
+Sections affected:
+
+- sections 3, 19 and 21: artifact-only consumption and history wording
+  is superseded to the extent A1 requires;
+- section 4, last paragraph: "where practical" is superseded by A2;
+- section 7, per-invocation deadline: superseded by A4;
+- section 10: tightened by A6;
+- section 11 and section 12: supplemented by A5;
+- section 13, EUR 1.00 budget and the "Budget and representativeness
+  constraint" paragraph: superseded by A3;
+- section 16: clarified by A7;
+- section 20: extended by A8;
+- section 22: extended by A9.
+
+### A1. Durable consumption and result memory
+
+Problem. Every Phase-5 workflow uploads artifacts with
+`retention-days: 90`, and GitHub limits artifact retention in public
+repositories to at most 90 days, after which artifacts are deleted. An
+artifact-only mechanism therefore cannot truthfully enforce permanent
+consumption, irreversibility of a valid result, or later
+reconstruction of the authoritative P5-D history.
+
+Observed 2026-09-15 by read-only API query, the historical artifacts
+that replacement and P5-E logic still depend on expire as follows:
+
+    artifact 9540505807
+      sentinel-p5-oneshot-p5c-wif-probe-r32783229864
+      expires 2026-11-22T22:09:06Z
+    artifact 9540511349
+      sentinel-p5-probe-evidence-r32783229864-a1
+      expires 2026-11-22T22:09:06Z
+    artifact 9575720463
+      sentinel-p5-oneshot-p5d-official-sonnet-gate-r32880880053
+      expires 2026-11-23T17:56:54Z
+
+No gate evidence artifact exists for run `32880880053`; its upload
+failed.
+
+Rules:
+
+1. Successful external workflow-artifact publication remains the
+   moment a strict-valid GREEN or HONEST_FAIL becomes authoritative
+   (section 4). The quality-publication boundary does not move into
+   Git.
+
+2. A machine-readable, committed durable receipt registry is added. Its
+   purpose is long-term memory of already-established external
+   evidence. Each applicable receipt carries enough immutable
+   provenance to reconstruct the authoritative decision without an
+   unexpired artifact, including where applicable:
+
+   - purpose or evidence class;
+   - GitHub workflow run ID;
+   - run attempt;
+   - source SHA;
+   - artifact name;
+   - numeric artifact ID;
+   - SHA-256 of the verified marker or evidence bytes;
+   - disposition;
+   - `replacement_of_run_id`;
+   - `owner_ruling_id`;
+   - recorded-at timestamp;
+   - receipt schema version.
+
+3. Artifact bytes remain the primary evidence while retained. The
+   receipt is the permanent machine-readable memory that the artifact
+   existed, was strict-validated, and produced the stated disposition.
+   A receipt never invents or reconstructs missing quality content.
+
+4. Before replacement readiness can pass, implementation creates and
+   verifies durable receipts for all historical Phase-5 evidence that
+   replacement or P5-E logic still needs, including:
+
+   - the P5-C capability probe marker and evidence;
+   - the original P5-D consumed marker;
+   - the original P5-D disposition
+     `EXECUTION_INVALID / NO_QUALITY_RESULT`.
+
+   The original P5-D receipt must not claim gate evidence existed. It
+   records that the marker existed and was consumed, and that the
+   separately governed incident disposition is execution-invalid with
+   no quality result.
+
+5. Historical receipts may be created only while their source
+   artifacts can still be independently downloaded and verified. The
+   earliest observed expiry is `2026-11-22T22:09:06Z`. If required
+   verification is no longer possible, work stops and returns to owner
+   governance.
+
+6. After the replacement terminal artifact is successfully published
+   and independently validated, its durable receipt is committed before
+   P5-E or any final progression. Failure to commit that receipt does
+   not erase an already-authoritative GREEN or HONEST_FAIL and does not
+   recreate replacement eligibility. It only blocks downstream
+   progression until the durable record is resolved.
+
+7. One-shot discovery, replacement eligibility and the repaired P5-E
+   seam consult the durable committed history. Absence caused by
+   artifact expiry is never treated as "never happened". Artifact
+   expiry never resets consumed status.
+
+8. Artifact-only wording in sections 3, 19 and 21 is superseded to the
+   extent necessary to implement this rule.
+
+### A2. No pre-publication quality exposure; cancellation
+
+Problem. Current source (`scripts/run_phase5_official_gate.py`) prints
+`DISPOSITION: <disposition>` and returns exit status 0 for GREEN and 1
+otherwise in the execute step, before the evidence upload step runs. An
+operator could therefore learn that a provisional result is
+unfavorable and cancel before publication.
+
+Rules:
+
+1. Before successful external publication, a valid quality disposition
+   is not exposed through execute-step stdout or stderr, an execute-step
+   exit-code distinction, the job summary, log-visible journal output,
+   or any other operator-visible workflow surface that distinguishes
+   GREEN from HONEST_FAIL.
+
+2. The execute step has identical quality-neutral success behavior for
+   a successfully computed GREEN and a successfully computed
+   HONEST_FAIL. Infrastructure failure may still be signaled
+   separately.
+
+3. The disposition may exist inside the private candidate evidence file
+   needed for publication. Its contents are not echoed to logs before
+   publication succeeds.
+
+4. The operational journal may retain bounded internal execution
+   metadata, but quality-predictive journal state is not streamed or
+   echoed into workflow logs before publication.
+
+5. Only after successful authoritative artifact publication may the
+   workflow, or a later governed recording step, surface the valid
+   GREEN or HONEST_FAIL disposition.
+
+6. Cancellation after replacement-marker consumption is never an
+   automatic basis for another replacement. A termination is classified
+   as objective infrastructure invalidity only when its termination
+   source is positively established by surviving evidence. A generic,
+   manual, forced or unknown cancellation is not, by itself, evidence of
+   objective infrastructure invalidity. It leaves the replacement
+   consumed, with no automatic retry and no second replacement under
+   the current ruling, and work stops and returns to owner governance.
+
+7. This rule binds equally whether the hidden provisional result would
+   have been GREEN or HONEST_FAIL.
+
+### A3. Timing rehearsal budget
+
+Source correction. Section 13 states that the production per-call
+reservation "would permit only one invocation" under a
+1,000,000 micro-EUR total. That is incorrect. Current
+`RunBudgetCoordinator.reserve()` (`agents/checker/budget.py`) reserves
+`min(remaining, max_per_call_reserve)`, and `commit()` releases any
+unused reservation after a completed call.
+
+Kept unchanged: N = 24; sequential execution; two strata of 12;
+production-representative invocation structure; the `max_observed`
+statistic; every observation counts; no second calibration rehearsal.
+
+Owner decision, made prospectively before any rehearsal provider call:
+the rehearsal's hard class B budget changes from EUR 1.00 to EUR 2.50.
+This does not alter the replacement gate's EUR 5.00 quality budget,
+the EUR 50 per month program ceiling, the number of replacement
+executions authorized, or any quality threshold or scoring rule.
+
+Rules:
+
+1. Each rehearsal invocation uses the same maximum per-call
+   reservation and SDK allowance basis as the official gate:
+
+       1,000,000 micro-EUR maximum reservation per invocation
+
+2. Total rehearsal class B budget:
+
+       2,500,000 micro-EUR
+
+3. Before every rehearsal invocation starts, remaining rehearsal
+   capacity must be enough to grant the full production-equivalent
+   reservation. If the coordinator would have to lower that
+   invocation's SDK allowance below the production-equivalent allowance,
+   the rehearsal stops before starting it. No truncated or
+   non-representative invocation is run. Equivalently, cumulative
+   accounted consumption before any invocation must not exceed
+   1,500,000 micro-EUR.
+
+4. Any invocation that reaches its SDK budget ceiling makes the
+   rehearsal non-representative: STOP.
+
+5. Any overshoot, exhaustion, incomplete N = 24 corpus,
+   infrastructure fault or feasibility failure: STOP.
+
+6. No observation is discarded.
+
+7. No automatic second rehearsal is authorized.
+
+8. Before any provider mutation or use, implementation shows fresh
+   provider-cap arithmetic covering the approved EUR 2.50 rehearsal
+   exposure. Provider capacity grants no additional execution
+   authorization.
+
+### A4. Per-invocation stall deadline
+
+The section 7 per-invocation deadline `max(180 s, 3 x max_observed)` is
+too close to normal timing evidence for a control whose purpose is to
+catch a pathological stall, not to redefine legitimate slow calls. It
+is superseded by:
+
+    min(remaining_to_session_deadline, max(600 s, 10 x max_observed))
+
+Rules:
+
+- the whole-session deadline remains the binding cumulative bound;
+- the per-invocation deadline catches a single pathological stall;
+- it never extends beyond the session deadline;
+- reaching either deadline before authoritative publication remains
+  `EXECUTION_INVALID / INFRASTRUCTURE_FAILURE`;
+- no timeout becomes HONEST_FAIL;
+- no margin changes after seeing replacement quality.
+
+Unchanged unless a later owner ruling prospectively changes them:
+
+    outer >= 138 x max_observed + 18 min
+    max_observed <= 148 s
+
+### A5. Cancellation finalization bound
+
+GitHub's workflow cancellation reference (verified 2026-09-15) states
+that on cancellation the runner sends SIGINT / Ctrl-C to the step's
+entry process; if it has not exited within 7500 ms, sends SIGTERM /
+Ctrl-Break and waits a further 2500 ms; then kills the process tree.
+After a 5-minute cancellation timeout, the server forcibly terminates
+all jobs and steps still marked for cancellation.
+
+The 8-minute finalization margin in section 7 remains the reserve for
+the normal session-deadline path. For cancellation and job-kill
+readiness:
+
+- any finalizer or publication behavior relied upon after cancellation
+  completes within the platform's 5-minute cancellation window;
+- cancellation handling tolerates the documented signal sequence;
+- readiness demonstrates the actual available timing, and does not
+  assume the 8-minute reserve applies after cancellation;
+- whether a job-level timeout follows the same sequence is established
+  only by the real GitHub rehearsal (section 12), which remains
+  required;
+- if that rehearsal cannot demonstrate this, work stops.
+
+### A6. Finalizer duplicate-terminal rule
+
+Section 10 is tightened. If strict-valid trusted runner terminal
+evidence already exists, the finalizer does not create a competing
+execution-invalid record. It either preserves and uses the trusted
+terminal evidence, or does nothing beyond non-conflicting operational
+metadata.
+
+A valid GREEN or HONEST_FAIL and an execution-invalid record for the
+same replacement execution never coexist as competing terminal
+dispositions. Temporary or atomic-write staging files are never
+included as candidate terminal evidence.
+
+### A7. Class A cost accounting
+
+The original execution-invalid run has no valid official gate CostRow;
+the committed ledger contains none for run `32880880053`, and none is
+fabricated.
+
+- Class A stays visible as a separately labelled provider-accounting
+  estimate with its provenance and uncertainty, as recorded in
+  `STATE.md`.
+- Class B stays readiness and rehearsal spend.
+- Class C stays replacement official quality-gate spend.
+- Only class C enters the replacement gate's EUR 5 quality budget.
+- All three stay visible in broader program and provider accounting.
+
+### A8. Readiness binding additions
+
+Section 20 is extended. Fresh readiness also captures or verifies,
+where technically available:
+
+- the exact resolved provider model identifier returned by the actual
+  execution path, not only the mutable alias;
+- the GitHub runner image identity and version;
+- the fully resolved dependency set used by the replacement;
+- the pinned `claude-agent-sdk` package identity (currently
+  `claude-agent-sdk==0.2.110`);
+- the identity of the CLI executable bundled with that package, which
+  the SDK uses when no CLI path is given;
+- verification that no bundled CLI or runtime auto-update mechanism can
+  silently alter execution after readiness;
+- all source, workflow, quality-hash, federation-rule and provider-cap
+  bindings section 20 already requires.
+
+No new third-party dependency is added merely to implement this
+binding. If exact binding is technically impossible for a material
+input, work stops and the residual is reported before replacement
+authorization.
+
+### A9. Readiness matrix additions
+
+Section 22 is extended with rows that carry the same required fields
+(evidence, PASS, STOP, model-free or real-provider, local or GitHub):
+
+21. durable receipts for historical Phase-5 evidence created and
+    verified before the earliest artifact expiry (A1)
+22. no pre-publication quality exposure on any operator-visible
+    surface, for both GREEN and HONEST_FAIL (A2)
+23. cancellation-path finalization and publication within the
+    platform cancellation window (A5)
+
+### A10. Unchanged by this amendment
+
+- the quality model contract `claude-sonnet-5`;
+- official fixtures, answer key, prompts and instructions;
+- checker and scorer semantics and thresholds;
+- the GREEN / HONEST_FAIL rule;
+- the two-run methodology, 23 judgment tasks per run, 46 total;
+- the existing bounded second attempt;
+- the replacement gate's EUR 5 total budget and EUR 1 maximum per-call
+  reservation;
+- the replacement count and the Option 3A owner ruling;
+- the outer job timeout formula and the `max_observed <= 148 s`
+  boundary.
+
+The EUR 2.50 change applies only to the non-quality timing rehearsal.
+
+Implementation has not begun. Neither rehearsal has run. Fresh
+readiness is not established. The replacement is not ready and is not
+authorized for dispatch.
