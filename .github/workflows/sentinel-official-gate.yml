@@ -6,7 +6,8 @@ name: sentinel-official-gate
 # preflight (expected-source, frozen fixture/eval presence, fresh
 # evidence dirs, one-shot discovery, WIF config, FX + coordinator
 # construction) runs and must pass BEFORE the immutable one-shot
-# marker is uploaded.
+# marker is uploaded. Stage 2B-2 (ADR-0012 Amendment A): execute ->
+# finalize -> upload gate evidence -> confirm gate evidence publication.
 on:
   workflow_dispatch:
     inputs:
@@ -56,6 +57,7 @@ jobs:
           GATE_ROOT: ${{ runner.temp }}/p5-gate/gate-root
           ARTIFACTS_DIR: ${{ runner.temp }}/p5-gate/artifacts
       - name: upload one-shot marker
+        id: marker
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: sentinel-p5-oneshot-p5d-official-sonnet-gate-r${{ github.run_id }}
@@ -76,11 +78,47 @@ jobs:
           WORK_ROOT: ${{ runner.temp }}/p5-gate
           GATE_ROOT: ${{ runner.temp }}/p5-gate/gate-root
           ARTIFACTS_DIR: ${{ runner.temp }}/p5-gate/artifacts
-      - name: upload gate evidence
+      - name: finalize
+        id: finalize
         if: always()
+        timeout-minutes: 1
+        run: >
+          python scripts/run_phase5_gate_finalizer.py finalize
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --artifacts-dir "$ARTIFACTS_DIR"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKER_STEP_OUTCOME: ${{ steps.marker.outcome }}
+          EXECUTE_STEP_OUTCOME: ${{ steps.execute.outcome }}
+          WORK_ROOT: ${{ runner.temp }}/p5-gate
+          ARTIFACTS_DIR: ${{ runner.temp }}/p5-gate/artifacts
+      - name: upload gate evidence
+        id: upload
+        if: always() && steps.marker.outcome != 'skipped' && steps.finalize.outputs.terminal_required != 'false'
+        timeout-minutes: 2
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: sentinel-p5-gate-evidence-r${{ github.run_id }}-a${{ github.run_attempt }}
-          path: ${{ runner.temp }}/p5-gate/artifacts
+          path: |
+            ${{ runner.temp }}/p5-gate/artifacts/phase5_official_gate.json
+            ${{ runner.temp }}/p5-gate/artifacts/phase5_official_gate_checks.json
+            ${{ runner.temp }}/p5-gate/artifacts/phase5_gate_journal.jsonl
           retention-days: 90
           if-no-files-found: error
+          overwrite: false
+      - name: confirm gate evidence publication
+        id: confirm
+        if: always() && steps.marker.outcome != 'skipped' && steps.finalize.outputs.terminal_required != 'false'
+        timeout-minutes: 1
+        run: >
+          python scripts/run_phase5_gate_finalizer.py confirm
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --artifacts-dir "$ARTIFACTS_DIR"
+          --work-root "$WORK_ROOT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPLOAD_STEP_OUTCOME: ${{ steps.upload.outcome }}
+          UPLOADED_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          UPLOADED_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          WORK_ROOT: ${{ runner.temp }}/p5-gate
+          ARTIFACTS_DIR: ${{ runner.temp }}/p5-gate/artifacts

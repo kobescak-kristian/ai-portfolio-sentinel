@@ -42,6 +42,19 @@ from sentinel.phase5.receipts import (  # noqa: E402
     load_registry,
 )
 from sentinel.phase5.replacement import replacement_history_verdict  # noqa: E402
+from sentinel.phase5.evidence_records import GateEvidenceRecord, TerminalWriter  # noqa: E402
+from sentinel.phase5.journal import OperationalJournal, read_journal  # noqa: E402
+from sentinel.phase5.replacement import (  # noqa: E402
+    OWNER_RULING_ID,
+    REPLACEMENT_OF_RUN_ID,
+    REPLACEMENT_PURPOSE,
+)
+from sentinel.phase5.terminal import (  # noqa: E402
+    JOURNAL_FILENAME,
+    EnvelopeIdentity,
+    TerminalIdentity,
+    assert_transition,
+)
 
 
 class Phase5ScriptError(RuntimeError):
@@ -49,13 +62,20 @@ class Phase5ScriptError(RuntimeError):
     or lineage-mutating boundary. Exit code 2 by convention."""
 
 
-def build_evidence_client(env=None) -> GithubEvidenceClient:
+def build_evidence_client(
+    env=None, *, request_timeout_s: float = 30.0, download_timeout_s: float = 60.0
+) -> GithubEvidenceClient:
     """Pop GITHUB_TOKEN (seam 4) and construct a REST client. Must run
-    before any Agent-SDK-capable port is built in the same process."""
+    before any Agent-SDK-capable port is built in the same process.
+    The timeout keywords default to the client's historical values;
+    only the Stage-2B-2 finalizer passes shorter, bounded ones."""
     env = env if env is not None else os.environ
     token = oidc.pop_github_token(env)
     ctx = derive_github_context(env)
-    return GithubEvidenceClient(api_url=ctx.api_url, repository=ctx.repository, token=token)
+    return GithubEvidenceClient(
+        api_url=ctx.api_url, repository=ctx.repository, token=token,
+        request_timeout_s=request_timeout_s, download_timeout_s=download_timeout_s,
+    )
 
 
 def git(args: Sequence[str]) -> str:
@@ -234,3 +254,124 @@ def emit_github_output(name: str, value: str) -> None:
         return
     with open(output_path, "a", encoding="utf-8") as handle:
         handle.write(f"{name}={value}\n")
+
+
+# ---------------------------------------------------------------------------
+# Stage 2B-2 terminal-publication wiring (ADR-0012 sections 9, 10, 21 and
+# Amendment A2/A6; dispatch q77-p5d-repair-stage2b2-implement-a). Shared by
+# the official gate runner and the gate finalizer; arms nothing.
+# ---------------------------------------------------------------------------
+
+TERMINAL_STAGING_DIRNAME = "terminal-staging"
+TERMINAL_QUARANTINE_DIRNAME = "terminal-quarantine"
+
+
+def terminal_layout(artifacts_dir: Path) -> "tuple[Path, Path, Path]":
+    """(publication root, staging root, quarantine root). Staging and
+    quarantine are same-device siblings of the publication root, never
+    inside it, so neither can ever become a publication candidate."""
+    artifacts_dir = Path(artifacts_dir)
+    parent = artifacts_dir.parent
+    return artifacts_dir, parent / TERMINAL_STAGING_DIRNAME, parent / TERMINAL_QUARANTINE_DIRNAME
+
+
+def create_terminal_layout(artifacts_dir: Path) -> "tuple[Path, Path, Path]":
+    """Create all three layout directories fresh. Any pre-existing
+    directory or missing parent fails closed as ``Phase5ScriptError``."""
+    layout = terminal_layout(artifacts_dir)
+    try:
+        for directory in layout:
+            directory.mkdir(exist_ok=False)
+    except OSError as exc:
+        raise Phase5ScriptError(f"terminal layout creation failed: {type(exc).__name__}") from exc
+    return layout
+
+
+def establish_preflight_journal(artifacts_dir: Path, *, fsync=None) -> Path:
+    """Fail-closed, pre-marker establishment of the terminal layout and
+    the RUNNER operational journal with exactly one PREFLIGHTED state
+    transition.
+
+    ``OperationalJournal`` deliberately latches faults instead of
+    raising, so every latch, a missing append result and a durable
+    read-back are all checked explicitly here. Any failure raises
+    ``Phase5ScriptError`` so preflight stops BEFORE the one-shot marker
+    is written: a known terminal-publication instrumentation fault never
+    consumes a marker. ``fsync`` is injectable for tests only. Returns
+    the journal path."""
+    publication_root, _staging, _quarantine = create_terminal_layout(artifacts_dir)
+    path = publication_root / JOURNAL_FILENAME
+    journal = OperationalJournal(path, writer="RUNNER", fsync=fsync if fsync is not None else os.fsync)
+    journal.open()
+    if journal.broken:
+        journal.close()
+        raise Phase5ScriptError("operational journal could not be established")
+    assert_transition(None, "PREFLIGHTED", writer="RUNNER")
+    event = journal.append("STATE_TRANSITION", state_to="PREFLIGHTED")
+    broken_after_append = journal.broken
+    journal.close()
+    if event is None or broken_after_append or journal.broken:
+        raise Phase5ScriptError("PREFLIGHTED journal append failed")
+    readback = read_journal(path)
+    events = readback.events
+    if (
+        readback.integrity != "OK"
+        or [e.event for e in events] != ["JOURNAL_OPENED", "STATE_TRANSITION"]
+        or [e.seq for e in events] != [1, 2]
+        or any(e.writer != "RUNNER" for e in events)
+        or events[1].state_from is not None
+        or events[1].state_to != "PREFLIGHTED"
+    ):
+        raise Phase5ScriptError("PREFLIGHTED journal read-back failed")
+    return path
+
+
+def terminal_identity(ctx, expected_source_sha: str, purpose: str) -> TerminalIdentity:
+    return TerminalIdentity(
+        workflow_identity=ctx.workflow_path, run_id=ctx.run_id, run_attempt=ctx.run_attempt,
+        event=ctx.event, ref=ctx.ref, source_sha=ctx.sha,
+        expected_source_sha=expected_source_sha, purpose=purpose,
+    )
+
+
+def terminal_writer_for(purpose: str, role: TerminalWriter) -> "TerminalWriter | None":
+    """Purpose-gated writer attribution. ``verify_terminal_bytes`` trusts
+    a record under any non-replacement purpose only when every
+    replacement-provenance field AND ``terminal_writer`` are None; that
+    rule is kept unchanged, so under the unarmed original purpose every
+    writer is recorded as None. Only the replacement purpose (reachable
+    solely after a separately governed arming dispatch) names the role."""
+    return role if purpose == REPLACEMENT_PURPOSE else None
+
+
+def replacement_provenance_fields(purpose: str, envelope: "EnvelopeIdentity | None") -> dict:
+    if purpose != REPLACEMENT_PURPOSE:
+        return {}
+    assert_purpose_armable(purpose, envelope)
+    return dict(
+        replacement_of_run_id=REPLACEMENT_OF_RUN_ID,
+        owner_ruling_id=OWNER_RULING_ID,
+        marker_purpose=REPLACEMENT_PURPOSE,
+        envelope_id=envelope.envelope_id,
+        envelope_version=envelope.envelope_version,
+    )
+
+
+def attribute_invalid_record(record: GateEvidenceRecord, *, purpose: str) -> GateEvidenceRecord:
+    """Apply purpose-gated writer attribution to a
+    ``terminal.build_invalid_record`` result (which always names a
+    writer). Re-validated, never ``model_copy``-patched."""
+    if purpose == REPLACEMENT_PURPOSE:
+        return record
+    return GateEvidenceRecord.model_validate({**record.model_dump(), "terminal_writer": None})
+
+
+def assert_purpose_armable(purpose: str, envelope: "EnvelopeIdentity | None") -> None:
+    """The replacement purpose is never executable without a Stage-2C
+    execution-envelope identity: every replacement record would fail
+    strict provenance validation and be overwritten by the finalizer.
+    Fails closed before any marker (preflight) or OIDC (execute)."""
+    if purpose == REPLACEMENT_PURPOSE and envelope is None:
+        raise Phase5ScriptError(
+            "the replacement purpose requires a Stage-2C execution envelope identity; not armable"
+        )

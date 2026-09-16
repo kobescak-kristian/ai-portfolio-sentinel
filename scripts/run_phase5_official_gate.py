@@ -22,8 +22,10 @@ the only subcommand that can reach OIDC or the provider.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -38,11 +40,18 @@ from scripts._phase5_common import (  # noqa: E402
     assert_expected_source_on_disk,
     assert_marker_visible_for_this_run,
     assert_oneshot_not_consumed_durably,
+    assert_purpose_armable,
     assert_replacement_history_permits,
+    attribute_invalid_record,
     build_evidence_client,
     discover_oneshot_markers,
+    establish_preflight_journal,
     load_durable_history,
     prepare_fresh_work_root,
+    replacement_provenance_fields,
+    terminal_identity,
+    terminal_layout,
+    terminal_writer_for,
     write_json_artifact,
     write_marker_json,
 )
@@ -61,8 +70,31 @@ from sentinel.phase5 import artifact_names  # noqa: E402
 from sentinel.phase5.github_context import derive_github_context  # noqa: E402
 from sentinel.phase5.models import OneShotMarker  # noqa: E402
 from sentinel.phase5.oneshot import is_eligible_marker_creation  # noqa: E402
+from sentinel.phase5.evidence_records import GateEvidenceRecord  # noqa: E402
+from sentinel.phase5.journal import (  # noqa: E402
+    OperationalJournal,
+    install_observing_signal_handlers,
+    read_journal,
+    summarize_journal,
+)
+from sentinel.phase5.terminal import (  # noqa: E402
+    CHECKS_FILENAME,
+    JOURNAL_FILENAME,
+    PRIOR_ABSENT,
+    EnvelopeIdentity,
+    TerminalStateError,
+    assert_transition,
+    build_invalid_record,
+    write_ancillary_atomically,
+    write_terminal_atomically,
+)
 
 PURPOSE = "P5D_OFFICIAL_SONNET_GATE"
+
+# Stage-2C execution-envelope identity. None until Stage 2C produces it;
+# while None, ``assert_purpose_armable`` refuses the replacement purpose
+# in both subcommands (dispatch q77-p5d-repair-stage2b2-implement-a).
+ENVELOPE: "EnvelopeIdentity | None" = None
 
 # Independently restated (anti-tautology precedent, matching
 # run_phase3_dev_gate.py's own PER_RUN_COST_CAP_EUR_MICROS comment):
@@ -71,6 +103,15 @@ PURPOSE = "P5D_OFFICIAL_SONNET_GATE"
 # tests/test_phase5_gate_runner.py against SONNET_OFFICIAL_GATE.
 GATE_TOTAL_EUR_MICROS = 5_000_000
 GATE_RESERVE_EUR_MICROS = 1_000_000
+
+
+def gate_profile_identity() -> "tuple[str, str]":
+    """(model, profile name) of the official gate profile. The gate
+    finalizer obtains the identity through this function so the profile
+    constant stays referenced only by this ADR-pinned runner."""
+    from agents.checker.config import SONNET_OFFICIAL_GATE
+
+    return SONNET_OFFICIAL_GATE.model, SONNET_OFFICIAL_GATE.name
 
 
 def cmd_preflight(args: argparse.Namespace) -> int:
@@ -107,6 +148,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         markers = discover_oneshot_markers(client, args.work_root)
         assert_oneshot_not_consumed_durably(PURPOSE, receipts, markers)
         assert_replacement_history_permits(receipts, markers, PURPOSE)
+        assert_purpose_armable(PURPOSE, ENVELOPE)
 
         candidate = OneShotMarker(
             schema_version=1, purpose=PURPOSE, created_at_utc=datetime.now(timezone.utc),
@@ -133,6 +175,11 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             },
             args.fx_state_path,
         )
+        # Pre-marker terminal-publication infrastructure (dispatch
+        # q77-p5d-repair-stage2b2-implement-a): the terminal layout and a
+        # verified PREFLIGHTED journal must exist, or preflight refuses
+        # here and the one-shot marker is never written.
+        establish_preflight_journal(args.artifacts_dir)
         write_marker_json(candidate, args.marker_out)
         print(f"PREFLIGHT PASS: marker prepared at {args.marker_out}")
         return 0
@@ -344,22 +391,141 @@ def _run_gate_session(*, gate_root: Path, coordinator, session, expected_source_
         conn.close()
 
 
-def cmd_execute(args: argparse.Namespace) -> int:
+# ---------------------------------------------------------------------------
+# Stage 2B-2 execute step (ADR-0012 sections 9, 21; Amendment A2/A6;
+# dispatch q77-p5d-repair-stage2b2-implement-a)
+# ---------------------------------------------------------------------------
+
+EXECUTE_QUALITY_LINE = (
+    "EXECUTE COMPLETE: runner terminal evidence written; "
+    "disposition withheld until publication is confirmed"
+)
+_EXCEPTION_TYPE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,79}")
+
+
+def _bounded_exception_type(exc: BaseException) -> str:
+    name = type(exc).__name__
+    return name if _EXCEPTION_TYPE_NAME.fullmatch(name) else "Exception"
+
+
+def _flush_std_streams() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001 - flushing into /dev/null is best-effort
+            pass
+
+
+@contextlib.contextmanager
+def _suppressed_operator_output(*, os_name: "str | None" = None):
+    """Gate-only operator-output suppression (ADR-0012 Amendment A2).
+
+    Before publication, nothing the execute step's process tree writes
+    may reach the workflow log: the pinned SDK lets the bundled CLI
+    inherit fd 2 when no stderr callback is set, SDK loggers fall through
+    to ``logging.lastResort`` on ``sys.stderr``, and tracebacks go to
+    stderr. fd 1 and fd 2 are pointed at ``os.devnull``, so child
+    processes inherit it too. POSIX only: on Windows ``dup2`` does not
+    change the Win32 standard handles a child inherits.
+
+    Normal return only: Python streams are flushed AGAIN while they still
+    target ``/dev/null`` and only then are the saved descriptors
+    restored, so no buffered text can surface in the real log. On any
+    exception thrown through the body (callers convert every ordinary
+    Exception inside it) nothing is restored: a KeyboardInterrupt,
+    SystemExit or signal-driven termination propagates unchanged and its
+    traceback goes to /dev/null."""
+    if (os_name if os_name is not None else os.name) != "posix":
+        raise Phase5ScriptError("operator-output suppression requires a POSIX runner")
+    _flush_std_streams()
+    saved_out = os.dup(1)
+    saved_err = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    yield
+    _flush_std_streams()
+    os.dup2(saved_out, 1)
+    os.dup2(saved_err, 2)
+    for fd in (saved_out, saved_err, devnull):
+        os.close(fd)
+
+
+class _JournalStateTracker:
+    """Journals permitted RUNNER state transitions. Never raises and
+    never changes execution: a transition the state model does not
+    permit (for example after a missing journal) is simply not
+    journaled."""
+
+    def __init__(self, journal: OperationalJournal, state: "str | None") -> None:
+        self._journal = journal
+        self.state = state
+
+    def transition(self, nxt: str) -> bool:
+        try:
+            assert_transition(self.state, nxt, writer="RUNNER")
+        except TerminalStateError:
+            return False
+        self._journal.append("STATE_TRANSITION", state_from=self.state, state_to=nxt)
+        self.state = nxt
+        return True
+
+
+def _quality_record(identity, result: dict) -> GateEvidenceRecord:
+    model, profile_name = gate_profile_identity()
+    return GateEvidenceRecord(
+        schema_version=1, workflow_identity=identity.workflow_identity, github_run_id=identity.run_id,
+        run_attempt=identity.run_attempt, event=identity.event, ref=identity.ref,
+        source_sha=identity.source_sha, created_at_utc=datetime.now(timezone.utc), steps=(),
+        expected_source_sha=identity.expected_source_sha, model=model, profile_name=profile_name,
+        run_ids=tuple(result["run_ids"]), scoring=result["scoring"], thresholds=result["thresholds"],
+        invariant_results=result["invariant_results"], execution_validity=result["execution_validity"],
+        miss_patterns=result["miss_patterns"], failed_checks=result["failed_checks"],
+        cost_rows=result["cost_rows"], accounted_total_eur_micros=result["accounted_total_eur_micros"],
+        disposition="GREEN" if result["green"] else "HONEST_FAIL",
+        auth_mode=result["auth_mode"],
+        terminal_writer=terminal_writer_for(PURPOSE, "RUNNER"),
+        **replacement_provenance_fields(PURPOSE, ENVELOPE),
+    )
+
+
+def _write_runner_terminal(
+    journal: OperationalJournal, tracker: _JournalStateTracker, record: GateEvidenceRecord, *,
+    record_kind: str, identity, publication_root: Path, staging_root: Path, next_state: str,
+) -> bool:
+    journal.append("TERMINAL_WRITE_STARTED", record_kind=record_kind)
+    try:
+        digest = write_terminal_atomically(
+            record, publication_root=publication_root, staging_root=staging_root,
+            prior=PRIOR_ABSENT, identity=identity,
+        )
+    except Exception as exc:  # noqa: BLE001 - a terminal write fault is journaled, never raised
+        journal.append("TERMINAL_WRITE_FAILED", record_kind=record_kind, exception_type=_bounded_exception_type(exc))
+        return False
+    journal.append("TERMINAL_WRITE_COMPLETED", record_kind=record_kind, sha256=digest)
+    tracker.transition(next_state)
+    return True
+
+
+def _execute_body(args, journal: OperationalJournal, tracker: _JournalStateTracker) -> "tuple[int, str]":
     from agents.checker import oidc
     from agents.checker.budget import RunBudgetCoordinator
-    from agents.checker.config import SONNET_OFFICIAL_GATE
     from agents.checker.fx import FxRate
 
     env = os.environ
+    publication_root, staging_root, _quarantine_root = terminal_layout(args.artifacts_dir)
     session = None
-    disposition = "INFRASTRUCTURE_FAILURE"
-    result: dict | None = None
-    recovered_auth_mode: "str | None" = None
+    identity = None
+    provider_boundary_crossed = False
+    failure: "Exception | None" = None
+    outcome: "tuple[int, str] | None" = None
     try:
-        client = build_evidence_client(env)  # pops GITHUB_TOKEN
         ctx = derive_github_context(env)
+        identity = terminal_identity(ctx, args.expected_source_sha, PURPOSE)
+        client = build_evidence_client(env)  # pops GITHUB_TOKEN
         expected_marker_name = artifact_names.oneshot_marker_name(PURPOSE, ctx.run_id)
         assert_marker_visible_for_this_run(client, ctx.run_id, expected_marker_name)
+        tracker.transition("REPLACEMENT_MARKED")
         assert_expected_source_live(client, args.expected_source_sha)
 
         fx_data = json.loads(args.fx_state_path.read_text(encoding="utf-8"))
@@ -368,7 +534,12 @@ def cmd_execute(args: argparse.Namespace) -> int:
             retrieved_at_utc=datetime.fromisoformat(fx_data["retrieved_at_utc"]),
             usd_per_eur=Decimal(fx_data["usd_per_eur"]),
         )
+        assert_purpose_armable(PURPOSE, ENVELOPE)
 
+        # Everything from OIDC acquisition onward may reach external
+        # identity or provider work, so it is never PRE_PROVIDER_FAILURE.
+        provider_boundary_crossed = True
+        tracker.transition("EXECUTING")
         session = oidc.acquire_oidc(env)
         session.install_and_start(env)
 
@@ -380,49 +551,102 @@ def cmd_execute(args: argparse.Namespace) -> int:
             gate_root=args.gate_root, coordinator=coordinator, session=session,
             expected_source_sha=args.expected_source_sha,
         )
-        disposition = "GREEN" if result["green"] else "HONEST_FAIL"
-    except Exception as exc:  # noqa: BLE001 - any pre-scoring failure is INFRASTRUCTURE_FAILURE
-        print(f"GATE EXECUTE FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
-        # Best-effort: preserve whatever auth provenance was actually
-        # persisted before this failure, if any model call was ever
-        # reached (dispatch q77-p5d-s1-evidence-repair-a).
-        recovered_auth_mode = _recover_partial_auth_mode(args.gate_root)
+        tracker.transition("SCORED_PROVISIONAL")
+        record = _quality_record(identity, result)
+        written = _write_runner_terminal(
+            journal, tracker, record, record_kind="QUALITY", identity=identity,
+            publication_root=publication_root, staging_root=staging_root,
+            next_state="TERMINAL_EVIDENCE_WRITTEN",
+        )
+        if written:
+            try:
+                write_ancillary_atomically(
+                    CHECKS_FILENAME, json.dumps(result["check_lines"], indent=2).encode("utf-8"),
+                    publication_root=publication_root, staging_root=staging_root,
+                )
+            except Exception:  # noqa: BLE001 - ancillary incompleteness never downgrades quality
+                pass
+            outcome = (0, EXECUTE_QUALITY_LINE)
+        else:
+            outcome = (3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED")
+    except Exception as exc:  # noqa: BLE001 - ordinary exceptions only; cancellation propagates
+        failure = exc
     finally:
         if session is not None:
             session.shutdown(env)
         else:
             oidc.scrub_identity_token_file(env)
 
-    from sentinel.phase5.evidence_records import GateEvidenceRecord
+    if failure is None:
+        return outcome
 
-    ctx = derive_github_context(env)
-    evidence = GateEvidenceRecord(
-        schema_version=1, workflow_identity=ctx.workflow_path, github_run_id=ctx.run_id,
-        run_attempt=ctx.run_attempt, event=ctx.event, ref=ctx.ref, source_sha=ctx.sha,
-        created_at_utc=datetime.now(timezone.utc), steps=(),
-        expected_source_sha=args.expected_source_sha,
-        model=SONNET_OFFICIAL_GATE.model, profile_name=SONNET_OFFICIAL_GATE.name,
-        run_ids=tuple(result["run_ids"]) if result else (),
-        scoring=result["scoring"] if result else {},
-        thresholds=result["thresholds"] if result else {},
-        invariant_results=result["invariant_results"] if result else {},
-        execution_validity=result["execution_validity"] if result else {},
-        miss_patterns=result["miss_patterns"] if result else (),
-        failed_checks=result["failed_checks"] if result else (),
-        cost_rows=result["cost_rows"] if result else (),
-        accounted_total_eur_micros=result["accounted_total_eur_micros"] if result else 0,
-        disposition=disposition,
-        auth_mode=(result["auth_mode"] if result else recovered_auth_mode),
+    # A signal observed alongside an exception is never an objective cause.
+    if journal.signals_observed:
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=SIGNAL_OBSERVED"
+    cause = "RUNNER_EXCEPTION" if provider_boundary_crossed else "PRE_PROVIDER_FAILURE"
+    exception_type = _bounded_exception_type(failure)
+    journal.append("RUNNER_EXCEPTION", cause=cause, exception_type=exception_type)
+    if identity is None:
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=RUNNER_INTERNAL_ERROR"
+    # Best-effort: preserve whatever auth provenance was actually
+    # persisted before this failure, if any model call was ever reached
+    # (dispatch q77-p5d-s1-evidence-repair-a).
+    recovered_auth_mode = _recover_partial_auth_mode(args.gate_root)
+    model, profile_name = gate_profile_identity()
+    record = attribute_invalid_record(
+        build_invalid_record(
+            identity=identity, envelope=ENVELOPE, created_at_utc=datetime.now(timezone.utc),
+            model=model, profile_name=profile_name, infrastructure_cause=cause, writer="RUNNER",
+            auth_mode=recovered_auth_mode,
+        ),
+        purpose=PURPOSE,
     )
-    args.artifacts_dir.mkdir(parents=True, exist_ok=True)
-    evidence_path = args.artifacts_dir / "phase5_official_gate.json"
-    evidence_path.write_text(evidence.model_dump_json(indent=2), encoding="utf-8")
-    if result:
-        (args.artifacts_dir / "phase5_official_gate_checks.json").write_text(
-            json.dumps(result["check_lines"], indent=2), encoding="utf-8"
-        )
-    print(f"DISPOSITION: {disposition}")
-    return 0 if disposition == "GREEN" else 1
+    if journal.signals_observed:
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=SIGNAL_OBSERVED"
+    written = _write_runner_terminal(
+        journal, tracker, record, record_kind="INFRASTRUCTURE_INVALID", identity=identity,
+        publication_root=publication_root, staging_root=staging_root,
+        next_state="INVALID_EVIDENCE_WRITTEN",
+    )
+    if not written:
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED"
+    return 1, f"EXECUTE INFRASTRUCTURE_FAILURE: cause={cause} exception_type={exception_type}"
+
+
+def _execute_quietly(args) -> "tuple[int, str]":
+    publication_root, _staging_root, _quarantine_root = terminal_layout(args.artifacts_dir)
+    journal_path = publication_root / JOURNAL_FILENAME
+    try:
+        initial_state = summarize_journal(read_journal(journal_path)).last_state
+    except Exception:  # noqa: BLE001 - an unreadable journal only weakens journaling
+        initial_state = None
+    journal = OperationalJournal(journal_path, writer="RUNNER").open()
+    restore_signal_handlers = install_observing_signal_handlers(journal)
+    try:
+        return _execute_body(args, journal, _JournalStateTracker(journal, initial_state))
+    finally:
+        restore_signal_handlers()
+        journal.close()
+
+
+def cmd_execute(args: argparse.Namespace) -> int:
+    """Quality-neutral execute step. Before publication is confirmed,
+    GREEN and HONEST_FAIL are indistinguishable on every surface this
+    process controls: one constant stdout line, exit 0, empty stderr.
+    Infrastructure failure stays separately observable (exit 1 or 3)."""
+    try:
+        quiet = _suppressed_operator_output()
+        quiet.__enter__()
+    except Exception:  # noqa: BLE001 - refusal happens before any provider work
+        print("EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=RUNNER_INTERNAL_ERROR")
+        return 3
+    try:
+        code, line = _execute_quietly(args)
+    except Exception:  # noqa: BLE001 - ordinary exceptions only; cancellation propagates unrestored
+        code, line = 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=RUNNER_INTERNAL_ERROR"
+    quiet.__exit__(None, None, None)
+    print(line)
+    return code
 
 
 def main(argv: list[str]) -> int:

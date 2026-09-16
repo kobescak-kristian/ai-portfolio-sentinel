@@ -387,9 +387,10 @@ wiring into one-shot discovery, replacement eligibility and the P5-E
 seam; the replacement purpose is structural only and unarmed) and
 repair Stage 2B-1 (the terminal-publication library: operational
 journal, atomic terminal-evidence writer, execution/publication state
-model, finalizer decision table and strict terminal-writer provenance;
-not wired into any runner or workflow) are landed, later
-journal/finalizer wiring (Stage 2B-2), execution-envelope (Stage 2C),
+model, finalizer decision table and strict terminal-writer provenance)
+and repair Stage 2B-2 (that library wired into the official-gate runner,
+a new finalizer/publication-confirmation entrypoint and the workflow;
+still unarmed) are landed, the execution-envelope (Stage 2C),
 rehearsal and readiness stages remain pending, the durable one-way
 single-attempt consumption latch remains a hard pre-arming gate, and
 the replacement is not ready or authorized for dispatch. Windows scheduler cutover, prospective
@@ -3852,3 +3853,102 @@ merges every change."
   wiring and quality-neutral execute step, finalizer and publication
   confirmation, workflow publication steps) as its own bounded child
   dispatch after a plan-verify against post-2B-1 blobs; not begun here.
+- 2026-09-16 - ADR-0012 REPAIR STAGE 2B-2 LANDED: TERMINAL-PUBLICATION
+  WIRING (dispatch q77-p5d-repair-stage2b2-implement-a).
+  Stage 2B-2 of the ADR-0012 Amendment A repair is implemented, per the
+  approved plan q77-p5d-repair-stage2b2-plan-a revision 2. It wires the
+  Stage-2B-1 library into the official gate and arms nothing.
+  Landed: `scripts/run_phase5_official_gate.py` -- preflight now creates
+  the terminal layout and a verified PREFLIGHTED operational journal
+  BEFORE the one-shot marker is written and refuses (no marker) on any
+  layout, journal-open, append or read-back fault; the execute step is
+  quality-neutral (one constant stdout line and exit 0 for both GREEN
+  and HONEST_FAIL, empty stderr, no disposition printed, no job summary),
+  runs under a gate-only POSIX fd suppression that points stdout and
+  stderr at /dev/null (covering inherited CLI stderr, SDK logging,
+  warnings and tracebacks) and flushes Python streams again before
+  restoring descriptors on normal return only; journals state
+  transitions, observed signals, runner exceptions and terminal writes;
+  writes terminal evidence atomically; produces only the objective
+  Stage-2B causes PRE_PROVIDER_FAILURE and RUNNER_EXCEPTION, never with
+  an observed signal; catches ordinary exceptions only; writer
+  attribution is purpose-gated (None under the unarmed original purpose,
+  keeping the unchanged Stage-2B-1 trust rule), and an `ENVELOPE`
+  constant (None) makes the replacement purpose refuse in both
+  subcommands until Stage 2C. New `scripts/run_phase5_gate_finalizer.py`
+  -- `finalize` applies the frozen Stage-2B-1 decision table, preserves
+  trusted runner evidence, never authors a quality result, and fails open
+  toward publication; `confirm` proves publication from the downloaded
+  artifact bytes (exact name and run, artifact id and digest where
+  comparable, safe extraction, permitted tree, strict verification), with
+  a local-candidate mismatch only a warning, positive absence only after
+  three successful in-time zero observations across the full bounded
+  window with a failed upload step, and the disposition printed only
+  after a PUBLISHED state. `sentinel/phase5/github_evidence.py` gains a
+  fail-closed named run-artifact listing and optional client timeouts
+  (defaults unchanged); `scripts/_phase5_common.py` gains the shared
+  layout, journal-establishment, identity, attribution and guard
+  helpers. `.github/workflows/sentinel-official-gate.yml`: execute ->
+  finalize (`if: always()`, 1 min) -> upload gate evidence (explicit
+  three-file list, `overwrite: false`, 2 min) -> confirm (1 min); upload
+  and confirm run on `always() && steps.marker.outcome != 'skipped' &&
+  steps.finalize.outputs.terminal_required != 'false'`; finalization
+  step maxima total 4 minutes. `DATA_RETENTION_POLICY.md` section 17
+  documents the journal and publication data.
+  Model-free verification only; test counts, coverage and exact-SHA CI
+  are reported in the close report, not self-cited here. Registry
+  byte-unchanged: `artifacts/phase5_receipt_registry.jsonl` still exactly
+  four lines, head SHA-256
+  `9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39`.
+  The official gate `PURPOSE` constant is unchanged
+  (`P5D_OFFICIAL_SONNET_GATE`) and `ENVELOPE` is None; the marker
+  candidate fields and the workflow marker artifact name are unchanged.
+  Executing model: Claude Opus 5 (the routing named Sonnet; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 12 declared paths):
+  `scripts/run_phase5_official_gate.py`,
+  `scripts/run_phase5_gate_finalizer.py` (new), `scripts/_phase5_common.py`,
+  `sentinel/phase5/github_evidence.py`,
+  `.github/workflows/sentinel-official-gate.yml`,
+  `tests/test_phase5_gate_runner.py`, `tests/test_phase5_gate_finalizer.py`
+  (new), `tests/test_phase5_workflow_contracts.py`,
+  `tests/test_phase5_github_evidence.py`, `DATA_RETENTION_POLICY.md`,
+  `STATE.md` (program-status wording plus this entry),
+  `.publicgate-allow` (one entry for this entry's status line). No
+  Stage-2B-1 library, agent, harness, SDK, fixture, prompt, scorer,
+  checker, threshold, evaluation, requirements or telemetry change.
+  NON-EVENTS: no Stage 2C work (deadlines, watchdog, process-tree kill,
+  SDK cancellation, heartbeat, envelope identity); no durable one-way
+  consumption latch; no replacement marker created, reset or consumed;
+  no replacement execution; no official Sonnet quality gate; no
+  rehearsal execution (neither the GitHub kill rehearsal nor the N=24
+  Sonnet timing rehearsal); no model or provider call; no OIDC/WIF
+  exchange; no GitHub workflow dispatch, rerun or cancel; no
+  federation-rule, provider-cap, secret, variable or environment
+  mutation; no original Sonnet quality content inspected; no frozen
+  quality-surface change; no P5-E freeze, cutover or release.
+  RESIDUALS (recorded, not closed here): execute-step duration stays
+  visible; the upload step's own size logging sits at the publication
+  boundary; whether always() steps and this finalization path complete
+  after a job-level timeout or cancellation is proven only by the later
+  real GitHub kill rehearsal.
+  ARMING CONTRACT (recorded, not implemented): a later governed arming
+  change must atomically cover at least PURPOSE ->
+  P5D_REPLACEMENT_SONNET_GATE, a populated Stage-2C ENVELOPE, the
+  replacement marker's frozen replacement_of_run_id and owner_ruling_id,
+  the workflow marker artifact name for the replacement purpose, and an
+  already-existing durable one-way single-attempt consumption latch that
+  eligibility and preflight consult.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C
+  COMPLETE. **P5-D remains IN PROGRESS / UNRESOLVED**: original official
+  run `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker
+  CONSUMED, ADR-0012 repair Stage 1, Stage 2A, Stage 2B-1 and Stage 2B-2
+  LANDED, model-free GitHub kill rehearsal NOT EXECUTED, Sonnet timing
+  rehearsal NOT EXECUTED, fresh replacement readiness NOT COMPLETE,
+  replacement NOT READY / NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2B-2 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2C of the ADR-0012 repair (execution envelope,
+  deadlines, watchdog and cancellation) and the durable single-attempt
+  consumption latch, each as its own bounded child dispatch; not begun
+  here.

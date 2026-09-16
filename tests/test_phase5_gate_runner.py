@@ -297,12 +297,22 @@ def test_no_generic_model_selector_and_cli_untouched():
 
 
 def test_official_gate_disposition_vocabulary_is_closed():
+    """Stage 2B-2 (dispatch q77-p5d-repair-stage2b2-implement-a): the
+    runner's only quality expression is unchanged, and its only
+    execution-invalid record comes from the Stage-2B-1
+    ``build_invalid_record`` with an explicit RUNNER writer."""
     text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
     assert '"GREEN" if result["green"] else "HONEST_FAIL"' in text
-    assert 'disposition = "INFRASTRUCTURE_FAILURE"' in text
+    assert "build_invalid_record(" in text
+    assert 'writer="RUNNER"' in text
 
 
-def test_official_gate_runtime_import_closure_matches_requirements_txt():
+@pytest.mark.parametrize(
+    "entry_file",
+    [GATE_RUNNER_PATH, REPO_ROOT / "scripts" / "run_phase5_gate_finalizer.py"],
+    ids=["official-gate-runner", "gate-finalizer"],
+)
+def test_official_gate_runtime_import_closure_matches_requirements_txt(entry_file):
     """Dispatch q77-p5d-premarker-dependency-repair-a: proves the exact
     invariant whose absence (PyYAML) crashed GitHub Actions run
     32863558192 at ``ModuleNotFoundError: No module named 'yaml'``
@@ -312,7 +322,7 @@ def test_official_gate_runtime_import_closure_matches_requirements_txt():
     static AST walk of this repo's own source (see
     ``_collect_local_third_party_imports``), never a network call or
     venv build."""
-    third_party = _collect_local_third_party_imports(GATE_RUNNER_PATH)
+    third_party = _collect_local_third_party_imports(entry_file)
     declared_top_level = _requirements_txt_top_level_names()
 
     import_name_to_dists = importlib.metadata.packages_distributions()
@@ -426,9 +436,11 @@ def test_gate_runner_derives_auth_mode_from_persisted_calls_not_hardcoded():
     assert "all_calls.extend(ledger.list_agent_calls_for_run(conn, run_id))" in text
     assert f'auth_mode="{_WIF}"' not in text
     assert "auth_mode=SONNET_OFFICIAL_GATE" not in text
-    # Post-marker INFRASTRUCTURE_FAILURE recovery path is wired too.
+    # Post-marker INFRASTRUCTURE_FAILURE recovery path is wired too
+    # (Stage 2B-2 split: quality record and infrastructure record).
     assert "recovered_auth_mode = _recover_partial_auth_mode(args.gate_root)" in text
-    assert "auth_mode=(result[\"auth_mode\"] if result else recovered_auth_mode)" in text
+    assert 'auth_mode=result["auth_mode"]' in text
+    assert "auth_mode=recovered_auth_mode" in text
 
 
 def test_recover_partial_auth_mode_helper_is_best_effort(tmp_path):
@@ -726,3 +738,628 @@ def test_probe_evidence_record_compatibility_intact():
             expected_source_sha=_SHA, disposition="CAPABILITY_PASS",
             cost_rows=(probe_row,), accounted_total_eur_micros=2_000, auth_mode=None,
         )
+
+
+# ======================================================================
+# Stage 2B-2 terminal-publication wiring (dispatch
+# q77-p5d-repair-stage2b2-implement-a). Model-free: every provider,
+# OIDC, REST and FX seam below is a local fake; conftest.py blocks the
+# network. Nothing here creates a real marker or dispatches anything.
+# ======================================================================
+
+import argparse  # noqa: E402
+import contextlib  # noqa: E402
+import functools  # noqa: E402
+import os  # noqa: E402
+import subprocess  # noqa: E402
+
+import yaml  # noqa: E402
+
+from sentinel.phase5 import replacement as _repl  # noqa: E402
+from sentinel.phase5 import terminal as _t  # noqa: E402
+from sentinel.phase5.journal import read_journal  # noqa: E402
+
+GATE_FINALIZER_PATH = REPO_ROOT / "scripts" / "run_phase5_gate_finalizer.py"
+GATE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "sentinel-official-gate.yml"
+_WORKFLOW = ".github/workflows/sentinel-official-gate.yml"
+_RUN_ID = "4242"
+_GH_ENV = {
+    "GITHUB_REPOSITORY": "kobescak-kristian/ai-portfolio-sentinel",
+    "GITHUB_REPOSITORY_OWNER": "kobescak-kristian",
+    "GITHUB_RUN_ID": _RUN_ID,
+    "GITHUB_RUN_ATTEMPT": "1",
+    "GITHUB_EVENT_NAME": "workflow_dispatch",
+    "GITHUB_REF": "refs/heads/main",
+    "GITHUB_SHA": _SHA,
+    "GITHUB_WORKFLOW_REF": f"kobescak-kristian/ai-portfolio-sentinel/{_WORKFLOW}@refs/heads/main",
+    "GITHUB_API_URL": "https://api.github.com",
+    "GITHUB_SERVER_URL": "https://github.com",
+    "GITHUB_TOKEN": "test-token",
+}
+_POSIX_ONLY = pytest.mark.skipif(os.name != "posix", reason="POSIX fd inheritance semantics")
+
+
+def _identity(purpose: str = "P5D_OFFICIAL_SONNET_GATE") -> _t.TerminalIdentity:
+    return _t.TerminalIdentity(
+        workflow_identity=_WORKFLOW, run_id=_RUN_ID, run_attempt=1, event="workflow_dispatch",
+        ref="refs/heads/main", source_sha=_SHA, expected_source_sha=_SHA, purpose=purpose,
+    )
+
+
+def _session_result(green: bool) -> dict:
+    return {
+        "run_ids": ("r-1", "r-2"),
+        "scoring": {"emitted": 3, "true_positives": 3 if green else 1},
+        "thresholds": {"pooled_recall": {"ratio_min": "0.85"}},
+        "invariant_results": {"every_task_terminal": True},
+        "execution_validity": {"valid": True},
+        "miss_patterns": () if green else ("stale-STATE-marker|synthetic-01|README.md",),
+        "failed_checks": () if green else ("pooled_recall: 1/3 -> FAIL",),
+        "cost_rows": (_cost_row("r-1"),),
+        "accounted_total_eur_micros": 2_000,
+        "auth_mode": _WIF,
+        "green": green,
+        "check_lines": ["pooled_recall: 3/3 -> PASS"] if green else ["pooled_recall: 1/3 -> FAIL"],
+    }
+
+
+class _FakeSession:
+    def __init__(self, calls: list) -> None:
+        self._calls = calls
+
+    def install_and_start(self, env) -> None:
+        self._calls.append("install_and_start")
+
+    def shutdown(self, env) -> None:
+        self._calls.append("shutdown")
+
+
+def _prepare_execute(tmp_path, monkeypatch, *, session_fn, marker_visible=None, write_fx=True):
+    """Arrange a post-marker execute world: a verified PREFLIGHTED
+    journal, fake REST/OIDC/budget seams and an injected gate session."""
+    from agents.checker import budget as budget_mod
+    from agents.checker import oidc as oidc_mod
+
+    module = _load_module()
+    for key, value in _GH_ENV.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_IDENTITY_TOKEN_FILE", raising=False)
+    work = tmp_path / "p5-gate"
+    work.mkdir()
+    artifacts = work / "artifacts"
+    module.establish_preflight_journal(artifacts)
+    fx_path = work / "fx-state.json"
+    if write_fx:
+        fx_path.write_text(json.dumps({
+            "source": "ECB", "rate_date": "2026-09-15",
+            "retrieved_at_utc": "2026-09-15T12:00:00+00:00", "usd_per_eur": "1.10",
+        }), encoding="utf-8")
+    calls: list = []
+    monkeypatch.setattr(module, "_suppressed_operator_output", contextlib.nullcontext)
+    monkeypatch.setattr(module, "build_evidence_client", lambda env, **kw: (env.pop("GITHUB_TOKEN", None), object())[1])
+    monkeypatch.setattr(
+        module, "assert_marker_visible_for_this_run",
+        marker_visible or (lambda client, run_id, name: calls.append(("marker", name))),
+    )
+    monkeypatch.setattr(module, "assert_expected_source_live", lambda client, sha: None)
+    monkeypatch.setattr(budget_mod, "RunBudgetCoordinator", lambda **kw: object())
+
+    def _acquire(env):
+        calls.append("acquire_oidc")
+        return _FakeSession(calls)
+
+    monkeypatch.setattr(oidc_mod, "acquire_oidc", _acquire)
+    monkeypatch.setattr(oidc_mod, "scrub_identity_token_file", lambda env: calls.append("scrub"))
+    monkeypatch.setattr(module, "_run_gate_session", lambda **kw: session_fn())
+    args = argparse.Namespace(
+        expected_source_sha=_SHA, gate_root=work / "gate-root", artifacts_dir=artifacts, fx_state_path=fx_path,
+    )
+    return module, args, artifacts, calls
+
+
+def _journal_shape(path: Path) -> list:
+    result = read_journal(path)
+    assert result.integrity == "OK"
+    return [
+        (e.writer, e.event, e.state_from, e.state_to, e.record_kind, e.cause, e.signal)
+        for e in result.events
+    ]
+
+
+# --- pre-marker journal fail-closed --------------------------------------
+
+
+def _prepare_preflight(tmp_path, monkeypatch, *, journal_fsync=None, prepare_hook=None):
+    from agents.checker import auth as auth_mod
+    from agents.checker import budget as budget_mod
+    from agents.checker import fx as fx_mod
+    from agents.checker import oidc as oidc_mod
+    from agents.checker.fx import FxRate
+
+    module = _load_module()
+    for key, value in _GH_ENV.items():
+        monkeypatch.setenv(key, value)
+    order: list = []
+    monkeypatch.setattr(module, "assert_expected_source_on_disk", lambda sha: sha)
+    monkeypatch.setattr(module, "build_evidence_client", lambda env, **kw: object())
+    monkeypatch.setattr(module, "assert_expected_source_live", lambda client, sha: None)
+    monkeypatch.setattr(module, "_load_eval_config", lambda: {})
+    monkeypatch.setattr(module, "_read_jsonl", lambda path: [])
+    monkeypatch.setattr(module, "load_durable_history", lambda: ())
+    monkeypatch.setattr(module, "discover_oneshot_markers", lambda client, work_root: [])
+    monkeypatch.setattr(module, "assert_oneshot_not_consumed_durably", lambda purpose, receipts, markers: None)
+    monkeypatch.setattr(module, "assert_replacement_history_permits", lambda receipts, markers, purpose: None)
+    if prepare_hook is not None:
+        real_prepare = module.prepare_fresh_work_root
+        monkeypatch.setattr(module, "prepare_fresh_work_root", lambda wr: prepare_hook(real_prepare(wr)))
+    monkeypatch.setattr(oidc_mod, "write_placeholder_token_file", lambda env: None)
+    monkeypatch.setattr(auth_mod, "assert_wif_config_ready", lambda env: None)
+    monkeypatch.setattr(fx_mod, "resolve_ecb_usd_per_eur", lambda now: FxRate(
+        source="ECB", rate_date="2026-09-15", retrieved_at_utc=datetime(2026, 9, 15, tzinfo=timezone.utc),
+        usd_per_eur=__import__("decimal").Decimal("1.10"),
+    ))
+    monkeypatch.setattr(budget_mod, "RunBudgetCoordinator", lambda **kw: object())
+
+    real_establish = module.establish_preflight_journal
+    establish = functools.partial(real_establish, fsync=journal_fsync) if journal_fsync else real_establish
+
+    def _establish(artifacts_dir):
+        order.append("establish_preflight_journal")
+        return establish(artifacts_dir)
+
+    real_write_marker = module.write_marker_json
+
+    def _write_marker(candidate, path):
+        order.append("write_marker_json")
+        return real_write_marker(candidate, path)
+
+    monkeypatch.setattr(module, "establish_preflight_journal", _establish)
+    monkeypatch.setattr(module, "write_marker_json", _write_marker)
+    work = tmp_path / "p5-gate"
+    args = argparse.Namespace(
+        expected_source_sha=_SHA, gate_root=work / "gate-root", artifacts_dir=work / "artifacts",
+        work_root=work, marker_out=work / "marker.json", fx_state_path=work / "fx-state.json",
+    )
+    return module, args, order
+
+
+def _failing_fsync_on_call(n: int):
+    counter = {"calls": 0}
+
+    def _fsync(fd):
+        counter["calls"] += 1
+        if counter["calls"] == n:
+            raise OSError("injected fsync failure")
+        os.fsync(fd)
+
+    return _fsync
+
+
+def test_preflight_marker_written_only_after_verified_journal(tmp_path, monkeypatch, capsys):
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch)
+    assert module.cmd_preflight(args) == 0
+    assert order == ["establish_preflight_journal", "write_marker_json"]
+    assert args.marker_out.exists()
+    shape = _journal_shape(args.artifacts_dir / _t.JOURNAL_FILENAME)
+    assert shape == [
+        ("RUNNER", "JOURNAL_OPENED", None, None, None, None, None),
+        ("RUNNER", "STATE_TRANSITION", None, "PREFLIGHTED", None, None, None),
+    ]
+    for sibling in ("terminal-staging", "terminal-quarantine"):
+        assert (args.work_root / sibling).is_dir()
+
+
+def test_preflight_journal_open_failure_refuses_before_marker(tmp_path, monkeypatch, capsys):
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch, journal_fsync=_failing_fsync_on_call(1))
+    assert module.cmd_preflight(args) == 2
+    assert "PREFLIGHT FAIL" in capsys.readouterr().err
+    assert "write_marker_json" not in order
+    assert not args.marker_out.exists()
+
+
+def test_preflight_preflighted_append_fsync_failure_refuses_before_marker(tmp_path, monkeypatch, capsys):
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch, journal_fsync=_failing_fsync_on_call(2))
+    assert module.cmd_preflight(args) == 2
+    assert "PREFLIGHTED journal append failed" in capsys.readouterr().err
+    assert "write_marker_json" not in order
+    assert not args.marker_out.exists()
+
+
+def test_preflight_layout_creation_failure_refuses_before_marker(tmp_path, monkeypatch, capsys):
+    def _conflict(work_root):
+        (work_root / "terminal-staging").mkdir()
+        return work_root
+
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch, prepare_hook=_conflict)
+    assert module.cmd_preflight(args) == 2
+    assert "terminal layout creation failed" in capsys.readouterr().err
+    assert "write_marker_json" not in order
+    assert not args.marker_out.exists()
+
+
+def test_establish_preflight_journal_readback_rejects_unexpected_content(tmp_path, monkeypatch):
+    module = _load_module()
+    common_globals = module.establish_preflight_journal.__globals__
+    real_read = common_globals["read_journal"]
+
+    def _tampered(path):
+        result = real_read(path)
+        return type(result)(events=result.events[:1], integrity=result.integrity, size=result.size)
+
+    monkeypatch.setitem(common_globals, "read_journal", _tampered)
+    (tmp_path / "w").mkdir()
+    with pytest.raises(module.Phase5ScriptError, match="read-back"):
+        module.establish_preflight_journal(tmp_path / "w" / "artifacts")
+
+
+def test_preflight_source_order_armable_guard_and_journal_before_marker():
+    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
+    body = text[text.index("def cmd_preflight"):text.index("def _derive_auth_mode")]
+    assert body.index("assert_replacement_history_permits") < body.index("assert_purpose_armable(PURPOSE, ENVELOPE)")
+    assert body.index("assert_purpose_armable(PURPOSE, ENVELOPE)") < body.index("OneShotMarker(")
+    assert body.index("write_json_artifact(") < body.index("establish_preflight_journal(args.artifacts_dir)")
+    assert body.index("establish_preflight_journal(args.artifacts_dir)") < body.index("write_marker_json(")
+
+
+# --- quality-neutral execute ---------------------------------------------
+
+
+def test_execute_green_and_honest_fail_are_operator_indistinguishable(tmp_path, monkeypatch, capfd):
+    observations = {}
+    for label, green in (("green", True), ("honest", False)):
+        case_root = tmp_path / label
+        case_root.mkdir()
+        module, args, artifacts, calls = _prepare_execute(
+            case_root, monkeypatch, session_fn=lambda green=green: _session_result(green),
+        )
+        output_file = case_root / "github_output"
+        summary_file = case_root / "step_summary"
+        output_file.write_text("", encoding="utf-8")
+        summary_file.write_text("", encoding="utf-8")
+        monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_file))
+        capfd.readouterr()
+        code = module.cmd_execute(args)
+        captured = capfd.readouterr()
+        data = (artifacts / _t.TERMINAL_FILENAME).read_bytes()
+        verdict = _t.verify_terminal_bytes(data, _identity())
+        journal_bytes = (artifacts / _t.JOURNAL_FILENAME).read_bytes()
+        observations[label] = dict(
+            code=code, out=captured.out, err=captured.err,
+            github_output=output_file.read_text(encoding="utf-8"),
+            summary=summary_file.read_text(encoding="utf-8"),
+            journal=_journal_shape(artifacts / _t.JOURNAL_FILENAME),
+            verdict=verdict.kind, disposition=verdict.record.disposition,
+            writer=verdict.record.terminal_writer, journal_bytes=journal_bytes,
+            checks=(artifacts / _t.CHECKS_FILENAME).exists(), calls=calls,
+        )
+    green, honest = observations["green"], observations["honest"]
+    assert green["disposition"] == "GREEN" and honest["disposition"] == "HONEST_FAIL"
+    for key in ("code", "out", "err", "github_output", "summary", "journal", "verdict", "writer", "checks", "calls"):
+        assert green[key] == honest[key], key
+    assert green["code"] == 0
+    assert green["out"] == module.EXECUTE_QUALITY_LINE + "\n"
+    assert green["err"] == ""
+    assert green["github_output"] == "" and green["summary"] == ""
+    assert green["verdict"] == "TRUSTED_QUALITY" and green["writer"] is None
+    for forbidden in (b"GREEN", b"HONEST_FAIL", b"pooled", b"true_positives", b"FAIL", b"r-1", b"emitted"):
+        assert forbidden not in green["journal_bytes"] and forbidden not in honest["journal_bytes"]
+    assert [row[1] for row in green["journal"]] == [
+        "JOURNAL_OPENED", "STATE_TRANSITION", "JOURNAL_OPENED", "STATE_TRANSITION", "STATE_TRANSITION",
+        "STATE_TRANSITION", "TERMINAL_WRITE_STARTED", "TERMINAL_WRITE_COMPLETED", "STATE_TRANSITION",
+    ]
+    assert [row[3] for row in green["journal"] if row[1] == "STATE_TRANSITION"] == [
+        "PREFLIGHTED", "REPLACEMENT_MARKED", "EXECUTING", "SCORED_PROVISIONAL", "TERMINAL_EVIDENCE_WRITTEN",
+    ]
+
+
+def test_runner_source_never_prints_disposition_or_branches_exit_on_green():
+    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
+    assert "DISPOSITION" not in text
+    assert '== "GREEN"' not in text
+    assert "print(f\"GATE EXECUTE FAILED" not in text
+
+
+def test_execute_refuses_without_posix_suppression(tmp_path, monkeypatch, capfd):
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=lambda: _session_result(True))
+    real = _load_module()._suppressed_operator_output
+    monkeypatch.setattr(module, "_suppressed_operator_output", functools.partial(real, os_name="nt"))
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 3
+    assert capfd.readouterr().out == "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=RUNNER_INTERNAL_ERROR\n"
+    assert "acquire_oidc" not in calls
+    assert not (artifacts / _t.TERMINAL_FILENAME).exists()
+
+
+def test_suppression_refuses_non_posix():
+    module = _load_module()
+    with pytest.raises(module.Phase5ScriptError):
+        with module._suppressed_operator_output(os_name="nt"):
+            pass
+
+
+# --- infrastructure-error contract -----------------------------------------
+
+
+def test_pre_provider_failure_record_when_marker_not_visible(tmp_path, monkeypatch, capfd):
+    module = _load_module()
+
+    def _not_visible(client, run_id, name):
+        raise module.Phase5ScriptError("marker not visible")
+
+    module, args, artifacts, calls = _prepare_execute(
+        tmp_path, monkeypatch, session_fn=lambda: _session_result(True), marker_visible=_not_visible,
+    )
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    captured = capfd.readouterr()
+    assert captured.out == (
+        "EXECUTE INFRASTRUCTURE_FAILURE: cause=PRE_PROVIDER_FAILURE exception_type=Phase5ScriptError\n"
+    )
+    assert captured.err == ""
+    assert "acquire_oidc" not in calls and "scrub" in calls
+    verdict = _t.verify_terminal_bytes((artifacts / _t.TERMINAL_FILENAME).read_bytes(), _identity())
+    assert verdict.kind == "TRUSTED_INFRASTRUCTURE_INVALID"
+    assert verdict.record.termination_source == "PRE_PROVIDER_FAILURE"
+    assert verdict.record.terminal_writer is None
+    shape = _journal_shape(artifacts / _t.JOURNAL_FILENAME)
+    assert ("RUNNER", "RUNNER_EXCEPTION", None, None, None, "PRE_PROVIDER_FAILURE", None) in shape
+    assert not (artifacts / _t.CHECKS_FILENAME).exists()
+
+
+def test_runner_exception_record_after_oidc_boundary(tmp_path, monkeypatch, capfd):
+    def _boom():
+        raise RuntimeError("session failed with some free text that must never be printed")
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=_boom)
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    captured = capfd.readouterr()
+    assert captured.out == "EXECUTE INFRASTRUCTURE_FAILURE: cause=RUNNER_EXCEPTION exception_type=RuntimeError\n"
+    assert "free text" not in captured.out + captured.err
+    assert calls[-2:] == ["install_and_start", "shutdown"] or "shutdown" in calls
+    verdict = _t.verify_terminal_bytes((artifacts / _t.TERMINAL_FILENAME).read_bytes(), _identity())
+    assert verdict.kind == "TRUSTED_INFRASTRUCTURE_INVALID"
+    assert verdict.record.termination_source == "RUNNER_EXCEPTION"
+    states = [row[3] for row in _journal_shape(artifacts / _t.JOURNAL_FILENAME) if row[1] == "STATE_TRANSITION"]
+    assert states[-1] == "INVALID_EVIDENCE_WRITTEN"
+    assert not (artifacts / _t.CHECKS_FILENAME).exists()
+
+
+def test_signal_observed_with_exception_writes_no_objective_cause(tmp_path, monkeypatch, capfd):
+    captured_journal = {}
+
+    def _boom():
+        captured_journal["journal"].observe_signal("SIGTERM")
+        raise RuntimeError("raised alongside a signal")
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=_boom)
+
+    def _capture(journal):
+        captured_journal["journal"] = journal
+        return lambda: None
+
+    monkeypatch.setattr(module, "install_observing_signal_handlers", _capture)
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 3
+    assert capfd.readouterr().out == "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=SIGNAL_OBSERVED\n"
+    assert not (artifacts / _t.TERMINAL_FILENAME).exists()
+    events = [row[1] for row in _journal_shape(artifacts / _t.JOURNAL_FILENAME)]
+    assert "SIGNAL_OBSERVED" in events
+    assert "RUNNER_EXCEPTION" not in events
+
+
+@pytest.mark.parametrize("exc_type", [KeyboardInterrupt, SystemExit])
+def test_keyboard_interrupt_and_system_exit_propagate_no_terminal(tmp_path, monkeypatch, exc_type):
+    def _cancel():
+        raise exc_type()
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=_cancel)
+    state = {"entered": False, "exited": False}
+
+    @contextlib.contextmanager
+    def _recording():
+        state["entered"] = True
+        yield
+        state["exited"] = True
+
+    monkeypatch.setattr(module, "_suppressed_operator_output", _recording)
+    with pytest.raises(exc_type):
+        module.cmd_execute(args)
+    assert state == {"entered": True, "exited": False}  # descriptors never restored
+    assert not (artifacts / _t.TERMINAL_FILENAME).exists()
+    assert "shutdown" in calls
+
+
+def _except_handler_type_names(path: Path) -> list:
+    names = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ExceptHandler):
+            if node.type is None:
+                names.append("<bare>")
+            else:
+                for sub in ast.walk(node.type):
+                    if isinstance(sub, ast.Name):
+                        names.append(sub.id)
+    return names
+
+
+@pytest.mark.parametrize("path", [GATE_RUNNER_PATH, GATE_FINALIZER_PATH])
+def test_gate_scripts_catch_only_ordinary_exceptions(path):
+    names = _except_handler_type_names(path)
+    for forbidden in ("<bare>", "BaseException", "KeyboardInterrupt", "SystemExit"):
+        assert forbidden not in names, (path.name, forbidden)
+
+
+def test_terminal_write_failure_journals_and_exits_3(tmp_path, monkeypatch, capfd):
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=lambda: _session_result(True))
+
+    def _fail(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(module, "write_terminal_atomically", _fail)
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 3
+    assert capfd.readouterr().out == "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED\n"
+    shape = _journal_shape(artifacts / _t.JOURNAL_FILENAME)
+    assert ("RUNNER", "TERMINAL_WRITE_FAILED", None, None, "QUALITY", None, None) in shape
+    assert not (artifacts / _t.CHECKS_FILENAME).exists()
+
+
+def test_checks_ancillary_written_only_after_quality_terminal(tmp_path, monkeypatch, capfd):
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=lambda: _session_result(True))
+    assert module.cmd_execute(args) == 0
+    assert json.loads((artifacts / _t.CHECKS_FILENAME).read_text(encoding="utf-8")) == ["pooled_recall: 3/3 -> PASS"]
+
+
+def test_journal_wires_no_stage2c_events_or_liveness():
+    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
+    for token in ('"RUN_STARTED"', '"RUN_FINISHED"', '"INVOCATION_STARTED"', '"INVOCATION_FINISHED"',
+                  '"HEARTBEAT"', "liveness_line", "SESSION_DEADLINE", "INVOCATION_STALL_DEADLINE", "WATCHDOG"):
+        assert token not in text, token
+
+
+# --- purpose-gated writer attribution --------------------------------------
+
+
+def test_quality_writer_none_under_original_purpose_is_trusted():
+    module = _load_module()
+    record = module._quality_record(_identity(), _session_result(False))
+    assert record.terminal_writer is None and record.replacement_of_run_id is None
+    data = record.model_dump_json(indent=2).encode("utf-8")
+    assert _t.verify_terminal_bytes(data, _identity()).kind == "TRUSTED_QUALITY"
+
+
+def test_quality_writer_runner_under_armed_purpose_with_envelope_is_trusted(monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(module, "PURPOSE", _repl.REPLACEMENT_PURPOSE)
+    monkeypatch.setattr(module, "ENVELOPE", _t.EnvelopeIdentity(envelope_id="env-test", envelope_version="v-test"))
+    identity = _identity(_repl.REPLACEMENT_PURPOSE)
+    record = module._quality_record(identity, _session_result(True))
+    assert record.terminal_writer == "RUNNER"
+    assert record.replacement_of_run_id == _repl.REPLACEMENT_OF_RUN_ID
+    data = record.model_dump_json(indent=2).encode("utf-8")
+    assert _t.verify_terminal_bytes(data, identity).kind == "TRUSTED_QUALITY"
+    # The Stage-2B-1 non-replacement trust rule is unchanged: the same
+    # writer-attributed bytes are never trusted under the original purpose.
+    assert _t.verify_terminal_bytes(data, _identity()).kind == "PROVENANCE_INVALID"
+
+
+def test_writer_attributed_invalid_record_under_original_purpose_stays_provenance_invalid():
+    module = _load_module()
+    raw = _t.build_invalid_record(
+        identity=_identity(), envelope=None, created_at_utc=datetime.now(timezone.utc),
+        model="claude-sonnet-5", profile_name="sonnet-official-gate",
+        infrastructure_cause="RUNNER_EXCEPTION", writer="RUNNER",
+    )
+    assert _t.verify_terminal_bytes(raw.model_dump_json().encode("utf-8"), _identity()).kind == "PROVENANCE_INVALID"
+    attributed = module.attribute_invalid_record(raw, purpose=module.PURPOSE)
+    assert attributed.terminal_writer is None
+    assert _t.verify_terminal_bytes(
+        attributed.model_dump_json().encode("utf-8"), _identity()
+    ).kind == "TRUSTED_INFRASTRUCTURE_INVALID"
+
+
+def test_replacement_purpose_without_envelope_refuses_in_preflight_and_execute(tmp_path, monkeypatch, capfd):
+    module = _load_module()
+    with pytest.raises(module.Phase5ScriptError, match="Stage-2C"):
+        module.assert_purpose_armable(_repl.REPLACEMENT_PURPOSE, None)
+    module.assert_purpose_armable(module.PURPOSE, None)  # the unarmed original is not refused by this guard
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=lambda: _session_result(True))
+    monkeypatch.setattr(module, "PURPOSE", _repl.REPLACEMENT_PURPOSE)
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    assert "cause=PRE_PROVIDER_FAILURE" in capfd.readouterr().out
+    assert "acquire_oidc" not in calls
+
+
+def test_purpose_original_and_envelope_none():
+    module = _load_module()
+    assert module.PURPOSE == "P5D_OFFICIAL_SONNET_GATE"
+    assert module.ENVELOPE is None
+
+
+@pytest.mark.parametrize("path", [GATE_RUNNER_PATH, GATE_FINALIZER_PATH, GATE_WORKFLOW_PATH])
+def test_gate_scripts_and_workflow_carry_no_replacement_literal(path):
+    assert "P5D_REPLACEMENT_SONNET_GATE" not in path.read_text(encoding="utf-8")
+
+
+def test_workflow_marker_name_matches_runner_purpose_canonical_name():
+    module = _load_module()
+    data = yaml.safe_load(GATE_WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = next(iter(data["jobs"].values()))["steps"]
+    marker = next(s for s in steps if s.get("id") == "marker")
+    assert marker["with"]["name"] == module.artifact_names.oneshot_marker_name(module.PURPOSE, "${{ github.run_id }}")
+
+
+def test_replacement_marker_without_frozen_fields_is_unconstructible():
+    from sentinel.phase5.models import OneShotMarker
+
+    with pytest.raises(ValidationError):
+        OneShotMarker(
+            schema_version=1, purpose=_repl.REPLACEMENT_PURPOSE, created_at_utc=datetime.now(timezone.utc),
+            workflow_identity=_WORKFLOW, github_run_id="1", run_attempt=1, event="workflow_dispatch",
+            source_sha=_SHA,
+        )
+
+
+# --- POSIX fd suppression (child interpreters with real std streams) ------
+
+
+def _run_child(body: str) -> subprocess.CompletedProcess:
+    code = (
+        "import importlib.util, logging, subprocess, sys, warnings\n"
+        f"spec = importlib.util.spec_from_file_location('gate_runner_child', {str(GATE_RUNNER_PATH)!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        + body
+    )
+    return subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, cwd=str(REPO_ROOT), timeout=300,
+    )
+
+
+@_POSIX_ONLY
+def test_suppression_discards_unflushed_buffered_stdout_stderr_without_newline():
+    proc = _run_child(
+        "with module._suppressed_operator_output():\n"
+        "    sys.stdout.write('LEAKOUT')\n"
+        "    sys.stderr.write('LEAKERR')\n"
+        "print('VISIBLE')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == b"VISIBLE\n"
+    assert b"LEAK" not in proc.stderr
+
+
+@_POSIX_ONLY
+@pytest.mark.parametrize("snippet", [
+    "    subprocess.run([sys.executable, '-c', \"import sys; sys.stdout.write('LEAKCHILDOUT'); "
+    "sys.stderr.write('LEAKCHILDERR')\"])\n",
+    "    logging.getLogger('claude_agent_sdk._internal.query').error('LEAKSDKLOG')\n",
+    "    warnings.warn('LEAKWARNING')\n",
+], ids=["inherited-child-process", "sdk-logger-lastresort", "warnings"])
+def test_suppression_silences_child_processes_sdk_logging_and_warnings(snippet):
+    proc = _run_child(
+        "with module._suppressed_operator_output():\n"
+        + snippet
+        + "print('VISIBLE')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == b"VISIBLE\n"
+    assert b"LEAK" not in proc.stderr
+
+
+@_POSIX_ONLY
+def test_suppression_not_restored_on_keyboard_interrupt_traceback_hidden():
+    proc = _run_child(
+        "with module._suppressed_operator_output():\n"
+        "    sys.stdout.write('LEAKOUT')\n"
+        "    raise KeyboardInterrupt\n"
+    )
+    assert proc.returncode != 0
+    assert proc.stdout == b""
+    assert proc.stderr == b""

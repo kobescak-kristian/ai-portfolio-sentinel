@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import pytest
 
 from sentinel.phase5.github_evidence import (
+    ArtifactDetail,
     ArtifactUnsafe,
     DiscoveryOverflow,
     GithubEvidenceClient,
@@ -328,3 +329,105 @@ def test_tampered_downloaded_bundle_fails_validate_bundle(tmp_path):
     root = client.download_artifact(ref, tmp_path, tmp_path / "bundle")
     with pytest.raises((BundleValidationError, Exception)):
         validate_bundle(root)
+
+
+# ======================================================================
+# Stage 2B-2 (dispatch q77-p5d-repair-stage2b2-implement-a): named
+# run-artifact listing and optional bounded client timeouts.
+# ======================================================================
+
+
+def test_list_run_artifacts_named_sends_name_filter_and_returns_detail():
+    seen = {}
+
+    def opener(request, timeout=None):
+        seen["url"] = request.full_url
+        seen["timeout"] = timeout
+        body = {
+            "total_count": 2,
+            "artifacts": [
+                {"id": 7, "name": "sentinel-p5-gate-evidence-r9-a1", "expired": False,
+                 "digest": "sha256:" + "ab" * 32, "size_in_bytes": 123, "workflow_run": {"id": 9}},
+                {"id": 8, "name": "sentinel-p5-gate-evidence-r9-a1", "expired": True,
+                 "digest": None, "size_in_bytes": 5, "workflow_run": {"id": 9}},
+            ],
+        }
+        return _FakeResponse(200, json.dumps(body).encode("utf-8"))
+
+    client = _client(opener)
+    entries = client.list_run_artifacts_named("9", "sentinel-p5-gate-evidence-r9-a1")
+    assert "/actions/runs/9/artifacts?" in seen["url"]
+    assert "name=sentinel-p5-gate-evidence-r9-a1" in seen["url"]
+    assert seen["timeout"] == 30.0
+    assert entries == [
+        ArtifactDetail(id=7, name="sentinel-p5-gate-evidence-r9-a1", workflow_run_id="9", expired=False,
+                       digest="sha256:" + "ab" * 32, size_in_bytes=123),
+        ArtifactDetail(id=8, name="sentinel-p5-gate-evidence-r9-a1", workflow_run_id="9", expired=True,
+                       digest=None, size_in_bytes=5),
+    ]
+
+
+@pytest.mark.parametrize("body", [
+    {"total_count": 3, "artifacts": []},
+    {"artifacts": []},
+    {"total_count": 0},
+    {"total_count": True, "artifacts": []},
+    [],
+])
+def test_list_run_artifacts_named_incomplete_or_malformed_listing_fails_closed(body):
+    def opener(request, timeout=None):
+        return _FakeResponse(200, json.dumps(body).encode("utf-8"))
+
+    with pytest.raises(GithubEvidenceError):
+        _client(opener).list_run_artifacts_named("9", "x")
+
+
+def test_list_run_artifacts_named_non_200_raises():
+    def opener(request, timeout=None):
+        return _FakeResponse(500, b"{}")
+
+    with pytest.raises(GithubEvidenceError):
+        _client(opener).list_run_artifacts_named("9", "x")
+
+
+def test_default_timeouts_unchanged_30_and_60(tmp_path):
+    seen = []
+
+    def opener(request, timeout=None):
+        seen.append(timeout)
+        if request.full_url.endswith("/zip"):
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr("a.txt", b"x")
+            return _FakeResponse(200, buffer.getvalue())
+        return _FakeResponse(200, json.dumps({"object": {"sha": "f" * 40}}).encode("utf-8"))
+
+    from sentinel.phase5.github_evidence import ArtifactRef
+
+    client = GithubEvidenceClient(api_url="https://api.github.com", repository="acme/repo", token="t", opener=opener)
+    client.get_main_head_sha()
+    client.download_artifact(ArtifactRef(id=1, name="n", workflow_run_id="1"), tmp_path, tmp_path / "d")
+    assert seen == [30.0, 60.0]
+
+
+def test_custom_timeouts_passed_to_opener(tmp_path):
+    seen = []
+
+    def opener(request, timeout=None):
+        seen.append(timeout)
+        if request.full_url.endswith("/zip"):
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr("a.txt", b"x")
+            return _FakeResponse(200, buffer.getvalue())
+        return _FakeResponse(200, json.dumps({"object": {"sha": "f" * 40}}).encode("utf-8"))
+
+    from sentinel.phase5.github_evidence import ArtifactRef
+
+    client = GithubEvidenceClient(
+        api_url="https://api.github.com", repository="acme/repo", token="t", opener=opener,
+        request_timeout_s=8.0, download_timeout_s=12.0,
+    )
+    client.get_main_head_sha()
+    client.download_artifact(ArtifactRef(id=1, name="n", workflow_run_id="1"), tmp_path, tmp_path / "d")
+    assert seen == [8.0, 12.0]

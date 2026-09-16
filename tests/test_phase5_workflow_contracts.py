@@ -190,6 +190,15 @@ def test_marker_upload_step_precedes_execute_step(name):
     assert preflight_idx < marker_idx < execute_idx
 
 
+# Stage 2B-2 (dispatch q77-p5d-repair-stage2b2-implement-a): the official
+# gate's evidence upload fails open toward publication whenever the marker
+# may have been consumed, instead of a bare always().
+OFFICIAL_GATE_PUBLICATION_IF = (
+    "always() && steps.marker.outcome != 'skipped' "
+    "&& steps.finalize.outputs.terminal_required != 'false'"
+)
+
+
 @pytest.mark.parametrize("name", list(P5_WORKFLOWS))
 def test_upload_steps_carry_retention_and_evidence_uploads_are_always(name):
     data = _load(name)
@@ -198,7 +207,10 @@ def test_upload_steps_carry_retention_and_evidence_uploads_are_always(name):
         if "uses" in step and "upload-artifact" in step["uses"]:
             assert step["with"]["retention-days"] == 90
             if "evidence" in step["name"].lower() or "attempt" in step["name"].lower():
-                assert step.get("if") == "always()"
+                if name == "sentinel-official-gate.yml":
+                    assert step.get("if") == OFFICIAL_GATE_PUBLICATION_IF
+                else:
+                    assert step.get("if") == "always()"
 
 
 def test_entrypoint_commands_reference_existing_script_files():
@@ -297,9 +309,109 @@ def test_artifact_upload_paths_match_producer_paths():
             expected_path = f"{producer_root}{suffix}"
             assert steps_by_name[upload_name]["with"]["path"] == expected_path
 
-    # sentinel-official-gate.yml's gate-evidence upload path is the
-    # ARTIFACTS_DIR root itself, not a suffixed file under WORK_ROOT.
+    # sentinel-official-gate.yml's gate-evidence upload is an explicit
+    # three-file list under ARTIFACTS_DIR (Stage 2B-2), never the
+    # directory itself, so staging, quarantine or stray files can never
+    # be published.
     gate_data = _load("sentinel-official-gate.yml")
     gate_job = next(iter(gate_data["jobs"].values()))
     gate_steps = {s.get("name"): s for s in gate_job["steps"]}
-    assert gate_steps["upload gate evidence"]["with"]["path"] == gate_steps["execute"]["env"]["ARTIFACTS_DIR"]
+    artifacts_dir = gate_steps["execute"]["env"]["ARTIFACTS_DIR"]
+    assert gate_steps["upload gate evidence"]["with"]["path"] == (
+        f"{artifacts_dir}/phase5_official_gate.json\n"
+        f"{artifacts_dir}/phase5_official_gate_checks.json\n"
+        f"{artifacts_dir}/phase5_gate_journal.jsonl\n"
+    )
+
+
+# =====================================================================
+# Stage 2B-2 (dispatch q77-p5d-repair-stage2b2-implement-a): official
+# gate execute -> finalize -> upload -> confirm.
+# =====================================================================
+
+
+def _gate_steps() -> list:
+    data = _load("sentinel-official-gate.yml")
+    return next(iter(data["jobs"].values()))["steps"]
+
+
+def _gate_step(name: str) -> dict:
+    return next(s for s in _gate_steps() if s.get("name") == name)
+
+
+def test_official_gate_step_order_is_execute_finalize_upload_confirm():
+    names = [s.get("name") for s in _gate_steps() if s.get("name")]
+    order = [
+        "preflight", "upload one-shot marker", "execute", "finalize",
+        "upload gate evidence", "confirm gate evidence publication",
+    ]
+    assert [n for n in names if n in order] == order
+    assert names[-3:] == order[-3:]
+
+
+def test_official_gate_step_ids_and_conditions_are_exact():
+    assert _gate_step("upload one-shot marker")["id"] == "marker"
+    assert _gate_step("execute")["id"] == "execute"
+    assert _gate_step("upload one-shot marker").get("if") is None
+    assert _gate_step("execute").get("if") is None
+    finalize = _gate_step("finalize")
+    upload = _gate_step("upload gate evidence")
+    confirm = _gate_step("confirm gate evidence publication")
+    assert (finalize["id"], upload["id"], confirm["id"]) == ("finalize", "upload", "confirm")
+    assert finalize["if"] == "always()"
+    assert upload["if"] == OFFICIAL_GATE_PUBLICATION_IF
+    assert confirm["if"] == OFFICIAL_GATE_PUBLICATION_IF
+
+
+def test_official_gate_upload_is_explicit_non_overwriting_and_retained():
+    upload = _gate_step("upload gate evidence")
+    assert upload["uses"] == "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4"
+    assert upload["with"]["name"] == "sentinel-p5-gate-evidence-r${{ github.run_id }}-a${{ github.run_attempt }}"
+    assert upload["with"]["overwrite"] is False
+    assert upload["with"]["retention-days"] == 90
+    assert upload["with"]["if-no-files-found"] == "error"
+    paths = upload["with"]["path"].splitlines()
+    assert [p.rsplit("/", 1)[1] for p in paths] == [
+        "phase5_official_gate.json", "phase5_official_gate_checks.json", "phase5_gate_journal.jsonl",
+    ]
+    assert not any("*" in p or "staging" in p or "quarantine" in p for p in paths)
+
+
+def test_official_gate_finalize_and_confirm_env_wiring():
+    finalize = _gate_step("finalize")
+    confirm = _gate_step("confirm gate evidence publication")
+    execute = _gate_step("execute")
+    assert "run_phase5_gate_finalizer.py finalize" in finalize["run"]
+    assert "run_phase5_gate_finalizer.py confirm" in confirm["run"]
+    assert '--expected-source-sha "${{ inputs.expected_source_sha }}"' in finalize["run"]
+    assert '--expected-source-sha "${{ inputs.expected_source_sha }}"' in confirm["run"]
+    assert '--work-root "$WORK_ROOT"' in confirm["run"]
+    assert finalize["env"]["MARKER_STEP_OUTCOME"] == "${{ steps.marker.outcome }}"
+    assert finalize["env"]["EXECUTE_STEP_OUTCOME"] == "${{ steps.execute.outcome }}"
+    assert confirm["env"]["UPLOAD_STEP_OUTCOME"] == "${{ steps.upload.outcome }}"
+    assert confirm["env"]["UPLOADED_ARTIFACT_ID"] == "${{ steps.upload.outputs.artifact-id }}"
+    assert confirm["env"]["UPLOADED_ARTIFACT_DIGEST"] == "${{ steps.upload.outputs.artifact-digest }}"
+    for key in ("WORK_ROOT", "ARTIFACTS_DIR"):
+        assert finalize["env"][key] == execute["env"][key] == confirm["env"][key]
+
+
+def test_official_gate_finalization_timeout_sum_at_most_4():
+    finalize = _gate_step("finalize")["timeout-minutes"]
+    upload = _gate_step("upload gate evidence")["timeout-minutes"]
+    confirm = _gate_step("confirm gate evidence publication")["timeout-minutes"]
+    assert (finalize, upload, confirm) == (1, 2, 1)
+    assert finalize + upload + confirm <= 4
+    data = _load("sentinel-official-gate.yml")
+    assert next(iter(data["jobs"].values()))["timeout-minutes"] == 30
+
+
+def test_official_gate_runs_on_ubuntu_latest():
+    data = _load("sentinel-official-gate.yml")
+    assert next(iter(data["jobs"].values()))["runs-on"] == "ubuntu-latest"
+
+
+def test_official_gate_no_step_echoes_terminal_or_journal_content():
+    for step in _gate_steps():
+        run = step.get("run", "")
+        for token in ("cat ", "phase5_gate_journal", "phase5_official_gate.json", "GITHUB_STEP_SUMMARY", "echo "):
+            assert token not in run, (step.get("name"), token)

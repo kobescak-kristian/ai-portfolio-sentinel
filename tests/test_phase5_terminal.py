@@ -882,17 +882,85 @@ def test_consumption_mapping(outcome, rest, expected):
 # ======================================================================
 
 
-def test_official_gate_purpose_unchanged_and_new_modules_unwired():
-    text = (REPO_ROOT / "scripts" / "run_phase5_official_gate.py").read_text(encoding="utf-8")
-    assert 'PURPOSE = "P5D_OFFICIAL_SONNET_GATE"' in text
-    for path in (REPO_ROOT / "scripts").rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names = []
-            if isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
-            elif isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
-            for name in names:
-                assert "sentinel.phase5.terminal" not in name, path
-                assert "sentinel.phase5.journal" not in name, path
+# Stage 2B-2 (dispatch q77-p5d-repair-stage2b2-implement-b) supersedes the
+# Stage-2B-1 blanket "no script imports these modules" guard: the
+# terminal-publication library is now deliberately wired into the official
+# gate's own entrypoints. The bounded form below keeps every unarmed
+# invariant that guard actually protected -- the gate purpose, the absent
+# execution envelope, and exactly which scripts may reach these modules.
+_WIRED_MODULES = ("sentinel.phase5.terminal", "sentinel.phase5.journal")
+_PERMITTED_WIRING_SCRIPTS = frozenset(
+    {
+        "scripts/run_phase5_official_gate.py",
+        "scripts/run_phase5_gate_finalizer.py",
+        "scripts/_phase5_common.py",
+    }
+)
+# The P5-E seam validator legitimately names the replacement purpose (it
+# validates retained replacement evidence). That is provenance checking,
+# never executability, so the literal ban below is scoped to the exact
+# execution surface: the gate runner, the gate finalizer and the gate
+# workflow.
+_EXECUTION_SURFACE = (
+    "scripts/run_phase5_official_gate.py",
+    "scripts/run_phase5_gate_finalizer.py",
+    ".github/workflows/sentinel-official-gate.yml",
+)
+
+
+def _imported_module_names(path: Path) -> list[str]:
+    names: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            names.append(node.module)
+            names.extend(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.Import):
+            names.extend(alias.name for alias in node.names)
+    return names
+
+
+def _module_level_assignments(path: Path, name: str) -> list:
+    values = []
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        targets = []
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target.id]
+        elif isinstance(node, ast.Assign):
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        if name in targets:
+            values.append(node.value)
+    return values
+
+
+def test_official_gate_purpose_unchanged_and_envelope_absent():
+    """The gate stays unarmed: the original purpose literal is exactly
+    what the runner carries, and the Stage-2C execution-envelope identity
+    is still None (which makes the replacement purpose refuse)."""
+    runner = REPO_ROOT / "scripts" / "run_phase5_official_gate.py"
+    assert 'PURPOSE = "P5D_OFFICIAL_SONNET_GATE"' in runner.read_text(encoding="utf-8")
+    envelopes = _module_level_assignments(runner, "ENVELOPE")
+    assert len(envelopes) == 1
+    assert isinstance(envelopes[0], ast.Constant) and envelopes[0].value is None
+
+
+def test_terminal_library_is_wired_only_into_the_permitted_gate_scripts():
+    """Stage 2B-2 wiring is bounded: the actual importers of the
+    terminal/journal libraries under scripts/ must be a subset of the exact
+    allowlist. No allowlisted file is required to import them."""
+    importers = set()
+    for path in sorted((REPO_ROOT / "scripts").rglob("*.py")):
+        names = _imported_module_names(path)
+        if any(any(module in name for module in _WIRED_MODULES) for name in names):
+            importers.add(path.relative_to(REPO_ROOT).as_posix())
+    assert importers <= _PERMITTED_WIRING_SCRIPTS, sorted(importers - _PERMITTED_WIRING_SCRIPTS)
+
+
+def test_replacement_purpose_literal_absent_from_the_execution_surface():
+    for relative in _EXECUTION_SURFACE:
+        text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        assert repl.REPLACEMENT_PURPOSE not in text, relative
+    # Defense in depth for the scoping above: the P5-E seam validator's own
+    # reference is expected to remain, and must never be removed to satisfy
+    # this guard.
+    seam = (REPO_ROOT / "scripts" / "run_phase5_window_freeze.py").read_text(encoding="utf-8")
+    assert repl.REPLACEMENT_PURPOSE in seam

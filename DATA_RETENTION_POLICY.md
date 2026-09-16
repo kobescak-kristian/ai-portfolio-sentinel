@@ -374,3 +374,53 @@ P5-D history.
   remain later, separately bounded stages (2B/2C).
 
 No production or production-ready claim follows from this section.
+
+## 17. ADR-0012 Stage 2B-2 addition: gate operational journal and terminal publication
+
+Dispatch q77-p5d-repair-stage2b2-implement-a wires the Stage-2B-1
+terminal-publication library into the official-gate runner
+(`scripts/run_phase5_official_gate.py`), a new finalizer and
+publication-confirmation entrypoint (`scripts/run_phase5_gate_finalizer.py`)
+and the official-gate workflow. It arms nothing: the gate `PURPOSE` stays
+the permanently consumed original purpose, the replacement purpose is
+unreachable, and no replacement marker exists.
+
+**What is written, where.** Per official-gate execution, under the
+runner-local work root on the ephemeral GitHub-hosted runner:
+
+- `artifacts/phase5_official_gate.json`: the single terminal evidence
+  record (the same file the gate already published), now written
+  atomically.
+- `artifacts/phase5_official_gate_checks.json`: the gate check lines,
+  present only next to a trusted quality record.
+- `artifacts/phase5_gate_journal.jsonl`: the operational journal. Every
+  field is a closed vocabulary, a bounded integer, a SHA-256 digest or a
+  bounded exception class name, so it cannot carry a model response,
+  finding text, answer content, score, quality disposition, credential,
+  token or local path. It is never echoed to workflow logs.
+- `terminal-staging/` and `terminal-quarantine/`: siblings of the
+  publication directory holding atomic-write temporaries and any
+  quarantined untrusted or unexpected bytes. `confirm-download/` holds
+  the confirmation step's re-download of the published artifact.
+
+**What is published.** Exactly the three `artifacts/` files above, named
+explicitly in the upload step (never the directory), in the existing
+`sentinel-p5-gate-evidence-r<run>-a<attempt>` Actions artifact with
+`overwrite: false` and the platform-maximum 90-day retention (§15).
+Staging, quarantine, the confirmation download, the gate database and
+the FX state are never uploaded and are destroyed with the ephemeral
+runner.
+
+**Suppressed operator output.** Before publication is confirmed, the
+execute step points its standard output and error at `/dev/null` so no
+provisional quality signal, SDK or CLI diagnostic can reach the public
+workflow log. That output is discarded, not captured: it is never stored
+or published anywhere. A failed run's CLI diagnostics are therefore not
+retained.
+
+**Nothing durable in git.** No journal, terminal record, checks file or
+publication verdict is committed to this repository. The durable receipt
+registry (§16) is byte-unchanged by this stage; recording a replacement
+receipt remains later, separately governed work.
+
+No production or production-ready claim follows from this section.

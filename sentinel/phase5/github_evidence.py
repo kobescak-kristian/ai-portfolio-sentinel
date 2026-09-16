@@ -127,6 +127,21 @@ class ArtifactRef:
 
 
 @dataclass(frozen=True)
+class ArtifactDetail:
+    """One run-artifact listing entry with the fields publication
+    confirmation needs (dispatch q77-p5d-repair-stage2b2-implement-a).
+    ``expired`` entries are kept, never filtered, so the caller decides;
+    ``digest`` is whatever the REST surface reports (possibly None)."""
+
+    id: int
+    name: str
+    workflow_run_id: str
+    expired: bool
+    digest: str | None
+    size_in_bytes: int | None
+
+
+@dataclass(frozen=True)
 class RunRef:
     run_id: str
     run_attempt: int
@@ -153,12 +168,19 @@ class GithubEvidenceClient:
         *,
         opener: Callable = _DEFAULT_OPENER,
         page_limit: int = 10,
+        request_timeout_s: float = 30.0,
+        download_timeout_s: float = 60.0,
     ) -> None:
         self._api_url = api_url.rstrip("/")
         self._repository = repository
         self._token = token
         self._opener = opener
         self._page_limit = page_limit
+        # Stage 2B-2: optional bounded timeouts for the finalizer's
+        # cancellation-window steps; the defaults are the historical
+        # 30 s / 60 s, so every existing caller is unchanged.
+        self._request_timeout_s = request_timeout_s
+        self._download_timeout_s = download_timeout_s
 
     def __repr__(self) -> str:  # never leak the token
         return f"GithubEvidenceClient(api_url={self._api_url!r}, repository={self._repository!r})"
@@ -176,7 +198,7 @@ class GithubEvidenceClient:
             },
         )
         try:
-            with self._opener(request, timeout=30.0) as response:
+            with self._opener(request, timeout=self._request_timeout_s) as response:
                 status = response.status
                 body = response.read()
         except urllib.error.URLError as exc:
@@ -194,7 +216,7 @@ class GithubEvidenceClient:
             url, headers={"Authorization": f"Bearer {self._token}"}
         )
         try:
-            with self._opener(request, timeout=60.0) as response:
+            with self._opener(request, timeout=self._download_timeout_s) as response:
                 status = response.status
                 body = response.read()
         except urllib.error.URLError as exc:
@@ -300,6 +322,42 @@ class GithubEvidenceClient:
             for a in artifacts
             if not a.get("expired")
         ]
+
+    def list_run_artifacts_named(self, run_id: str, name: str) -> list[ArtifactDetail]:
+        """Every artifact of ``run_id`` whose name is exactly ``name``,
+        expired entries included (dispatch
+        q77-p5d-repair-stage2b2-implement-a). Fails closed unless the
+        response's ``total_count`` is an integer equal to the number of
+        entries returned, so a truncated or malformed listing can never
+        be read as absence."""
+        query = urllib.parse.urlencode({"name": name, "per_page": 100})
+        data = self._get_json(f"/repos/{self._repository}/actions/runs/{run_id}/artifacts?{query}")
+        if not isinstance(data, dict):
+            raise GithubEvidenceError("run artifact listing is not a JSON object")
+        artifacts = data.get("artifacts")
+        total = data.get("total_count")
+        if not isinstance(artifacts, list) or not isinstance(total, int) or isinstance(total, bool):
+            raise GithubEvidenceError("run artifact listing is missing artifacts or total_count")
+        if total != len(artifacts):
+            raise GithubEvidenceError("run artifact listing is incomplete (total_count mismatch)")
+        results: list[ArtifactDetail] = []
+        for artifact in artifacts:
+            try:
+                workflow_run = artifact.get("workflow_run") or {}
+                size = artifact.get("size_in_bytes")
+                results.append(
+                    ArtifactDetail(
+                        id=int(artifact["id"]),
+                        name=str(artifact["name"]),
+                        workflow_run_id=str(workflow_run.get("id", "")),
+                        expired=bool(artifact.get("expired")),
+                        digest=artifact.get("digest") if isinstance(artifact.get("digest"), str) else None,
+                        size_in_bytes=size if isinstance(size, int) else None,
+                    )
+                )
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise GithubEvidenceError("run artifact listing entry has an unexpected shape") from exc
+        return [r for r in results if r.name == name]
 
     # -- artifact download -------------------------------------------------
 
