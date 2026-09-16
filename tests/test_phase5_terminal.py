@@ -11,8 +11,10 @@ the replacement.
 from __future__ import annotations
 
 import ast
+import inspect
 import itertools
 import os
+import typing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -207,13 +209,55 @@ def test_build_invalid_record_cannot_author_quality():
         )
         assert infra.disposition == "INFRASTRUCTURE_FAILURE" and infra.terminal_writer == writer
         validate_replacement_provenance(infra, expected_source_sha=SHA_A)
+    # Stage 2C-1: every canonical cause constructs for RUNNER and FINALIZER;
+    # a Stage-2C cause may carry descriptive later signals, a Stage-2B
+    # cause never may (schema), and a raw signal is never a cause.
+    for cause in ("SESSION_DEADLINE", "INVOCATION_STALL_DEADLINE", "WATCHDOG"):
+        for writer in ("RUNNER", "FINALIZER"):
+            record = t.build_invalid_record(
+                identity=identity, envelope=ENVELOPE, created_at_utc=NOW, model="m", profile_name="p",
+                infrastructure_cause=cause, writer=writer, observed_signals=("SIGTERM",),
+            )
+            assert record.disposition == "INFRASTRUCTURE_FAILURE" and record.termination_source == cause
+            assert record.observed_signals == ("SIGTERM",) and record.terminal_writer == writer
+            validate_replacement_provenance(record, expected_source_sha=SHA_A)
+    with pytest.raises(ValidationError):
+        t.build_invalid_record(
+            identity=identity, envelope=ENVELOPE, created_at_utc=NOW, model="m", profile_name="p",
+            infrastructure_cause="RUNNER_EXCEPTION", writer="RUNNER", observed_signals=("SIGTERM",),
+        )
+    for bad in ("SIGTERM", "UNKNOWN_EXTERNAL_TERMINATION", "TIMEOUT", ""):
+        with pytest.raises(t.TerminalEvidenceError):
+            t.build_invalid_record(
+                identity=identity, envelope=ENVELOPE, created_at_utc=NOW, model="m", profile_name="p",
+                infrastructure_cause=bad, writer="RUNNER",
+            )
     with pytest.raises(t.TerminalEvidenceError):
         t.build_invalid_record(
             identity=identity, envelope=ENVELOPE, created_at_utc=NOW, model="m", profile_name="p",
-            infrastructure_cause="SESSION_DEADLINE", writer="RUNNER",
+            infrastructure_cause="SESSION_DEADLINE",
         )
     with pytest.raises(t.TerminalEvidenceError):
         t.build_invalid_record(identity=identity, envelope=ENVELOPE, created_at_utc=NOW, model="m", profile_name="p")
+
+
+def test_infrastructure_cause_is_the_canonical_termination_cause():
+    from sentinel.phase5.evidence_records import TerminationCause
+
+    assert t.InfrastructureCause is TerminationCause
+    assert set(typing.get_args(t.InfrastructureCause)) == {
+        "SESSION_DEADLINE", "INVOCATION_STALL_DEADLINE", "WATCHDOG", "PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION",
+    }
+    assert t.JournalSummary(integrity="OK").objective_cause is None
+
+
+def test_write_terminal_atomically_commit_signature_unchanged_in_stage_2c1():
+    params = set(inspect.signature(t.write_terminal_atomically).parameters)
+    assert params == {"record", "publication_root", "staging_root", "prior", "identity"}
+    assert "commit_point" not in params
+
+
+STAGE2C_CAUSES = ("SESSION_DEADLINE", "INVOCATION_STALL_DEADLINE", "WATCHDOG")
 
 
 def _all_summaries():
@@ -221,13 +265,21 @@ def _all_summaries():
         for signals in ((), ("SIGINT",), ("SIGTERM",), ("SIGINT", "SIGTERM")):
             for cause in (None, "PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION"):
                 for write_failed in (False, True):
-                    yield t.JournalSummary(
-                        integrity=integrity, signals=signals, runner_exception_cause=cause,
-                        terminal_write_failed=write_failed,
-                    )
+                    for objective in (None, "SESSION_DEADLINE", "WATCHDOG"):
+                        yield t.JournalSummary(
+                            integrity=integrity, signals=signals, runner_exception_cause=cause,
+                            terminal_write_failed=write_failed, objective_cause=objective,
+                        )
 
 
 def test_decide_finalization_never_writes_quality_and_signal_never_yields_infra():
+    """Exhaustive over every summary (including the Stage-2C objective
+    cause), candidate kind, execute outcome, consumption and
+    replaceability: no row produces quality; a Stage-2B cause is written
+    only without any signal; a Stage-2C cause is written only when the
+    RUNNER positively established it in a trusted-integrity journal and
+    the candidate is ABSENT; a CORRUPT journal never yields a Stage-2C
+    cause; trusted candidates always win."""
     kinds = t.CandidateVerdictKind.__args__
     for summary, kind, outcome, consumption, replaceable in itertools.product(
         list(_all_summaries()), kinds, ("success", "failure", "cancelled", "skipped", ""),
@@ -238,11 +290,36 @@ def test_decide_finalization_never_writes_quality_and_signal_never_yields_infra(
             execute_step_outcome=outcome, candidate_replaceable=replaceable,
         )
         assert decision.action in t.FinalizerAction.__args__
-        if kind == "TRUSTED_QUALITY" and consumption != "NOT_CONSUMED_BY_THIS_ATTEMPT":
+        trusted_objective = summary.objective_cause is not None and summary.integrity in ("OK", "TRAILING_FRAGMENT")
+        if kind in t.TRUSTED_KINDS and consumption != "NOT_CONSUMED_BY_THIS_ATTEMPT":
             assert decision.action == "PRESERVE_RUNNER_EVIDENCE"
         if decision.action == "WRITE_INFRASTRUCTURE_INVALID":
-            assert not summary.signals and outcome != "cancelled"
-            assert decision.infrastructure_cause in ("PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION")
+            assert kind == "ABSENT"
+            if decision.infrastructure_cause in STAGE2C_CAUSES:
+                assert trusted_objective and decision.infrastructure_cause == summary.objective_cause
+            else:
+                assert not trusted_objective
+                assert not summary.signals and outcome != "cancelled"
+                assert decision.infrastructure_cause in ("PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION")
+        if summary.integrity in ("CORRUPT", "ABSENT"):
+            assert decision.infrastructure_cause not in STAGE2C_CAUSES
+        if trusted_objective and kind == "ABSENT" and consumption != "NOT_CONSUMED_BY_THIS_ATTEMPT":
+            assert decision.action == "WRITE_INFRASTRUCTURE_INVALID"
+            assert decision.infrastructure_cause == summary.objective_cause
+
+
+def test_finalizer_decision_vocabulary_cannot_express_quality():
+    assert set(typing.get_args(t.FinalizerAction)) == {
+        "PRESERVE_RUNNER_EVIDENCE", "WRITE_INFRASTRUCTURE_INVALID", "WRITE_UNCLASSIFIED",
+        "NO_TERMINAL_REQUIRED", "INTERNAL_ERROR",
+    }
+    assert "disposition" not in t.FinalizerDecision.__dataclass_fields__
+    for cause in STAGE2C_CAUSES:
+        record = t.build_invalid_record(
+            identity=_identity(), envelope=ENVELOPE, created_at_utc=NOW, model="m", profile_name="p",
+            infrastructure_cause=cause, writer="FINALIZER",
+        )
+        assert record.disposition == "INFRASTRUCTURE_FAILURE" and record.termination_source == cause
 
 
 # ======================================================================
@@ -827,6 +904,61 @@ def test_row6b_killed_without_trace_writes_unclassified_absent(summary, outcome)
     decision = _decide("ABSENT", summary, outcome)
     assert decision.action == "WRITE_UNCLASSIFIED"
     assert decision.unclassified_basis == "RUNNER_TERMINAL_EVIDENCE_ABSENT" and decision.observed_signals == ()
+
+
+@pytest.mark.parametrize("integrity", ["OK", "TRAILING_FRAGMENT"])
+@pytest.mark.parametrize("cause", STAGE2C_CAUSES)
+def test_row3c_objective_cause_writes_infrastructure_with_descriptive_later_signals(integrity, cause):
+    plain = _decide("ABSENT", t.JournalSummary(integrity=integrity, objective_cause=cause), "failure")
+    assert plain == t.FinalizerDecision(
+        action="WRITE_INFRASTRUCTURE_INVALID", infrastructure_cause=cause,
+        quarantine_ancillary=True, quarantine_unexpected=True,
+    )
+    later = _decide(
+        "ABSENT", t.JournalSummary(integrity=integrity, signals=("SIGTERM",), objective_cause=cause), "failure"
+    )
+    assert later.action == "WRITE_INFRASTRUCTURE_INVALID" and later.infrastructure_cause == cause
+    assert later.observed_signals == ("SIGTERM",) and later.unclassified_basis is None
+    cancelled = _decide("ABSENT", t.JournalSummary(integrity=integrity, objective_cause=cause), "cancelled")
+    assert cancelled.infrastructure_cause == cause
+    assert cancelled.observed_signals == ("UNKNOWN_EXTERNAL_TERMINATION",)
+    # the objective cause outranks a runner-exception cause and a terminal-write failure
+    both = _decide(
+        "ABSENT",
+        t.JournalSummary(
+            integrity=integrity, runner_exception_cause="RUNNER_EXCEPTION", terminal_write_failed=True,
+            objective_cause=cause,
+        ),
+        "failure",
+    )
+    assert both.infrastructure_cause == cause
+
+
+@pytest.mark.parametrize("integrity", ["CORRUPT", "ABSENT"])
+def test_row3c_untrusted_journal_never_gains_objective_authority(integrity):
+    decision = _decide("ABSENT", t.JournalSummary(integrity=integrity, objective_cause="SESSION_DEADLINE"), "failure")
+    assert decision.action == "WRITE_UNCLASSIFIED"
+    assert decision.unclassified_basis == "RUNNER_TERMINAL_EVIDENCE_ABSENT"
+    signalled = _decide(
+        "ABSENT", t.JournalSummary(integrity=integrity, signals=("SIGINT",), objective_cause="WATCHDOG"), "failure"
+    )
+    assert signalled.action == "WRITE_UNCLASSIFIED" and signalled.unclassified_basis == "OBSERVED_SIGNAL"
+
+
+def test_objective_cause_never_overrides_trusted_or_untrusted_candidate_rows():
+    summary = t.JournalSummary(integrity="OK", signals=("SIGTERM",), objective_cause="WATCHDOG")
+    assert _decide("TRUSTED_QUALITY", summary, "cancelled") == t.FinalizerDecision(
+        action="PRESERVE_RUNNER_EVIDENCE", quarantine_unexpected=True
+    )
+    assert _decide("TRUSTED_INFRASTRUCTURE_INVALID", summary).action == "PRESERVE_RUNNER_EVIDENCE"
+    assert _decide("TRUSTED_UNCLASSIFIED", summary).action == "PRESERVE_RUNNER_EVIDENCE"
+    for kind in ("UNPARSEABLE", "SCHEMA_INVALID", "IDENTITY_INVALID", "PROVENANCE_INVALID", "OVERSIZE"):
+        decision = _decide(kind, summary, "failure")
+        assert decision.action == "WRITE_UNCLASSIFIED"
+        assert decision.unclassified_basis == "RUNNER_TERMINAL_EVIDENCE_UNTRUSTED"
+    assert _decide("NOT_REGULAR_FILE", summary, replaceable=False).action == "INTERNAL_ERROR"
+    assert _decide("ABSENT", summary, consumption="NOT_CONSUMED_BY_THIS_ATTEMPT").action == "NO_TERMINAL_REQUIRED"
+    assert _decide("ABSENT", summary, run_attempt=2).action == "NO_TERMINAL_REQUIRED"
 
 
 @pytest.mark.parametrize(

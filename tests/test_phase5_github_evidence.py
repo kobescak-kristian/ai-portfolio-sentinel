@@ -16,6 +16,7 @@ from sentinel.phase5.github_evidence import (
     DiscoveryOverflow,
     GithubEvidenceClient,
     GithubEvidenceError,
+    JobDetail,
 )
 
 
@@ -431,3 +432,115 @@ def test_custom_timeouts_passed_to_opener(tmp_path):
     client.get_main_head_sha()
     client.download_artifact(ArtifactRef(id=1, name="n", workflow_run_id="1"), tmp_path, tmp_path / "d")
     assert seen == [8.0, 12.0]
+
+
+# ======================================================================
+# Attempt-scoped jobs listing (Stage 2C-1, dispatch
+# q77-p5d-repair-stage2c1-implement-a) -- fake opener only, never live
+# ======================================================================
+
+
+def _jobs_body(jobs, total=None):
+    return {"total_count": len(jobs) if total is None else total, "jobs": jobs}
+
+
+_JOB_A = {
+    "id": 77, "run_id": 9, "run_attempt": 1, "name": "Sonnet official gate", "status": "in_progress",
+    "started_at": "2026-09-16T11:55:00Z", "runner_name": "GitHub Actions 3", "conclusion": None, "steps": [],
+}
+_JOB_B = {"id": 78, "run_id": 9, "name": "finalize", "status": "queued", "started_at": None, "runner_name": None}
+
+
+def test_list_run_attempt_jobs_puts_attempt_in_request_path_and_ignores_body_run_attempt():
+    seen = {}
+
+    def opener(request, timeout=None):
+        seen["url"] = request.full_url
+        seen["timeout"] = timeout
+        return _FakeResponse(200, json.dumps(_jobs_body([_JOB_A, _JOB_B])).encode("utf-8"))
+
+    jobs = _client(opener).list_run_attempt_jobs("9", 2)
+    assert seen["url"] == "https://api.github.com/repos/acme/repo/actions/runs/9/attempts/2/jobs?per_page=100"
+    assert seen["timeout"] == 30.0
+    # the body's run_attempt (1) is irrelevant: attempt (2) is request identity and no field carries it
+    assert jobs == [
+        JobDetail(id=77, run_id="9", name="Sonnet official gate", status="in_progress",
+                  started_at=datetime(2026, 9, 16, 11, 55, 0, tzinfo=timezone.utc), runner_name="GitHub Actions 3"),
+        JobDetail(id=78, run_id="9", name="finalize", status="queued", started_at=None, runner_name=None),
+    ]
+    assert "run_attempt" not in JobDetail.__dataclass_fields__
+    assert jobs[0].started_at.utcoffset().total_seconds() == 0
+
+
+def test_list_run_attempt_jobs_does_not_require_body_run_attempt():
+    stripped = {k: v for k, v in _JOB_A.items() if k != "run_attempt"}
+
+    def opener(request, timeout=None):
+        return _FakeResponse(200, json.dumps(_jobs_body([stripped])).encode("utf-8"))
+
+    assert _client(opener).list_run_attempt_jobs("9", 1)[0].id == 77
+
+
+@pytest.mark.parametrize("body", [
+    _jobs_body([_JOB_A], total=2),
+    _jobs_body([], total=1),
+    {"jobs": [_JOB_A]},
+    {"total_count": 1},
+    {"total_count": True, "jobs": [_JOB_A]},
+    {"total_count": 1, "jobs": {"id": 77}},
+    [],
+    "text",
+    _jobs_body([{**_JOB_A, "id": "77"}]),
+    _jobs_body([{**_JOB_A, "id": True}]),
+    _jobs_body([{**_JOB_A, "run_id": "9"}]),
+    _jobs_body([{k: v for k, v in _JOB_A.items() if k != "run_id"}]),
+    _jobs_body([{k: v for k, v in _JOB_A.items() if k != "name"}]),
+    _jobs_body([{**_JOB_A, "name": 5}]),
+    _jobs_body([{**_JOB_A, "status": None}]),
+    _jobs_body([{**_JOB_A, "started_at": 123}]),
+    _jobs_body([{**_JOB_A, "started_at": "yesterday"}]),
+    _jobs_body([{**_JOB_A, "runner_name": 5}]),
+    _jobs_body([42]),
+])
+def test_list_run_attempt_jobs_malformed_listing_fails_closed(body):
+    def opener(request, timeout=None):
+        return _FakeResponse(200, json.dumps(body).encode("utf-8"))
+
+    with pytest.raises(GithubEvidenceError):
+        _client(opener).list_run_attempt_jobs("9", 1)
+
+
+@pytest.mark.parametrize("run_id,attempt", [
+    ("abc", 1), ("", 1), ("9 ", 1), ("-9", 1), (9, 1), (None, 1),
+    ("9", 0), ("9", -1), ("9", True), ("9", "1"), ("9", 1.0), ("9", None),
+])
+def test_list_run_attempt_jobs_bad_run_id_or_attempt_fails_closed_before_any_request(run_id, attempt):
+    calls = []
+
+    def opener(request, timeout=None):
+        calls.append(request.full_url)
+        return _FakeResponse(200, b"{}")
+
+    with pytest.raises(GithubEvidenceError):
+        _client(opener).list_run_attempt_jobs(run_id, attempt)
+    assert calls == []
+
+
+def test_list_run_attempt_jobs_non_200_and_transport_errors_never_leak_the_token():
+    def opener_500(request, timeout=None):
+        return _FakeResponse(500, b"{}")
+
+    client = _client(opener_500)
+    with pytest.raises(GithubEvidenceError) as info:
+        client.list_run_attempt_jobs("9", 1)
+    assert "test-token" not in str(info.value) and "test-token" not in repr(info.value)
+
+    import urllib.error
+
+    def opener_err(request, timeout=None):
+        raise urllib.error.URLError("boom test-token-must-not-echo")
+
+    with pytest.raises(GithubEvidenceError) as info2:
+        _client(opener_err).list_run_attempt_jobs("9", 1)
+    assert "test-token" not in str(info2.value) and "test-token" not in repr(info2.value)
+    assert "test-token" not in repr(client)

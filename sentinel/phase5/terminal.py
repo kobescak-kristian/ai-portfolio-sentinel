@@ -40,6 +40,7 @@ from .evidence_records import (
     GateEvidenceRecord,
     ObservedSignal,
     TerminalWriter,
+    TerminationCause,
     UnclassifiedBasis,
     validate_replacement_provenance,
 )
@@ -338,10 +339,10 @@ def build_invalid_record(
             "exactly one of infrastructure_cause or unclassified_basis must be given"
         )
     if infrastructure_cause is not None:
-        if infrastructure_cause not in ("PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION"):
-            # Stage 2B produces only runner-observed causes; deadline and
-            # watchdog causes arrive with their Stage-2C producers.
-            raise TerminalEvidenceError(f"unsupported Stage-2B infrastructure cause {infrastructure_cause!r}")
+        if infrastructure_cause not in _CANONICAL_CAUSES:
+            # Exactly the canonical five-value TerminationCause (Stage 2C-1
+            # widened this from the two Stage-2B runner-observed causes).
+            raise TerminalEvidenceError(f"unsupported infrastructure cause {infrastructure_cause!r}")
         if writer not in ("RUNNER", "FINALIZER"):
             raise TerminalEvidenceError("an INFRASTRUCTURE_FAILURE record requires writer RUNNER or FINALIZER")
         disposition = "INFRASTRUCTURE_FAILURE"
@@ -617,7 +618,13 @@ FinalizerAction = Literal[
     "NO_TERMINAL_REQUIRED",
     "INTERNAL_ERROR",
 ]
-InfrastructureCause = Literal["PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION"]
+# Stage 2C-1: the public name is kept for existing importers, but it is
+# now exactly the canonical five-value ``evidence_records.TerminationCause``
+# rather than a second, narrower local Literal.
+InfrastructureCause = TerminationCause
+_CANONICAL_CAUSES: frozenset[str] = frozenset(
+    {"SESSION_DEADLINE", "INVOCATION_STALL_DEADLINE", "WATCHDOG", "PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION"}
+)
 
 
 @dataclass(frozen=True)
@@ -627,6 +634,10 @@ class JournalSummary:
     runner_exception_cause: InfrastructureCause | None = None
     terminal_write_failed: bool = False
     last_state: str | None = None
+    # Stage 2C-1: a positively established Stage-2C cause, set by
+    # ``journal.summarize_journal`` only under trusted integrity with the
+    # latch event preceding every observed signal. Never a raw signal.
+    objective_cause: TerminationCause | None = None
 
 
 @dataclass(frozen=True)
@@ -666,12 +677,18 @@ def decide_finalization(
     execute_step_outcome: str,
     candidate_replaceable: bool = True,
 ) -> FinalizerDecision:
-    """The frozen Stage-2B finalizer decision table. Pure; no I/O.
+    """The frozen Stage-2B finalizer decision table, extended minimally
+    in Stage 2C-1. Pure; no I/O.
 
     Signal != cause: any observed signal (or a platform-cancelled execute
     step) yields UNCLASSIFIED_TERMINATION, never INFRASTRUCTURE_FAILURE.
-    No row ever writes a quality result, and no row ever infers a Stage-2C
-    deadline or watchdog cause."""
+    No row ever writes a quality result, and no row ever INFERS a
+    Stage-2C deadline or watchdog cause from a signal. The one Stage-2C
+    row uses a cause the RUNNER positively established in a
+    trusted-integrity journal before any signal (``journal.objective_cause``),
+    with later observed signals carried as descriptive only. A CORRUPT
+    journal never gains that authority, and trusted candidate kinds
+    remain the highest authority regardless of journal content."""
     if run_attempt != 1:
         return FinalizerDecision(action="NO_TERMINAL_REQUIRED", reason="RUN_ATTEMPT_GT_1")
     if consumption == "NOT_CONSUMED_BY_THIS_ATTEMPT":
@@ -689,6 +706,16 @@ def decide_finalization(
         )
 
     if candidate == "ABSENT":
+        if journal.integrity in ("OK", "TRAILING_FRAGMENT") and journal.objective_cause in _CANONICAL_CAUSES:
+            # Stage 2C-1: a runner-established objective cause (already
+            # ordered before every signal by summarize_journal). Later
+            # signals are descriptive only and never change the cause.
+            return FinalizerDecision(
+                action="WRITE_INFRASTRUCTURE_INVALID",
+                infrastructure_cause=journal.objective_cause,
+                observed_signals=signals,
+                quarantine_ancillary=True, quarantine_unexpected=True,
+            )
         if signals:
             return FinalizerDecision(
                 action="WRITE_UNCLASSIFIED", unclassified_basis="OBSERVED_SIGNAL",

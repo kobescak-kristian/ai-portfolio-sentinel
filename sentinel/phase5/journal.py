@@ -20,7 +20,18 @@ unchanged (SIGINT still raises ``KeyboardInterrupt``; SIGTERM with the
 default disposition still terminates the process). They never convert
 cancellation into anything else. Graceful cancellation is Stage 2C.
 
-Not wired into any entrypoint in Stage 2B-1.
+Stage 2C-1 (dispatch q77-p5d-repair-stage2c1-implement-a) widens the
+vocabulary to the canonical five-value ``evidence_records.TerminationCause``
+and adds the objective-cause events: ``OBJECTIVE_CAUSE_LATCHED`` (RUNNER
+only; exactly the three Stage-2C causes) and ``WATCHDOG_ESCALATED``
+(RUNNER only; any canonical cause; never establishes or replaces a
+cause by itself). ``RUNNER_EXCEPTION`` keeps its Stage-2B semantics and
+carries only the two runner-observed causes. ``summarize_journal``
+establishes an ``objective_cause`` only from a journal of trusted
+integrity (OK or TRAILING_FRAGMENT) in which the latch event precedes
+every observed signal; a CORRUPT journal yields no objective cause even
+when its parsed prefix contains one, and a raw signal never substitutes
+for a cause.
 """
 
 from __future__ import annotations
@@ -38,18 +49,20 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .evidence_records import ObservedSignal
+from .evidence_records import ObservedSignal, TerminationCause
 from .models import canonical_json_bytes
 from .terminal import (
     CandidateVerdictKind,
     ExecutionState,
     FinalizerAction,
-    InfrastructureCause,
     JournalIntegrity,
     JournalSummary,
     MarkerConsumption,
     QuarantinePathClass,
 )
+
+STAGE2C_CAUSES: frozenset[str] = frozenset({"SESSION_DEADLINE", "INVOCATION_STALL_DEADLINE", "WATCHDOG"})
+STAGE2B_CAUSES: frozenset[str] = frozenset({"PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION"})
 
 MAX_LINE_BYTES = 2048
 MAX_JOURNAL_BYTES = 8 * 1024 * 1024
@@ -69,6 +82,8 @@ JournalEventType = Literal[
     "HEARTBEAT",
     "SIGNAL_OBSERVED",
     "RUNNER_EXCEPTION",
+    "OBJECTIVE_CAUSE_LATCHED",
+    "WATCHDOG_ESCALATED",
     "TERMINAL_WRITE_STARTED",
     "TERMINAL_WRITE_COMPLETED",
     "TERMINAL_WRITE_FAILED",
@@ -111,6 +126,8 @@ _EVENT_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "HEARTBEAT": (frozenset(), frozenset()),
     "SIGNAL_OBSERVED": (frozenset({"signal"}), frozenset()),
     "RUNNER_EXCEPTION": (frozenset({"cause", "exception_type"}), frozenset()),
+    "OBJECTIVE_CAUSE_LATCHED": (frozenset({"cause"}), frozenset()),
+    "WATCHDOG_ESCALATED": (frozenset({"cause"}), frozenset()),
     "TERMINAL_WRITE_STARTED": (frozenset({"record_kind"}), frozenset()),
     "TERMINAL_WRITE_COMPLETED": (frozenset({"record_kind", "sha256"}), frozenset()),
     "TERMINAL_WRITE_FAILED": (frozenset({"record_kind", "exception_type"}), frozenset()),
@@ -126,10 +143,19 @@ _FINALIZER_ONLY_EVENTS = frozenset(
 _RUNNER_ONLY_EVENTS = frozenset(
     {
         "RUN_STARTED", "RUN_FINISHED", "INVOCATION_STARTED", "INVOCATION_FINISHED",
-        "RUNNER_EXCEPTION", "TERMINAL_WRITE_STARTED", "TERMINAL_WRITE_COMPLETED",
-        "TERMINAL_WRITE_FAILED",
+        "RUNNER_EXCEPTION", "OBJECTIVE_CAUSE_LATCHED", "WATCHDOG_ESCALATED",
+        "TERMINAL_WRITE_STARTED", "TERMINAL_WRITE_COMPLETED", "TERMINAL_WRITE_FAILED",
     }
 )
+# Which causes each cause-bearing event may carry. RUNNER_EXCEPTION keeps
+# its Stage-2B semantics; OBJECTIVE_CAUSE_LATCHED is the only event that
+# establishes a Stage-2C cause; WATCHDOG_ESCALATED merely records which
+# canonical cause an escalation acted on.
+_CAUSES_BY_EVENT: dict[str, frozenset[str]] = {
+    "RUNNER_EXCEPTION": STAGE2B_CAUSES,
+    "OBJECTIVE_CAUSE_LATCHED": STAGE2C_CAUSES,
+    "WATCHDOG_ESCALATED": STAGE2C_CAUSES | STAGE2B_CAUSES,
+}
 
 
 class JournalEvent(BaseModel):
@@ -147,9 +173,9 @@ class JournalEvent(BaseModel):
     state_to: ExecutionState | None = None
     run_ordinal: Literal[1, 2] | None = None
     invocation_ordinal: int | None = Field(default=None, ge=1, le=200)
-    invocation_outcome: Literal["RETURNED", "RAISED"] | None = None
+    invocation_outcome: Literal["RETURNED", "RAISED", "TIMED_OUT"] | None = None
     signal: ObservedSignal | None = None
-    cause: InfrastructureCause | None = None
+    cause: TerminationCause | None = None
     exception_type: str | None = None
     record_kind: RecordKind | None = None
     sha256: str | None = None
@@ -178,6 +204,8 @@ class JournalEvent(BaseModel):
             raise ValueError("sha256 must be exactly 64 lowercase hexadecimal characters")
         if self.event == "STATE_TRANSITION" and self.state_from is None and self.state_to != "PREFLIGHTED":
             raise ValueError("state_from may be omitted only for the first transition to PREFLIGHTED")
+        if self.cause is not None and self.cause not in _CAUSES_BY_EVENT.get(self.event, frozenset()):
+            raise ValueError(f"{self.event} does not permit cause {self.cause}")
         if self.event in _FINALIZER_ONLY_EVENTS and self.writer != "FINALIZER":
             raise ValueError(f"{self.event} is written only by the FINALIZER")
         if self.event in _RUNNER_ONLY_EVENTS and self.writer != "RUNNER":
@@ -272,26 +300,45 @@ def read_journal(path: Path) -> JournalReadResult:
 def summarize_journal(result: JournalReadResult) -> JournalSummary:
     """Reduce a read result to the finalizer's inputs. Signals come from
     any writer; runner exception and terminal-write failure only from the
-    RUNNER."""
+    RUNNER.
+
+    ``objective_cause`` (Stage 2C-1) is the first RUNNER
+    ``OBJECTIVE_CAUSE_LATCHED`` cause, and is established ONLY when the
+    journal integrity is OK or TRAILING_FRAGMENT and that event precedes
+    every ``SIGNAL_OBSERVED`` in the journal. A signal observed first
+    leaves it ``None``; a CORRUPT journal leaves it ``None`` even if the
+    parsed prefix contains a latch event. Signals after an objective
+    cause stay descriptive only; a raw signal never substitutes for a
+    cause."""
     signals: list[str] = []
     cause = None
     write_failed = False
     last_state = None
+    objective = None
+    signal_seen = False
     for event in result.events:
-        if event.event == "SIGNAL_OBSERVED" and event.signal not in signals:
-            signals.append(event.signal)
+        if event.event == "SIGNAL_OBSERVED":
+            signal_seen = True
+            if event.signal not in signals:
+                signals.append(event.signal)
         elif event.event == "RUNNER_EXCEPTION" and event.writer == "RUNNER" and cause is None:
             cause = event.cause
+        elif event.event == "OBJECTIVE_CAUSE_LATCHED" and event.writer == "RUNNER":
+            if objective is None and not signal_seen:
+                objective = event.cause
         elif event.event == "TERMINAL_WRITE_FAILED" and event.writer == "RUNNER":
             write_failed = True
         elif event.event == "STATE_TRANSITION":
             last_state = event.state_to
+    if result.integrity not in ("OK", "TRAILING_FRAGMENT"):
+        objective = None
     return JournalSummary(
         integrity=result.integrity,
         signals=tuple(signals),
         runner_exception_cause=cause,
         terminal_write_failed=write_failed,
         last_state=last_state,
+        objective_cause=objective,
     )
 
 

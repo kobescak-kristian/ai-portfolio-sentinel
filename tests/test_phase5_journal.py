@@ -52,6 +52,13 @@ VALID_EVENTS = [
     dict(event="HEARTBEAT"),
     dict(event="SIGNAL_OBSERVED", signal="SIGTERM"),
     dict(event="RUNNER_EXCEPTION", cause="PRE_PROVIDER_FAILURE", exception_type="OidcAcquisitionError"),
+    dict(event="OBJECTIVE_CAUSE_LATCHED", cause="SESSION_DEADLINE"),
+    dict(event="OBJECTIVE_CAUSE_LATCHED", cause="INVOCATION_STALL_DEADLINE"),
+    dict(event="OBJECTIVE_CAUSE_LATCHED", cause="WATCHDOG"),
+    dict(event="WATCHDOG_ESCALATED", cause="WATCHDOG"),
+    dict(event="WATCHDOG_ESCALATED", cause="SESSION_DEADLINE"),
+    dict(event="WATCHDOG_ESCALATED", cause="RUNNER_EXCEPTION"),
+    dict(event="INVOCATION_FINISHED", run_ordinal=2, invocation_ordinal=7, invocation_outcome="TIMED_OUT"),
     dict(event="TERMINAL_WRITE_STARTED", record_kind="QUALITY"),
     dict(event="TERMINAL_WRITE_COMPLETED", record_kind="INFRASTRUCTURE_INVALID", sha256="a" * 64),
     dict(event="TERMINAL_WRITE_FAILED", record_kind="QUALITY", exception_type="OSError"),
@@ -84,7 +91,22 @@ def test_vocabulary_is_closed_and_fully_mapped():
         dict(event="SIGNAL_OBSERVED"),  # missing required
         dict(event="JOURNAL_OPENED", signal="SIGINT"),  # not permitted
         dict(event="STATE_TRANSITION", state_to="EXECUTING"),  # no state_from except PREFLIGHTED
-        dict(event="RUNNER_EXCEPTION", cause="WATCHDOG", exception_type="X"),  # 2C cause not representable
+        dict(event="RUNNER_EXCEPTION", cause="WATCHDOG", exception_type="X"),  # 2C cause never a runner exception
+        dict(event="RUNNER_EXCEPTION", cause="SESSION_DEADLINE", exception_type="X"),
+        dict(event="RUNNER_EXCEPTION", cause="INVOCATION_STALL_DEADLINE", exception_type="X"),
+        dict(event="OBJECTIVE_CAUSE_LATCHED", cause="RUNNER_EXCEPTION"),  # 2B cause is never latched
+        dict(event="OBJECTIVE_CAUSE_LATCHED", cause="PRE_PROVIDER_FAILURE"),
+        dict(event="OBJECTIVE_CAUSE_LATCHED"),  # cause required
+        dict(event="OBJECTIVE_CAUSE_LATCHED", cause="SIGTERM"),  # a signal is never a cause
+        dict(event="OBJECTIVE_CAUSE_LATCHED", cause="SESSION_DEADLINE", exception_type="X"),  # not permitted
+        dict(event="OBJECTIVE_CAUSE_LATCHED", cause="SESSION_DEADLINE", signal="SIGTERM"),
+        dict(writer="FINALIZER", event="OBJECTIVE_CAUSE_LATCHED", cause="SESSION_DEADLINE"),  # RUNNER only
+        dict(event="WATCHDOG_ESCALATED"),  # cause required
+        dict(event="WATCHDOG_ESCALATED", cause="SIGINT"),
+        dict(event="WATCHDOG_ESCALATED", cause="WATCHDOG", exception_type="X"),
+        dict(writer="FINALIZER", event="WATCHDOG_ESCALATED", cause="WATCHDOG"),  # RUNNER only
+        dict(event="INVOCATION_FINISHED", run_ordinal=1, invocation_ordinal=1, invocation_outcome="CANCELLED"),
+        dict(event="HEARTBEAT", cause="WATCHDOG"),  # cause only on cause-bearing events
         dict(event="RUNNER_EXCEPTION", cause="RUNNER_EXCEPTION", exception_type="module.ValueError"),
         dict(event="RUNNER_EXCEPTION", cause="RUNNER_EXCEPTION", exception_type="ValueError: secret message"),
         dict(event="RUNNER_EXCEPTION", cause="RUNNER_EXCEPTION", exception_type="A" * 81),
@@ -382,6 +404,7 @@ def test_summarize_journal(tmp_path):
     runner = _open(path)
     runner.append("STATE_TRANSITION", state_to="PREFLIGHTED")
     runner.observe_signal("SIGTERM")
+    runner.append("OBJECTIVE_CAUSE_LATCHED", cause="SESSION_DEADLINE")  # after a signal: not authoritative
     runner.append("RUNNER_EXCEPTION", cause="RUNNER_EXCEPTION", exception_type="ValueError")
     runner.append("RUNNER_EXCEPTION", cause="PRE_PROVIDER_FAILURE", exception_type="OSError")
     runner.append("TERMINAL_WRITE_FAILED", record_kind="QUALITY", exception_type="OSError")
@@ -397,7 +420,110 @@ def test_summarize_journal(tmp_path):
     assert summary.runner_exception_cause == "RUNNER_EXCEPTION"
     assert summary.terminal_write_failed is True
     assert summary.last_state == "REPLACEMENT_MARKED"
+    assert summary.objective_cause is None
     assert jr.summarize_journal(jr.read_journal(tmp_path / "none")).integrity == "ABSENT"
+
+
+# ======================================================================
+# Objective cause authority (Stage 2C-1)
+# ======================================================================
+
+
+def test_cause_before_signal_is_retained_and_later_signals_stay_descriptive(tmp_path):
+    path = tmp_path / "j.jsonl"
+    runner = _open(path)
+    runner.append("STATE_TRANSITION", state_to="PREFLIGHTED")
+    runner.append("OBJECTIVE_CAUSE_LATCHED", cause="INVOCATION_STALL_DEADLINE")
+    runner.append("INVOCATION_FINISHED", run_ordinal=1, invocation_ordinal=3, invocation_outcome="TIMED_OUT")
+    runner.observe_signal("SIGTERM")
+    runner.append("WATCHDOG_ESCALATED", cause="INVOCATION_STALL_DEADLINE")
+    runner.append("OBJECTIVE_CAUSE_LATCHED", cause="WATCHDOG")  # a second latch event never replaces the first
+    runner.close()
+    finalizer = _open(path, writer="FINALIZER")
+    finalizer.observe_signal("SIGINT")
+    finalizer.close()
+    summary = jr.summarize_journal(jr.read_journal(path))
+    assert summary.integrity == "OK"
+    assert summary.objective_cause == "INVOCATION_STALL_DEADLINE"
+    assert summary.signals == ("SIGTERM", "SIGINT")
+    assert summary.runner_exception_cause is None
+
+
+def test_signal_before_cause_is_not_authoritative(tmp_path):
+    path = tmp_path / "j.jsonl"
+    runner = _open(path)
+    runner.observe_signal("SIGINT")
+    runner.append("OBJECTIVE_CAUSE_LATCHED", cause="SESSION_DEADLINE")
+    runner.close()
+    summary = jr.summarize_journal(jr.read_journal(path))
+    assert summary.integrity == "OK" and summary.signals == ("SIGINT",)
+    assert summary.objective_cause is None
+
+
+def test_watchdog_escalated_alone_establishes_nothing(tmp_path):
+    path = tmp_path / "j.jsonl"
+    runner = _open(path)
+    runner.append("WATCHDOG_ESCALATED", cause="WATCHDOG")
+    runner.close()
+    assert jr.summarize_journal(jr.read_journal(path)).objective_cause is None
+
+
+def test_corrupt_journal_discards_an_earlier_parsed_objective_cause(tmp_path):
+    path = tmp_path / "j.jsonl"
+    runner = _open(path)
+    runner.append("OBJECTIVE_CAUSE_LATCHED", cause="SESSION_DEADLINE")
+    runner.close()
+    with open(path, "ab") as handle:
+        handle.write(b"not a journal line\n")
+    result = jr.read_journal(path)
+    assert result.integrity == "CORRUPT"
+    assert any(event.event == "OBJECTIVE_CAUSE_LATCHED" for event in result.events)
+    assert jr.summarize_journal(result).objective_cause is None
+
+
+def test_trailing_fragment_keeps_a_prior_objective_cause_authoritative(tmp_path):
+    path = tmp_path / "j.jsonl"
+    runner = _open(path)
+    runner.append("OBJECTIVE_CAUSE_LATCHED", cause="WATCHDOG")
+    runner.close()
+    with open(path, "ab") as handle:
+        handle.write(b'{"schema_version":1,"seq":3')
+    result = jr.read_journal(path)
+    assert result.integrity == "TRAILING_FRAGMENT"
+    assert jr.summarize_journal(result).objective_cause == "WATCHDOG"
+
+
+def test_finalizer_cannot_write_objective_cause_or_escalation(tmp_path):
+    path = tmp_path / "j.jsonl"
+    finalizer = _open(path, writer="FINALIZER")
+    assert finalizer.append("OBJECTIVE_CAUSE_LATCHED", cause="SESSION_DEADLINE") is None
+    finalizer.close()
+    other = _open(tmp_path / "k.jsonl", writer="FINALIZER")
+    assert other.append("WATCHDOG_ESCALATED", cause="WATCHDOG") is None
+    other.close()
+    for name in ("j.jsonl", "k.jsonl"):
+        assert b"OBJECTIVE_CAUSE_LATCHED" not in (tmp_path / name).read_bytes()
+        assert b"WATCHDOG_ESCALATED" not in (tmp_path / name).read_bytes()
+
+
+def test_cause_field_is_the_canonical_termination_cause_and_no_second_literal_exists():
+    from sentinel.phase5.evidence_records import TerminationCause
+
+    def _literal_members(annotation) -> set:
+        members = set()
+        for arg in typing.get_args(annotation):
+            if arg is type(None):
+                continue
+            members.update(typing.get_args(arg))
+        return members
+
+    cause_literals = [a for a in typing.get_args(jr.JournalEvent.model_fields["cause"].annotation) if a is not type(None)]
+    assert len(cause_literals) == 1 and cause_literals[0] == TerminationCause
+    assert _literal_members(jr.JournalEvent.model_fields["cause"].annotation) == set(typing.get_args(TerminationCause))
+    assert jr.STAGE2C_CAUSES | jr.STAGE2B_CAUSES == set(typing.get_args(TerminationCause))
+    assert _literal_members(jr.JournalEvent.model_fields["invocation_outcome"].annotation) == {
+        "RETURNED", "RAISED", "TIMED_OUT",
+    }
 
 
 def test_canary_quality_and_secret_content_can_never_reach_journal_bytes(tmp_path):

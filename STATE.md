@@ -390,8 +390,14 @@ journal, atomic terminal-evidence writer, execution/publication state
 model, finalizer decision table and strict terminal-writer provenance)
 and repair Stage 2B-2 (that library wired into the official-gate runner,
 a new finalizer/publication-confirmation entrypoint and the workflow;
-still unarmed) are landed, the execution-envelope (Stage 2C),
-rehearsal and readiness stages remain pending, the durable one-way
+still unarmed) and repair Stage 2C-1 (the execution-envelope
+foundation: frozen envelope formulas, feasibility and identity,
+job-start anchor and monotonic session clock, session latch and
+terminal arbiter with injected commit points, canonical-cause widening
+of the journal and terminal library, and the attempt-scoped jobs
+client; a pure library, wired into nothing, still unarmed) are landed,
+the remaining execution-envelope stages (2C-2 controls, 2C-3 wiring,
+2C-B binding), rehearsal and readiness stages remain pending, the durable one-way
 single-attempt consumption latch remains a hard pre-arming gate, and
 the replacement is not ready or authorized for dispatch. Windows scheduler cutover, prospective
 five-slot live window, evidence finalization and release remain
@@ -3952,3 +3958,127 @@ merges every change."
   deadlines, watchdog and cancellation) and the durable single-attempt
   consumption latch, each as its own bounded child dispatch; not begun
   here.
+- 2026-09-16 - ADR-0012 REPAIR STAGE 2C-1 LANDED: EXECUTION-ENVELOPE
+  FOUNDATION (dispatch q77-p5d-repair-stage2c1-implement-a).
+  Stage 2C-1 of the ADR-0012 Amendment A repair is implemented, per the
+  approved plan q77-p5d-repair-stage2c-plan-a Revision 4. It is a pure,
+  parameterized library: nothing in `scripts/`, `agents/` or any
+  workflow imports it, no thread starts, no signal is sent, no process
+  is inspected or killed, no provider or SDK is touched, and it arms
+  nothing.
+  Landed: new `sentinel/phase5/execution_envelope.py` -- the frozen
+  numerical contract as Literal constants (92 invocations, 1.5 margin,
+  600 s fixed overhead, 480 s finalization reserve, 600 s stall floor,
+  10x stall multiplier, 360-minute platform ceiling, 148000 ms observed
+  ceiling); exact integer formula helpers (`outer_seconds =
+  ceil(138 * max_observed_ms / 1000) + 1080`, workflow timeout as the
+  ceiling in whole minutes, `session_duration_s = outer - 480`,
+  `stall_budget_ms = max(600000, 10 * max_observed_ms)`,
+  `invocation_budget_ms = min(remaining, stall)`); an envelope is
+  unconstructible when `max_observed_ms > 148000` or the workflow
+  timeout exceeds 360 minutes, and the superseded `max(180 s, 3x)`
+  per-invocation formula is not implemented; `TimingRehearsalProvenance`
+  with the explicit rehearsal workflow identity, run id, run attempt,
+  `rehearsal_source_sha` (never a generic source SHA), preregistration
+  and corpus SHA-256, exactly 24 observations, model `claude-sonnet-5`
+  and SDK pin `claude-agent-sdk==0.2.110`; `envelope_id` as the SHA-256
+  of the canonical envelope bytes with a bridge to the unchanged
+  `EnvelopeIdentity`; a strict `load_committed_envelope` that refuses
+  absent, malformed, non-canonical or infeasible content; the pure
+  `resolve_job_start_anchor` over the attempt-scoped jobs listing (the
+  attempt is request identity, the REST display name is explicit and
+  never inferred from `GITHUB_JOB`, exactly one match, fail-closed on
+  run id, status, runner name and `started_at`); and `SessionClock`,
+  whose deadline is the job start plus the session duration, converted
+  once to a monotonic instant so setup time already consumed is
+  subtracted and later wall-clock changes have no effect. New
+  `sentinel/phase5/execution_control.py` -- `ExecutionSafetyDomain`
+  owning the one `threading.RLock`; the session-local `SessionLatch`
+  (first Stage-2C cause wins atomically; a later cause never replaces
+  the cause or trip time; no text-capable field); the `TerminalArbiter`
+  with the closed commit-state vocabulary and injected `commit_quality`
+  / `commit_invalid` commit points (quality refused once a cause is
+  latched or the clock is expired at the commit point, which itself
+  establishes `SESSION_DEADLINE` under the lock; a failed replace is
+  `*_FAILED`, never committed; an invalid commit requires the latched
+  cause or a Stage-2B cause with the latch clear; a later cause never
+  mutates a committed class); `ExecutionControlConfig` with no defaults
+  and no committed instance; and a minimal `InvocationRegistry`.
+  `sentinel/phase5/journal.py` and `sentinel/phase5/terminal.py` now use
+  the canonical five-value `TerminationCause` (`InfrastructureCause` is
+  kept as that alias); the journal gains `OBJECTIVE_CAUSE_LATCHED`
+  (RUNNER only, Stage-2C causes only), `WATCHDOG_ESCALATED` (RUNNER
+  only, never establishes a cause) and the `TIMED_OUT` invocation
+  outcome, while `RUNNER_EXCEPTION` keeps its two Stage-2B causes;
+  `summarize_journal` establishes `objective_cause` only under OK or
+  TRAILING_FRAGMENT integrity with the latch event before every observed
+  signal (CORRUPT discards it; a raw signal never substitutes); the
+  finalizer table gains one row -- an ABSENT candidate with a
+  trusted-integrity objective cause writes INFRASTRUCTURE_FAILURE with
+  that cause and only descriptive later signals -- and trusted candidate
+  kinds remain the highest authority; `build_invalid_record` accepts all
+  five causes for RUNNER or FINALIZER. `sentinel/phase5/github_evidence.py`
+  gains `JobDetail` and `list_run_attempt_jobs(run_id, attempt)` on the
+  attempt-scoped endpoint, fail-closed, with no body `run_attempt`
+  required. `write_terminal_atomically` is byte-unchanged: the optional
+  commit-point seam is deliberately deferred to Stage 2C-3 (owner
+  decision in this dispatch), so in 2C-1 the arbiter is exercised only
+  through fake replace callbacks.
+  Model-free verification only; test counts, coverage and exact-SHA CI
+  are reported in the close report, not self-cited here. Registry
+  byte-unchanged: `artifacts/phase5_receipt_registry.jsonl` still exactly
+  four lines, head SHA-256
+  `9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39`.
+  The official gate `PURPOSE` constant is unchanged
+  (`P5D_OFFICIAL_SONNET_GATE`), `ENVELOPE` is None, the official
+  workflow timeout is still 30 minutes, no execution-envelope artifact
+  and no control-config instance is committed.
+  Executing model: Fable 5.1 (the routing named Fable 5.1; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 12 declared paths):
+  `sentinel/phase5/execution_envelope.py` (new),
+  `sentinel/phase5/execution_control.py` (new),
+  `sentinel/phase5/journal.py`, `sentinel/phase5/terminal.py`,
+  `sentinel/phase5/github_evidence.py`,
+  `tests/test_phase5_execution_envelope.py` (new),
+  `tests/test_phase5_execution_control.py` (new),
+  `tests/test_phase5_journal.py`, `tests/test_phase5_terminal.py`,
+  `tests/test_phase5_github_evidence.py`, `STATE.md` (program-status
+  wording plus this entry), `.publicgate-allow` (one entry for this
+  entry's status line). No script, workflow, agent, harness, SDK,
+  fixture, prompt, scorer, checker, threshold, evaluation, requirements,
+  `evidence_records.py`, receipt-registry, FINDINGS.md or telemetry
+  change.
+  NON-EVENTS: no Stage 2C-2 (per-invocation guard, monitor, watchdog,
+  process-tree kill, control-config values), 2C-3 (runner/writer
+  wiring, `jobs.gate.name` pin, commit-point seam) or 2C-B (envelope
+  binding) work; no durable one-way single-attempt consumption latch;
+  no readiness; no replacement marker created, reset or consumed; no
+  replacement execution; no official Sonnet quality gate; no rehearsal
+  execution (neither the GitHub kill rehearsal nor the N=24 Sonnet
+  timing rehearsal); no model or provider call; no OIDC/WIF exchange; no
+  GitHub workflow dispatch, rerun or cancel; no live REST request; no
+  federation-rule, provider-cap, secret, variable or environment
+  mutation; no original Sonnet quality content inspected; no frozen
+  quality-surface change; no P5-E freeze, cutover or release.
+  RESIDUALS (recorded, not closed here): whether the attempt-scoped
+  jobs endpoint returns exactly one in-progress job with `started_at`
+  for the gate job is proven only by the later real GitHub kill
+  rehearsal; the control-config values and the resolved runtime
+  identity are 2C-2 matters; the real `max_observed_ms` and every
+  derived production value are 2C-B and remain unknown.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C
+  COMPLETE. **P5-D remains IN PROGRESS / UNRESOLVED**: original official
+  run `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker
+  CONSUMED, ADR-0012 repair Stage 1, Stage 2A, Stage 2B-1, Stage 2B-2
+  and Stage 2C-1 LANDED, Stage 2C-2 PENDING, Stage 2C-3 PENDING,
+  durable single-attempt consumption latch PENDING, model-free GitHub
+  kill rehearsal NOT EXECUTED, Sonnet timing rehearsal NOT EXECUTED,
+  fresh replacement readiness NOT COMPLETE, replacement NOT READY / NOT
+  AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-1 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2C-2 of the ADR-0012 repair (per-invocation guard
+  and cancellation, session monitor, watchdog escalation, process-tree
+  kill, frozen control-config values) as its own bounded child
+  dispatch; not begun here.

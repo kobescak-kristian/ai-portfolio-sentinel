@@ -142,6 +142,23 @@ class ArtifactDetail:
 
 
 @dataclass(frozen=True)
+class JobDetail:
+    """One entry of the attempt-scoped jobs listing (dispatch
+    q77-p5d-repair-stage2c1-implement-a). Carries only the returned
+    fields the job-start anchor resolver needs. The run attempt is NOT a
+    field: it is part of the REQUEST identity of
+    ``GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs``
+    and is never read from a job body."""
+
+    id: int
+    run_id: str
+    name: str
+    status: str
+    started_at: datetime | None
+    runner_name: str | None
+
+
+@dataclass(frozen=True)
 class RunRef:
     run_id: str
     run_attempt: int
@@ -234,6 +251,63 @@ class GithubEvidenceClient:
             raise GithubEvidenceError("run object is missing created_at")
         run_started_at = _parse_utc(data.get("run_started_at"))
         return created_at, run_started_at
+
+    def list_run_attempt_jobs(self, run_id: str, attempt: int) -> list[JobDetail]:
+        """Every job of exactly ``run_id`` / ``attempt`` via the
+        attempt-scoped jobs endpoint (dispatch
+        q77-p5d-repair-stage2c1-implement-a). The attempt is request
+        identity; no response-body ``run_attempt`` is required or read.
+        Fails closed on a non-numeric run id, a non-positive attempt, a
+        non-object response, a missing or non-list ``jobs``, a
+        ``total_count`` that is not an integer equal to the number of
+        entries returned, or any entry of unexpected shape."""
+        if not isinstance(run_id, str) or not run_id.isdigit():
+            raise GithubEvidenceError("run_id must be a non-empty decimal string")
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+            raise GithubEvidenceError("attempt must be a positive integer")
+        data = self._get_json(
+            f"/repos/{self._repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100"
+        )
+        if not isinstance(data, dict):
+            raise GithubEvidenceError("run attempt jobs listing is not a JSON object")
+        jobs = data.get("jobs")
+        total = data.get("total_count")
+        if not isinstance(jobs, list) or not isinstance(total, int) or isinstance(total, bool):
+            raise GithubEvidenceError("run attempt jobs listing is missing jobs or total_count")
+        if total != len(jobs):
+            raise GithubEvidenceError("run attempt jobs listing is incomplete (total_count mismatch)")
+        results: list[JobDetail] = []
+        for job in jobs:
+            try:
+                job_id = job["id"]
+                job_run_id = job["run_id"]
+                if isinstance(job_id, bool) or not isinstance(job_id, int):
+                    raise TypeError("id")
+                if isinstance(job_run_id, bool) or not isinstance(job_run_id, int):
+                    raise TypeError("run_id")
+                name = job["name"]
+                status = job["status"]
+                if not isinstance(name, str) or not isinstance(status, str):
+                    raise TypeError("name/status")
+                started_raw = job.get("started_at")
+                if started_raw is not None and not isinstance(started_raw, str):
+                    raise TypeError("started_at")
+                runner_name = job.get("runner_name")
+                if runner_name is not None and not isinstance(runner_name, str):
+                    raise TypeError("runner_name")
+                results.append(
+                    JobDetail(
+                        id=job_id,
+                        run_id=str(job_run_id),
+                        name=name,
+                        status=status,
+                        started_at=_parse_utc(started_raw),
+                        runner_name=runner_name,
+                    )
+                )
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise GithubEvidenceError("run attempt jobs listing entry has an unexpected shape") from exc
+        return results
 
     def get_main_head_sha(self) -> str:
         data = self._get_json(f"/repos/{self._repository}/git/ref/heads/main")
