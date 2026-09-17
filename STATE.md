@@ -395,9 +395,13 @@ foundation: frozen envelope formulas, feasibility and identity,
 job-start anchor and monotonic session clock, session latch and
 terminal arbiter with injected commit points, canonical-cause widening
 of the journal and terminal library, and the attempt-scoped jobs
-client; a pure library, wired into nothing, still unarmed) are landed,
-the remaining execution-envelope stages (2C-2 controls, 2C-3 wiring,
-2C-B binding), rehearsal and readiness stages remain pending, the durable one-way
+client; a pure library, wired into nothing, still unarmed) and repair
+Stage 2C-2 (the process-control library: per-invocation deadline
+guard, session monitor with fail-closed watchdog escalation, rescanning
+Linux descendant termination, frozen control-config values and runtime
+identity; a library wired into nothing, still unarmed) are landed,
+the remaining execution-envelope stages (2C-3 wiring, 2C-B binding),
+rehearsal and readiness stages remain pending, the durable one-way
 single-attempt consumption latch remains a hard pre-arming gate, and
 the replacement is not ready or authorized for dispatch. Windows scheduler cutover, prospective
 five-slot live window, evidence finalization and release remain
@@ -4082,3 +4086,116 @@ merges every change."
   and cancellation, session monitor, watchdog escalation, process-tree
   kill, frozen control-config values) as its own bounded child
   dispatch; not begun here.
+- 2026-09-17 - ADR-0012 REPAIR STAGE 2C-2 LANDED: PROCESS-CONTROL LIBRARY
+  (dispatch q77-p5d-repair-stage2c2-implement-a).
+  Stage 2C-2 of the ADR-0012 Amendment A repair is implemented, per the
+  approved plan q77-p5d-repair-stage2c2-plan-a Revision 2. It is a
+  library only: nothing in `scripts/` or any workflow imports it, no
+  gate `query_fn` is wrapped, no monitor is started against a real
+  session, no runner is terminated, and it arms nothing.
+  Landed: new `agents/checker/envelope_guard.py` -- `deadline_guarded`
+  wraps the full logical `query_fn` call and stays a coroutine function,
+  so `harness.py` is unchanged. Before every provider start, under the
+  shared safety-domain lock, a latched cause refuses, an expired session
+  trips `SESSION_DEADLINE` and refuses, and otherwise the budget is
+  `min(remaining_session_ms, stall_budget_ms)` and the invocation is
+  registered. The deadline is an AnyIO `move_on_after` scope classified
+  by its own `cancel_called`: this scope's deadline is `TIMED_OUT`
+  (including a callee that swallowed or replaced that cancellation); an
+  ordinary exception, an SDK-originated `TimeoutError`, an external
+  `BaseException` or an outer cancellation is `RAISED`, re-raised
+  unchanged and never becomes a cause; the registry is finished exactly
+  once. The timeout cause is `SESSION_DEADLINE` when
+  `remaining <= stall_budget_ms` at start or the session has expired,
+  otherwise `INVOCATION_STALL_DEADLINE`; the first cause wins and
+  `OBJECTIVE_CAUSE_LATCHED` is journaled only by the winning trip. The
+  descendant tree is then terminated, termination survivors or a
+  termination fault call a fail-closed hook, and the raised exception is
+  classified by the unchanged harness as a non-retryable transport
+  failure, so no timeout can become a budget-ceiling retry. New
+  `agents/checker/process_control.py` (stdlib and `sentinel.phase5`
+  only) -- the frozen `CONTROL_CONFIG` (`monitor_tick_ms` 1000,
+  `heartbeat_interval_ms` 30000, `descendant_term_grace_ms` 2000,
+  `descendant_kill_wait_ms` 2000, `watchdog_grace_ms` 30000) with its
+  pinned `control_config_id`, outside `envelope_id`; Linux `/proc`
+  descendant termination that signals only descendants of the root
+  (never the process itself, its parent or ancestors, never a process
+  group), checks `(pid, starttime)` before every signal, rescans during
+  the bounded TERM phase, immediately before SIGKILL, during the bounded
+  KILL phase and in a final pass, and reports survivors as counts only;
+  and `SessionMonitor`, which journals content-free `HEARTBEAT` events,
+  trips `SESSION_DEADLINE` once, trips `WATCHDOG` on an invocation
+  overrun with no cause latched, escalates once any latched cause has
+  outlived the grace without `stop()` whether or not an invocation is in
+  flight and whatever the terminal arbiter state, and fails closed on
+  any internal fault (establishing `WATCHDOG` only when no cause is
+  latched, preserving any earlier cause, escalating exactly once, never
+  journaling exception text). Runner termination and `os._exit` remain
+  Stage 2C-3. New `sentinel/phase5/runtime_identity.py` -- a
+  timestamp-free `RuntimeIdentity` with `runtime_identity_id`: platform,
+  five allowlisted runner-image variables only, the normalized installed
+  distribution set, and the pinned SDK installation's version, wheel
+  tags, RECORD digest, subprocess-transport module and bundled CLI, each
+  required to match its OWN installation's RECORD digest, plus a
+  structural proof from that runtime's installed transport source that
+  the bundled CLI is selected first with no environment override. No
+  cross-platform hash is an oracle; the Linux identity is bound later at
+  readiness. No provider-resolved model identifier is captured.
+  Model-free verification only; test counts, coverage and exact-SHA CI
+  are reported in the close report, not self-cited here. Registry
+  byte-unchanged: `artifacts/phase5_receipt_registry.jsonl` still exactly
+  four lines, head SHA-256
+  `9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39`.
+  The official gate `PURPOSE` constant is unchanged
+  (`P5D_OFFICIAL_SONNET_GATE`), `ENVELOPE` is None, the official
+  workflow timeout is still 30 minutes, and no execution-envelope
+  artifact is committed.
+  Executing model: Opus 5 (the routing named Opus 5; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 8 declared paths):
+  `agents/checker/process_control.py` (new),
+  `agents/checker/envelope_guard.py` (new),
+  `sentinel/phase5/runtime_identity.py` (new),
+  `tests/test_checker_process_control.py` (new),
+  `tests/test_checker_envelope_guard.py` (new),
+  `tests/test_phase5_runtime_identity.py` (new), `STATE.md`
+  (program-status wording plus this entry), `.publicgate-allow` (one
+  entry for this entry's status line). No harness, OIDC, script,
+  workflow, journal, terminal, envelope, execution-control, fixture,
+  prompt, scorer, checker, threshold, evaluation, requirements,
+  receipt-registry, FINDINGS.md or telemetry change.
+  NON-EVENTS: no Stage 2C-3 (runner/workflow wiring, commit-point seam,
+  runner termination) or 2C-B (envelope binding) work; no durable one-way
+  single-attempt consumption latch; no readiness; no replacement marker
+  created, reset or consumed; no replacement execution; no official
+  Sonnet quality gate; no rehearsal execution (neither the GitHub kill
+  rehearsal nor the N=24 Sonnet timing rehearsal); no model or provider
+  call; no OIDC/WIF exchange; no GitHub workflow dispatch, rerun or
+  cancel; no federation-rule, provider-cap, secret, variable or
+  environment mutation; no original Sonnet quality content inspected;
+  no frozen quality-surface change; no P5-E freeze, cutover or release.
+  RESIDUALS (recorded, not closed here): a process that daemonizes or is
+  reparented outside the runner's descendant tree before discovery
+  cannot be caught by descendant walking, so the real GitHub kill
+  rehearsal must exercise the actual CLI process topology; whether a
+  child subreaper is needed is a Stage 2C-3 decision; post-latch runner
+  completion inside the watchdog grace, before/after CLI hash equality
+  around a real CLI run and the Linux `runtime_identity_id` are
+  kill-rehearsal and readiness matters; each post-latch refusal is still
+  charged as a failed ledger row at its full reservation until Stage
+  2C-3 aborts the session early.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C
+  COMPLETE. **P5-D remains IN PROGRESS / UNRESOLVED**: original official
+  run `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker
+  CONSUMED, ADR-0012 repair Stage 1, Stage 2A, Stage 2B-1, Stage 2B-2,
+  Stage 2C-1 and Stage 2C-2 LANDED, Stage 2C-3 PENDING, Stage 2C-B
+  PENDING, durable single-attempt consumption latch PENDING, model-free
+  GitHub kill rehearsal NOT EXECUTED, Sonnet timing rehearsal NOT
+  EXECUTED, fresh replacement readiness NOT COMPLETE, replacement NOT
+  READY / NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-2 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2C-3 of the ADR-0012 repair (runner and workflow
+  wiring of the guard, monitor and termination, the commit-point seam
+  and runner termination) as its own bounded child dispatch; not begun
+  here.
