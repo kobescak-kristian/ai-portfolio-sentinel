@@ -314,3 +314,12 @@
 - Findings: 0 new · 4 still open · 0 resolved
 
 <!-- /sentinel:run r-d59119e3f5914ab28979f64d1f2d29d3 -->
+<!-- sentinel:run r-0d8841c066354ac9b6509f9e2c32abd1 -->
+## Run r-0d8841c066354ac9b6509f9e2c32abd1 — 2026-09-17T13:48:31+00:00
+
+- Run kind: **live** — REAL DATA — the operator's own public repositories
+- Ledger status: COMPLETED
+- Tasks: 224 created / 224 terminal (done 224 · failed 0 · dead-letter 0)
+- Findings: 0 new · 4 still open · 0 resolved
+
+<!-- /sentinel:run r-0d8841c066354ac9b6509f9e2c32abd1 -->
