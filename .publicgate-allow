@@ -63,6 +63,7 @@ STATE.md |   Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2B-1 lande
 STATE.md |   Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2B-2 landed. | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
 STATE.md |   Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-1 landed. | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
 STATE.md |   Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-2 landed. | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
+STATE.md |   Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-3 landed. | owner ruling 2026-08-20; Q-77 sanctioned public provenance in ai-portfolio-sentinel only
 
 # adjudicated-secrets
 tests/test_auth_wif.py |     canary_value = "sk-ant-oat01-super-secret-canary-value" | tests/test_auth_wif.py:186 | def test_credential_and_token_values_never_appear_in_any_error_message(token_file): | owner ruling 2026-08-24

@@ -4199,3 +4199,150 @@ merges every change."
   wiring of the guard, monitor and termination, the commit-point seam
   and runner termination) as its own bounded child dispatch; not begun
   here.
+- 2026-09-19 - ADR-0012 REPAIR STAGE 2C-3 LANDED: RUNNER AND WORKFLOW
+  WIRING (dispatch q77-p5d-repair-stage2c3-implement-b, superseding the
+  stopped, uncommitted pre-commit attempt q77-p5d-repair-stage2c3-implement-a).
+  approved plan: q77-p5d-repair-stage2c3-plan-a -- Revision 2. That plan
+  document is not stored in this repository, matching the established
+  Stage 2C-1/2C-2 pattern; this record and dispatches
+  q77-p5d-repair-stage2c3-implement-a/-b are the authoritative in-repo
+  provenance. implementation dispatch: q77-p5d-repair-stage2c3-implement-b.
+  Landed: `scripts/run_phase5_official_gate.py` now resolves the real
+  GitHub job-start anchor and loads the (still never-committed) execution
+  envelope from `artifacts/phase5_execution_envelope.json` immediately
+  after `assert_expected_source_live` and before the FX-state load,
+  `assert_purpose_armable` and OIDC; only after both succeed does it
+  construct one session-scoped `ExecutionSafetyDomain`, `SessionLatch`,
+  `InvocationRegistry`, `SessionClock`, `TerminalArbiter` and
+  `SessionMonitor` (frozen `agents.checker.process_control.CONTROL_CONFIG`,
+  `terminate_descendants` as the terminator, the new
+  `_make_runner_terminator(domain, exiter=os._exit)` as the monitor's
+  escalate callback) and starts the monitor. Both designated gate runs
+  share these same objects: each run's `query_fn` is wrapped
+  `deadline_guarded(health_gated(query_fn, session), ...)`, and each run's
+  `Deps.hooks.before_task_execute` raises the new local `SessionAborted`
+  once a Stage-2C cause has latched, so no further task reservation
+  happens inside that run; `_run_gate_session` also checks `latch.is_set`
+  immediately after each of the two `execute_run` calls and raises
+  `SessionAborted` before the next run (or scoring) begins. The terminal
+  commit-point seam is wired for real: quality publication goes through
+  `arbiter.commit_quality`, an ordinary post-control failure (including a
+  run-boundary `SessionAborted`) goes through `arbiter.commit_invalid` via
+  a new shared `_handle_execute_failure`/`_commit_invalid_via_arbiter`
+  helper pair, and a `QualityRefused` raised before the replace ran builds
+  one new, distinct `INFRASTRUCTURE_FAILURE` record for the refused/
+  latched cause -- never a retry of the refused quality record, never a
+  second invalid attempt after `InvalidRefused`, never a fabricated cause
+  when `QualityRefused.cause` is impossibly `None`. A terminal write that
+  actually fails inside the `commit_quality`/`commit_invalid` replace
+  callback (`QUALITY_FAILED`/`INVALID_FAILED`) is distinguished from a
+  refusal: it fails closed to `NO_RUNNER_TERMINAL_EVIDENCE` with no
+  invalid fallback and no retry, leaving the separate finalizer as
+  backstop. `write_terminal_atomically`'s real return digest is captured
+  inside each replace closure and journaled, never `None`. When
+  `TerminalArbiter.commit_quality` itself discovers the session expired
+  (`deadline_established_by_commit_point`), exactly one
+  `OBJECTIVE_CAUSE_LATCHED cause=SESSION_DEADLINE` is journaled before the
+  invalid fallback; when the cause was already latched (and already
+  journaled) by `deadline_guarded` or `SessionMonitor`, it is never
+  journaled again -- and the frozen `journal.py` schema (`RUNNER_EXCEPTION`
+  restricted to the two Stage-2B causes, `OBJECTIVE_CAUSE_LATCHED`
+  restricted to the three Stage-2C causes) is why a Stage-2C cause is
+  never re-expressed through `RUNNER_EXCEPTION`. The `SessionMonitor`
+  stays alive through the whole post-control failure-handling path
+  (including the `commit_invalid` attempt) and is stopped only afterward,
+  before the existing OIDC/session teardown. `.github/workflows/sentinel-official-gate.yml`
+  gained exactly one line, `name: gate`, under `jobs.gate`;
+  `timeout-minutes` stays 30 and nothing else in the workflow changed.
+  Test-suite boundary correction: `q77-p5d-repair-stage2c3-implement-a`
+  stopped pre-commit (no commit, no push) when the Stage-2C-2 test
+  `tests/test_checker_process_control.py::test_nothing_outside_tests_imports_the_new_modules`
+  correctly detected this stage's intentional wiring of `process_control`
+  and `envelope_guard` into the runner -- that test's absolute "nothing
+  under scripts/.github may reference these modules" invariant was itself
+  a temporary pre-Stage-2C-3 boundary. No failure was waived; the stop was
+  reported and an owner ruling was sought before any further change.
+  Under `q77-p5d-repair-stage2c3-implement-b` the owner authorized one
+  narrow scope expansion, `tests/test_checker_process_control.py` itself,
+  to narrow (never delete) that boundary: only
+  `scripts/run_phase5_official_gate.py` may now reference
+  `process_control`/`envelope_guard`; every other script/workflow file
+  still may not; `runtime_identity` remains forbidden everywhere under
+  `scripts/`/`.github`, including that one runner, since runtime-identity
+  readiness binding is still deferred. No Stage-2C-2 source module
+  changed. Also retired in `tests/test_phase5_gate_runner.py`:
+  `test_journal_wires_no_stage2c_events_or_liveness`, the sibling
+  anti-premature-wiring guard in this stage's own test home, whose
+  invariant expires at exactly this landing; replaced by the positive
+  Stage-2C-3 coverage below.
+  Model-free verification only; test counts, coverage and exact-SHA CI
+  are reported in the close report, not self-cited here. Registry
+  byte-unchanged: `artifacts/phase5_receipt_registry.jsonl` still exactly
+  four lines. The official gate `PURPOSE` constant is unchanged
+  (`P5D_OFFICIAL_SONNET_GATE`), `ENVELOPE` is still `None`, the official
+  workflow timeout is still 30 minutes, and no execution-envelope artifact
+  is committed by this dispatch.
+  Because `ENVELOPE_PATH` (`artifacts/phase5_execution_envelope.json`) is
+  never committed in this stage, `load_committed_envelope` always raises,
+  and every direct/injected invocation of the execute path proves the
+  PRE_PROVIDER_FAILURE path fails closed -- this is proven only by tests,
+  not by a real trigger: the normal live workflow trigger does not reach
+  this execute path at all today, because the existing consumed-marker
+  preflight (`assert_oneshot_not_consumed_durably` against the
+  already-durably-consumed original `P5D_OFFICIAL_SONNET_GATE` marker)
+  already refuses in `cmd_preflight`, before the marker is ever uploaded,
+  and GitHub Actions skips the unguarded `execute` step once `preflight`
+  fails. Today's live workflow outcome is therefore unchanged by this
+  stage.
+  Executing model: Opus 5 (the routing named Opus 5; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 7 declared paths):
+  `scripts/run_phase5_official_gate.py`,
+  `.github/workflows/sentinel-official-gate.yml`,
+  `tests/test_phase5_gate_runner.py`,
+  `tests/test_phase5_workflow_contracts.py`,
+  `tests/test_checker_process_control.py` (the one owner-authorized
+  seventh-path narrowing), `STATE.md` (this entry),
+  `.publicgate-allow` (one entry for this entry's status line). No
+  harness, OIDC, pipeline, journal, terminal, envelope, execution-control,
+  process-control implementation, envelope-guard implementation,
+  runtime-identity, fixture, prompt, scorer, checker, threshold,
+  evaluation, requirements, receipt-registry, FINDINGS.md or telemetry
+  change.
+  NON-EVENTS: no Stage 2C-B (envelope binding/artifact commit) work; no
+  durable one-way single-attempt consumption latch; no readiness; no
+  replacement marker created, reset or consumed; no replacement execution;
+  no official Sonnet quality gate execution; no rehearsal execution
+  (neither the GitHub kill rehearsal nor the N=24 Sonnet timing
+  rehearsal); no model or provider call; no OIDC/WIF exchange; no GitHub
+  workflow dispatch, rerun or cancel; no federation-rule, provider-cap,
+  secret, variable or environment mutation; no original Sonnet quality
+  content inspected; no frozen quality-surface change; no P5-E freeze,
+  cutover or release; no execution-envelope artifact committed and
+  `ENVELOPE` stays `None`; no runtime-identity readiness binding; no
+  Stage-2C-2 source module changed.
+  RESIDUALS (recorded, not closed here): the post-control code paths
+  (control construction, the commit-point seam, runner termination) are
+  exercised only via dependency injection in tests, never against a real
+  committed envelope or a real GitHub job-start anchor, until Stage 2C-B;
+  the real anchor-resolution REST call is now live in the runner's source
+  but its result is currently always discarded by the subsequent
+  envelope-load failure, so the attempt-scoped jobs endpoint's real
+  behavior is still proven only by the eventual GitHub kill rehearsal;
+  whether a child subreaper is needed remains a kill-rehearsal/readiness
+  matter.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  ADR-0012 repair Stage 1, Stage 2A, Stage 2B-1, Stage 2B-2, Stage 2C-1,
+  Stage 2C-2 and Stage 2C-3 LANDED, Stage 2C-B PENDING, durable
+  single-attempt consumption latch PENDING, model-free GitHub kill
+  rehearsal NOT EXECUTED, Sonnet timing rehearsal NOT EXECUTED, fresh
+  replacement readiness NOT COMPLETE, replacement NOT READY / NOT
+  AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-3 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2C-B of the ADR-0012 repair (execution-envelope
+  binding: the N=24 Sonnet timing rehearsal, the GitHub kill rehearsal,
+  and committing artifacts/phase5_execution_envelope.json) as its own
+  bounded child dispatch; not begun here.

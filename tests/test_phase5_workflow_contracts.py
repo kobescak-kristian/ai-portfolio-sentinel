@@ -410,6 +410,14 @@ def test_official_gate_runs_on_ubuntu_latest():
     assert next(iter(data["jobs"].values()))["runs-on"] == "ubuntu-latest"
 
 
+def test_official_gate_job_has_explicit_name_gate():
+    """Stage 2C-3 (dispatch q77-p5d-repair-stage2c3-implement-a):
+    EXPECTED_API_JOB_NAME in scripts/run_phase5_official_gate.py must
+    match the workflow's own REST display name for the anchoring job."""
+    data = _load("sentinel-official-gate.yml")
+    assert data["jobs"]["gate"]["name"] == "gate"
+
+
 def test_official_gate_no_step_echoes_terminal_or_journal_content():
     for step in _gate_steps():
         run = step.get("run", "")

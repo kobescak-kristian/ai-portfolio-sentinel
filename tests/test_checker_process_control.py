@@ -867,9 +867,22 @@ def test_new_modules_have_no_operator_output_exit_or_group_kill():
 
 
 def test_nothing_outside_tests_imports_the_new_modules():
-    tokens = ("process_control", "envelope_guard", "runtime_identity")
+    """Stage 2C-2's original invariant was absolute: no script or
+    workflow anywhere referenced process_control/envelope_guard/
+    runtime_identity. Stage 2C-3 (dispatch
+    q77-p5d-repair-stage2c3-implement-b, owner-authorized narrowing) is
+    specifically authorized to wire process_control and envelope_guard
+    into exactly one runner path, scripts/run_phase5_official_gate.py;
+    every other script/workflow file, and runtime_identity everywhere
+    (including that one runner), remain forbidden -- runtime-identity
+    readiness binding is still deferred past this stage."""
+    all_tokens = ("process_control", "envelope_guard", "runtime_identity")
+    allowed_runner = REPO_ROOT / "scripts" / "run_phase5_official_gate.py"
     for root in ("scripts", ".github"):
         for path in (REPO_ROOT / root).rglob("*"):
             if path.is_file() and path.suffix in (".py", ".yml", ".yaml"):
                 text = path.read_text(encoding="utf-8")
-                assert not any(token in text for token in tokens), path
+                permitted = {"process_control", "envelope_guard"} if path == allowed_runner else set()
+                for token in all_tokens:
+                    if token not in permitted:
+                        assert token not in text, (path, token)

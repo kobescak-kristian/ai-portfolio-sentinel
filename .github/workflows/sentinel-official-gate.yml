@@ -26,6 +26,7 @@ concurrency:
 
 jobs:
   gate:
+    name: gate
     if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
     runs-on: ubuntu-latest
     timeout-minutes: 30

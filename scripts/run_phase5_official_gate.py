@@ -27,6 +27,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -71,6 +72,19 @@ from sentinel.phase5.github_context import derive_github_context  # noqa: E402
 from sentinel.phase5.models import OneShotMarker  # noqa: E402
 from sentinel.phase5.oneshot import is_eligible_marker_creation  # noqa: E402
 from sentinel.phase5.evidence_records import GateEvidenceRecord  # noqa: E402
+from sentinel.phase5.execution_control import (  # noqa: E402
+    ExecutionSafetyDomain,
+    InvalidRefused,
+    InvocationRegistry,
+    QualityRefused,
+    SessionLatch,
+    TerminalArbiter,
+)
+from sentinel.phase5.execution_envelope import (  # noqa: E402
+    SessionClock,
+    load_committed_envelope,
+    resolve_job_start_anchor,
+)
 from sentinel.phase5.journal import (  # noqa: E402
     OperationalJournal,
     install_observing_signal_handlers,
@@ -103,6 +117,40 @@ ENVELOPE: "EnvelopeIdentity | None" = None
 # tests/test_phase5_gate_runner.py against SONNET_OFFICIAL_GATE.
 GATE_TOTAL_EUR_MICROS = 5_000_000
 GATE_RESERVE_EUR_MICROS = 1_000_000
+
+# Stage 2C-3 (ADR-0012 repair; dispatch q77-p5d-repair-stage2c3-implement-a).
+# The committed execution envelope this runner would load, once Stage 2C-B
+# commits one. No such artifact is ever written in this stage.
+ENVELOPE_PATH = Path("artifacts/phase5_execution_envelope.json")
+RUNNER_EXIT_LOCK_WAIT_S = 5.0
+EXPECTED_API_JOB_NAME = "gate"
+
+
+class SessionAborted(RuntimeError):
+    """A Stage-2C cause latched. Raised (a) by the before_task_execute
+    hook mid-run, where sentinel.pipeline.execute_run's own blanket
+    exception handling absorbs it and returns a failed RunOutcome, and
+    (b) explicitly by _run_gate_session immediately after each
+    execute_run call returns, where it propagates to _execute_body's
+    existing outer exception handling."""
+
+
+def _make_runner_terminator(domain: ExecutionSafetyDomain, *, exiter=os._exit):
+    """Domain-owning runner-termination closure for SessionMonitor's
+    escalate callback. Attempts the shared lock with a bounded wait,
+    then exits unconditionally whether or not it was acquired -- a
+    hung holder of the lock must never block the runner from exiting.
+    Emits no quality information."""
+
+    def _terminate_runner(cause, arbiter_state) -> None:  # noqa: ARG001 - shape required by SessionMonitor
+        acquired = domain.lock.acquire(timeout=RUNNER_EXIT_LOCK_WAIT_S)
+        try:
+            exiter(1)
+        finally:
+            if acquired:
+                domain.lock.release()
+
+    return _terminate_runner
 
 
 def gate_profile_identity() -> "tuple[str, str]":
@@ -251,15 +299,20 @@ def _failed_check_messages(checks: "list[tuple[bool, str]]") -> "tuple[str, ...]
     return tuple(msg for ok, msg in checks if not ok)
 
 
-def _run_gate_session(*, gate_root: Path, coordinator, session, expected_source_sha: str) -> dict:
+def _run_gate_session(
+    *, gate_root: Path, coordinator, session, expected_source_sha: str,
+    clock: SessionClock, latch: SessionLatch, registry: InvocationRegistry, journal: OperationalJournal,
+    stall_budget_ms: int, config, terminate, on_control_failure,
+) -> dict:
     from agents.checker import auth
     from agents.checker.config import SONNET_OFFICIAL_GATE
+    from agents.checker.envelope_guard import deadline_guarded
     from agents.checker.harness import CagedCheckerStub
     from agents.checker.oidc import health_gated
     from sentinel import costs, ledger
     from sentinel.config import RunConfig
     from sentinel.ids import RandomIdFactory
-    from sentinel.pipeline import Deps, execute_run
+    from sentinel.pipeline import Deps, RunHooks, execute_run
 
     _assert_fresh_evidence_dir(gate_root, "gate-root")
     gate_root.mkdir(parents=True, exist_ok=False)
@@ -275,14 +328,23 @@ def _run_gate_session(*, gate_root: Path, coordinator, session, expected_source_
     ids = RandomIdFactory()
     run1_id, run2_id = ids.new_run_id(), ids.new_run_id()
 
-    def deps_for(run_id: str) -> Deps:
+    def _abort_if_latched(task) -> None:  # noqa: ARG001 - RunHooks.before_task_execute shape
+        if latch.is_set:
+            raise SessionAborted(latch.cause)
+
+    def deps_for(run_id: str, run_ordinal: int) -> Deps:
         conn = ledger.open_ledger(db_path)
         stub = CagedCheckerStub(
             run_id=run_id, conn=conn, coordinator=coordinator,
             model=SONNET_OFFICIAL_GATE.model, auth_profile=auth.WIF,
         )
-        stub.query_fn = health_gated(stub.query_fn, session)
-        return Deps(judgment=stub)
+        stub.query_fn = deadline_guarded(
+            health_gated(stub.query_fn, session),
+            run_ordinal=run_ordinal, clock=clock, latch=latch, registry=registry,
+            journal=journal, stall_budget_ms=stall_budget_ms, config=config,
+            terminate=terminate, on_control_failure=on_control_failure,
+        )
+        return Deps(judgment=stub, hooks=RunHooks(before_task_execute=_abort_if_latched))
 
     from scripts.run_phase3_dev_gate import FIXTURES_ROOT
 
@@ -291,13 +353,18 @@ def _run_gate_session(*, gate_root: Path, coordinator, session, expected_source_
         findings_path=findings_path, log_path=log_path, cost_ledger_path=cost_ledger_path,
         run_id=run1_id, judgment_mode="agent",
     )
-    outcome1 = execute_run(config1, deps_for(run1_id))
+    outcome1 = execute_run(config1, deps_for(run1_id, 1))
+    if latch.is_set:
+        raise SessionAborted(latch.cause)
+
     config2 = RunConfig(
         run_kind="dev", source="fixtures", fixtures_root=FIXTURES_ROOT, db_path=db_path,
         findings_path=findings_path, log_path=log_path, cost_ledger_path=cost_ledger_path,
         run_id=run2_id, judgment_mode="agent",
     )
-    outcome2 = execute_run(config2, deps_for(run2_id))
+    outcome2 = execute_run(config2, deps_for(run2_id, 2))
+    if latch.is_set:
+        raise SessionAborted(latch.cause)
 
     conn = ledger.open_ledger(db_path, create=False)
     try:
@@ -507,17 +574,112 @@ def _write_runner_terminal(
     return True
 
 
+def _infrastructure_invalid_record(identity, cause: str, gate_root: Path) -> GateEvidenceRecord:
+    model, profile_name = gate_profile_identity()
+    return attribute_invalid_record(
+        build_invalid_record(
+            identity=identity, envelope=ENVELOPE, created_at_utc=datetime.now(timezone.utc),
+            model=model, profile_name=profile_name, infrastructure_cause=cause, writer="RUNNER",
+            auth_mode=_recover_partial_auth_mode(gate_root),
+        ),
+        purpose=PURPOSE,
+    )
+
+
+def _commit_invalid_via_arbiter(
+    arbiter: TerminalArbiter, journal: OperationalJournal, tracker: _JournalStateTracker,
+    cause: str, record: GateEvidenceRecord, *, publication_root: Path, staging_root: Path,
+    identity, exception_type: str,
+) -> "tuple[int, str]":
+    digest_box: "list[str]" = []
+
+    def _replace() -> None:
+        digest_box.append(write_terminal_atomically(
+            record, publication_root=publication_root, staging_root=staging_root,
+            prior=PRIOR_ABSENT, identity=identity,
+        ))
+
+    journal.append("TERMINAL_WRITE_STARTED", record_kind="INFRASTRUCTURE_INVALID")
+    try:
+        arbiter.commit_invalid(cause, _replace)
+    except InvalidRefused:
+        journal.append("TERMINAL_WRITE_FAILED", record_kind="INFRASTRUCTURE_INVALID", exception_type="InvalidRefused")
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED"
+    except Exception as exc:  # noqa: BLE001 - the replace callback itself raised (INVALID_FAILED);
+        # never retried, never escapes this helper.
+        journal.append(
+            "TERMINAL_WRITE_FAILED", record_kind="INFRASTRUCTURE_INVALID",
+            exception_type=_bounded_exception_type(exc),
+        )
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED"
+    journal.append("TERMINAL_WRITE_COMPLETED", record_kind="INFRASTRUCTURE_INVALID", sha256=digest_box[0])
+    tracker.transition("INVALID_EVIDENCE_WRITTEN")
+    return 1, f"EXECUTE INFRASTRUCTURE_FAILURE: cause={cause} exception_type={exception_type}"
+
+
+def _handle_execute_failure(
+    failure: Exception, *, journal: OperationalJournal, tracker: _JournalStateTracker,
+    identity, gate_root: Path, provider_boundary_crossed: bool,
+    latch: "SessionLatch | None", arbiter: "TerminalArbiter | None",
+    publication_root: Path, staging_root: Path,
+) -> "tuple[int, str]":
+    """Stage 2C-3 failure handling. Called from _execute_body's own
+    except clause -- still inside the try/finally whose finally stops
+    the SessionMonitor -- so a post-control commit_invalid runs while
+    the monitor is still alive to supervise it."""
+    if journal.signals_observed:
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=SIGNAL_OBSERVED"
+
+    exception_type = _bounded_exception_type(failure)
+    latched_cause = latch.cause if latch is not None and latch.is_set else None
+    if latched_cause is not None:
+        # A Stage-2C cause: already journaled as OBJECTIVE_CAUSE_LATCHED by
+        # whichever component won the latch (deadline_guarded or
+        # SessionMonitor). journal.py freezes RUNNER_EXCEPTION to Stage-2B
+        # causes only, so it is never journaled again here with this cause.
+        cause = latched_cause
+    else:
+        cause = "RUNNER_EXCEPTION" if provider_boundary_crossed else "PRE_PROVIDER_FAILURE"
+        journal.append("RUNNER_EXCEPTION", cause=cause, exception_type=exception_type)
+
+    if identity is None:
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=RUNNER_INTERNAL_ERROR"
+    record = _infrastructure_invalid_record(identity, cause, gate_root)
+    if journal.signals_observed:
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=SIGNAL_OBSERVED"
+
+    if arbiter is not None:
+        # POST-CONTROL (contract B): route through the arbiter.
+        return _commit_invalid_via_arbiter(
+            arbiter, journal, tracker, cause, record,
+            publication_root=publication_root, staging_root=staging_root, identity=identity,
+            exception_type=exception_type,
+        )
+    # PRE-CONTROL (contract B): existing direct path, unchanged.
+    written = _write_runner_terminal(
+        journal, tracker, record, record_kind="INFRASTRUCTURE_INVALID", identity=identity,
+        publication_root=publication_root, staging_root=staging_root,
+        next_state="INVALID_EVIDENCE_WRITTEN",
+    )
+    if not written:
+        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED"
+    return 1, f"EXECUTE INFRASTRUCTURE_FAILURE: cause={cause} exception_type={exception_type}"
+
+
 def _execute_body(args, journal: OperationalJournal, tracker: _JournalStateTracker) -> "tuple[int, str]":
     from agents.checker import oidc
     from agents.checker.budget import RunBudgetCoordinator
     from agents.checker.fx import FxRate
+    from agents.checker.process_control import CONTROL_CONFIG, SessionMonitor, terminate_descendants
 
     env = os.environ
     publication_root, staging_root, _quarantine_root = terminal_layout(args.artifacts_dir)
     session = None
     identity = None
     provider_boundary_crossed = False
-    failure: "Exception | None" = None
+    monitor = None
+    latch = None
+    arbiter = None
     outcome: "tuple[int, str] | None" = None
     try:
         ctx = derive_github_context(env)
@@ -527,6 +689,37 @@ def _execute_body(args, journal: OperationalJournal, tracker: _JournalStateTrack
         assert_marker_visible_for_this_run(client, ctx.run_id, expected_marker_name)
         tracker.transition("REPLACEMENT_MARKED")
         assert_expected_source_live(client, args.expected_source_sha)
+
+        # --- Stage 2C-3: anchor / envelope / control construction. Both
+        # must succeed before any of the six control objects are built;
+        # a failure here is still PRE_PROVIDER_FAILURE (arbiter is None,
+        # falls to the existing outer failure handling). No committed
+        # envelope is ever written in this stage, so this always refuses
+        # today -- see STATE.md for why that does not change today's live
+        # workflow outcome. ---
+        resolved_at_utc = datetime.now(timezone.utc)
+        resolved_at_mono = time.monotonic()
+        jobs = client.list_run_attempt_jobs(ctx.run_id, ctx.run_attempt)
+        anchor = resolve_job_start_anchor(
+            jobs, run_id=ctx.run_id, run_attempt=ctx.run_attempt,
+            expected_workflow_job_id=env.get("GITHUB_JOB", ""),
+            expected_api_job_name=EXPECTED_API_JOB_NAME,
+            expected_runner_name=env.get("RUNNER_NAME", ""),
+            resolved_at_utc=resolved_at_utc, monotonic_at_resolve=resolved_at_mono,
+        )
+        stage2c_envelope = load_committed_envelope(ENVELOPE_PATH)
+
+        domain = ExecutionSafetyDomain()
+        latch = SessionLatch(domain)
+        registry = InvocationRegistry(domain)
+        clock = SessionClock.from_anchor(anchor, stage2c_envelope)
+        arbiter = TerminalArbiter(domain, latch, clock)
+        monitor = SessionMonitor(
+            clock, latch, registry, arbiter, CONTROL_CONFIG, journal,
+            terminate=terminate_descendants, escalate=_make_runner_terminator(domain),
+        )
+        monitor.start()
+        # --- end Stage 2C-3 control construction ---
 
         fx_data = json.loads(args.fx_state_path.read_text(encoding="utf-8"))
         fx_rate = FxRate(
@@ -550,15 +743,51 @@ def _execute_body(args, journal: OperationalJournal, tracker: _JournalStateTrack
         result = _run_gate_session(
             gate_root=args.gate_root, coordinator=coordinator, session=session,
             expected_source_sha=args.expected_source_sha,
+            clock=clock, latch=latch, registry=registry, journal=journal,
+            stall_budget_ms=stage2c_envelope.stall_budget_ms, config=CONTROL_CONFIG,
+            terminate=terminate_descendants, on_control_failure=monitor.request_escalation,
         )
         tracker.transition("SCORED_PROVISIONAL")
         record = _quality_record(identity, result)
-        written = _write_runner_terminal(
-            journal, tracker, record, record_kind="QUALITY", identity=identity,
-            publication_root=publication_root, staging_root=staging_root,
-            next_state="TERMINAL_EVIDENCE_WRITTEN",
-        )
-        if written:
+
+        digest_box: "list[str]" = []
+
+        def _replace_quality() -> None:
+            digest_box.append(write_terminal_atomically(
+                record, publication_root=publication_root, staging_root=staging_root,
+                prior=PRIOR_ABSENT, identity=identity,
+            ))
+
+        journal.append("TERMINAL_WRITE_STARTED", record_kind="QUALITY")
+        try:
+            arbiter.commit_quality(_replace_quality)
+        except QualityRefused as refused:
+            # Case A: refused BEFORE _replace_quality ran -- quality was
+            # never written, so a NEW distinct invalid record may be
+            # attempted once.
+            if arbiter.deadline_established_by_commit_point:
+                journal.append("OBJECTIVE_CAUSE_LATCHED", cause="SESSION_DEADLINE")
+            if refused.cause is None:
+                # Defensive: the docstring calls this impossible in normal
+                # flow. Fail closed; never fabricate a cause.
+                journal.append("TERMINAL_WRITE_FAILED", record_kind="QUALITY", exception_type="QualityRefused")
+                outcome = (3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED")
+            else:
+                fallback_record = _infrastructure_invalid_record(identity, refused.cause, args.gate_root)
+                outcome = _commit_invalid_via_arbiter(
+                    arbiter, journal, tracker, refused.cause, fallback_record,
+                    publication_root=publication_root, staging_root=staging_root, identity=identity,
+                    exception_type=_bounded_exception_type(refused),
+                )
+        except Exception as exc:  # noqa: BLE001 - _replace_quality (write_terminal_atomically) itself
+            # raised: arbiter is now QUALITY_FAILED. Case B: the publication
+            # itself failed/is ambiguous -- no invalid fallback is
+            # attempted; the separate finalizer is the backstop.
+            journal.append("TERMINAL_WRITE_FAILED", record_kind="QUALITY", exception_type=_bounded_exception_type(exc))
+            outcome = (3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED")
+        else:
+            journal.append("TERMINAL_WRITE_COMPLETED", record_kind="QUALITY", sha256=digest_box[0])
+            tracker.transition("TERMINAL_EVIDENCE_WRITTEN")
             try:
                 write_ancillary_atomically(
                     CHECKS_FILENAME, json.dumps(result["check_lines"], indent=2).encode("utf-8"),
@@ -567,50 +796,25 @@ def _execute_body(args, journal: OperationalJournal, tracker: _JournalStateTrack
             except Exception:  # noqa: BLE001 - ancillary incompleteness never downgrades quality
                 pass
             outcome = (0, EXECUTE_QUALITY_LINE)
-        else:
-            outcome = (3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED")
     except Exception as exc:  # noqa: BLE001 - ordinary exceptions only; cancellation propagates
-        failure = exc
+        # Failure handling (including any post-control arbiter.commit_invalid)
+        # happens HERE, still inside this try/finally, so the monitor is
+        # still running while it happens -- finally below stops it only
+        # afterward.
+        outcome = _handle_execute_failure(
+            exc, journal=journal, tracker=tracker, identity=identity, gate_root=args.gate_root,
+            provider_boundary_crossed=provider_boundary_crossed, latch=latch, arbiter=arbiter,
+            publication_root=publication_root, staging_root=staging_root,
+        )
     finally:
+        if monitor is not None:
+            monitor.stop()
         if session is not None:
             session.shutdown(env)
         else:
             oidc.scrub_identity_token_file(env)
 
-    if failure is None:
-        return outcome
-
-    # A signal observed alongside an exception is never an objective cause.
-    if journal.signals_observed:
-        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=SIGNAL_OBSERVED"
-    cause = "RUNNER_EXCEPTION" if provider_boundary_crossed else "PRE_PROVIDER_FAILURE"
-    exception_type = _bounded_exception_type(failure)
-    journal.append("RUNNER_EXCEPTION", cause=cause, exception_type=exception_type)
-    if identity is None:
-        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=RUNNER_INTERNAL_ERROR"
-    # Best-effort: preserve whatever auth provenance was actually
-    # persisted before this failure, if any model call was ever reached
-    # (dispatch q77-p5d-s1-evidence-repair-a).
-    recovered_auth_mode = _recover_partial_auth_mode(args.gate_root)
-    model, profile_name = gate_profile_identity()
-    record = attribute_invalid_record(
-        build_invalid_record(
-            identity=identity, envelope=ENVELOPE, created_at_utc=datetime.now(timezone.utc),
-            model=model, profile_name=profile_name, infrastructure_cause=cause, writer="RUNNER",
-            auth_mode=recovered_auth_mode,
-        ),
-        purpose=PURPOSE,
-    )
-    if journal.signals_observed:
-        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=SIGNAL_OBSERVED"
-    written = _write_runner_terminal(
-        journal, tracker, record, record_kind="INFRASTRUCTURE_INVALID", identity=identity,
-        publication_root=publication_root, staging_root=staging_root,
-        next_state="INVALID_EVIDENCE_WRITTEN",
-    )
-    if not written:
-        return 3, "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED"
-    return 1, f"EXECUTE INFRASTRUCTURE_FAILURE: cause={cause} exception_type={exception_type}"
+    return outcome
 
 
 def _execute_quietly(args) -> "tuple[int, str]":

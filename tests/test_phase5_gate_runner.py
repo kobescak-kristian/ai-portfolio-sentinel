@@ -10,8 +10,9 @@ import importlib.util
 import io
 import json
 import sys
+import types
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -203,7 +204,7 @@ def test_uses_one_shared_coordinator_not_two_independent_ones():
     # and execute's real one) but the real gate session itself
     # (_run_gate_session) receives the coordinator as a parameter and
     # constructs none of its own.
-    assert "def _run_gate_session(*, gate_root: Path, coordinator, session" in text
+    assert "*, gate_root: Path, coordinator, session, expected_source_sha: str," in text
     assert "coordinator=coordinator" in text
 
 
@@ -437,10 +438,12 @@ def test_gate_runner_derives_auth_mode_from_persisted_calls_not_hardcoded():
     assert f'auth_mode="{_WIF}"' not in text
     assert "auth_mode=SONNET_OFFICIAL_GATE" not in text
     # Post-marker INFRASTRUCTURE_FAILURE recovery path is wired too
-    # (Stage 2B-2 split: quality record and infrastructure record).
-    assert "recovered_auth_mode = _recover_partial_auth_mode(args.gate_root)" in text
+    # (Stage 2B-2 split: quality record and infrastructure record;
+    # Stage 2C-3 moved the call site into _infrastructure_invalid_record,
+    # shared by both the QualityRefused fallback and the outer failure
+    # handler, but the recovery call itself is unchanged).
+    assert "auth_mode=_recover_partial_auth_mode(gate_root)" in text
     assert 'auth_mode=result["auth_mode"]' in text
-    assert "auth_mode=recovered_auth_mode" in text
 
 
 def test_recover_partial_auth_mode_helper_is_best_effort(tmp_path):
@@ -752,11 +755,14 @@ import contextlib  # noqa: E402
 import functools  # noqa: E402
 import os  # noqa: E402
 import subprocess  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
 
 import yaml  # noqa: E402
 
 from sentinel.phase5 import replacement as _repl  # noqa: E402
 from sentinel.phase5 import terminal as _t  # noqa: E402
+from sentinel.phase5.execution_envelope import CommittedEnvelopeError, JobStartAnchorError  # noqa: E402
 from sentinel.phase5.journal import read_journal  # noqa: E402
 
 GATE_FINALIZER_PATH = REPO_ROOT / "scripts" / "run_phase5_gate_finalizer.py"
@@ -814,9 +820,57 @@ class _FakeSession:
         self._calls.append("shutdown")
 
 
-def _prepare_execute(tmp_path, monkeypatch, *, session_fn, marker_visible=None, write_fx=True):
+class _FakeAnchor:
+    """Minimal stand-in for JobStartAnchor carrying only the attributes
+    SessionClock.from_anchor reads. Fresh timestamps by default so the
+    derived SessionClock never starts pre-expired; job_started_offset_s
+    lets a test push the anchor into the past to force expiry."""
+
+    def __init__(self, *, job_started_offset_s: float = 0.0) -> None:
+        now = datetime.now(timezone.utc)
+        self.job_started_at_utc = now + timedelta(seconds=job_started_offset_s)
+        self.resolved_at_utc = now
+        self.monotonic_at_resolve = time.monotonic()
+
+
+class _FakeEnvelope:
+    """Minimal stand-in for ExecutionEnvelope carrying only the
+    attributes SessionClock.from_anchor / _run_gate_session read. One
+    hour of session budget is far longer than any test's real runtime
+    unless a test deliberately shrinks it to force expiry."""
+
+    def __init__(self, *, session_duration_s: int = 3600, stall_budget_ms: int = 600_000) -> None:
+        self.session_duration_s = session_duration_s
+        self.stall_budget_ms = stall_budget_ms
+
+
+class _FakeAnchorClient:
+    """Stand-in for the evidence client's list_run_attempt_jobs seam
+    only -- resolve_job_start_anchor itself is monkeypatched in
+    _prepare_execute, so the returned list is never actually parsed."""
+
+    def list_run_attempt_jobs(self, run_id, run_attempt):
+        return []
+
+
+def _prepare_execute(
+    tmp_path, monkeypatch, *, session_fn, marker_visible=None, write_fx=True,
+    anchor_error=None, envelope_error=None, anchor_offset_s=0.0, envelope_session_duration_s=3600,
+    run_gate_kwargs=None,
+):
     """Arrange a post-marker execute world: a verified PREFLIGHTED
-    journal, fake REST/OIDC/budget seams and an injected gate session."""
+    journal, fake REST/OIDC/budget seams and an injected gate session.
+    Stage 2C-3: also fakes the anchor-resolution and envelope-load seams
+    so control construction (ExecutionSafetyDomain/SessionLatch/
+    InvocationRegistry/SessionClock/TerminalArbiter/SessionMonitor) runs
+    for real in every execute test that reaches it, exactly as it would
+    once Stage 2C-B commits a real envelope. anchor_error/envelope_error
+    make that one seam raise instead of succeeding, for the pre-control
+    failure tests. anchor_offset_s/envelope_session_duration_s let a test
+    construct an already-expired SessionClock. run_gate_kwargs, if given
+    a list, is appended to with the exact kwargs _run_gate_session would
+    have received, so a test's session_fn can reach the real shared
+    control objects (e.g. to trip the latch mid-session)."""
     from agents.checker import budget as budget_mod
     from agents.checker import oidc as oidc_mod
 
@@ -838,12 +892,36 @@ def _prepare_execute(tmp_path, monkeypatch, *, session_fn, marker_visible=None, 
         }), encoding="utf-8")
     calls: list = []
     monkeypatch.setattr(module, "_suppressed_operator_output", contextlib.nullcontext)
-    monkeypatch.setattr(module, "build_evidence_client", lambda env, **kw: (env.pop("GITHUB_TOKEN", None), object())[1])
+    monkeypatch.setattr(
+        module, "build_evidence_client",
+        lambda env, **kw: (env.pop("GITHUB_TOKEN", None), _FakeAnchorClient())[1],
+    )
     monkeypatch.setattr(
         module, "assert_marker_visible_for_this_run",
         marker_visible or (lambda client, run_id, name: calls.append(("marker", name))),
     )
     monkeypatch.setattr(module, "assert_expected_source_live", lambda client, sha: None)
+
+    if anchor_error is not None:
+        def _raise_anchor(*a, **kw):
+            raise anchor_error
+        monkeypatch.setattr(module, "resolve_job_start_anchor", _raise_anchor)
+    else:
+        monkeypatch.setattr(
+            module, "resolve_job_start_anchor",
+            lambda *a, **kw: _FakeAnchor(job_started_offset_s=anchor_offset_s),
+        )
+
+    if envelope_error is not None:
+        def _raise_envelope(path):
+            raise envelope_error
+        monkeypatch.setattr(module, "load_committed_envelope", _raise_envelope)
+    else:
+        monkeypatch.setattr(
+            module, "load_committed_envelope",
+            lambda path: _FakeEnvelope(session_duration_s=envelope_session_duration_s),
+        )
+
     monkeypatch.setattr(budget_mod, "RunBudgetCoordinator", lambda **kw: object())
 
     def _acquire(env):
@@ -852,7 +930,13 @@ def _prepare_execute(tmp_path, monkeypatch, *, session_fn, marker_visible=None, 
 
     monkeypatch.setattr(oidc_mod, "acquire_oidc", _acquire)
     monkeypatch.setattr(oidc_mod, "scrub_identity_token_file", lambda env: calls.append("scrub"))
-    monkeypatch.setattr(module, "_run_gate_session", lambda **kw: session_fn())
+
+    def _run_gate_session_stub(**kw):
+        if run_gate_kwargs is not None:
+            run_gate_kwargs.append(kw)
+        return session_fn()
+
+    monkeypatch.setattr(module, "_run_gate_session", _run_gate_session_stub)
     args = argparse.Namespace(
         expected_source_sha=_SHA, gate_root=work / "gate-root", artifacts_dir=artifacts, fx_state_path=fx_path,
     )
@@ -1214,11 +1298,602 @@ def test_checks_ancillary_written_only_after_quality_terminal(tmp_path, monkeypa
     assert json.loads((artifacts / _t.CHECKS_FILENAME).read_text(encoding="utf-8")) == ["pooled_recall: 3/3 -> PASS"]
 
 
-def test_journal_wires_no_stage2c_events_or_liveness():
-    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
-    for token in ('"RUN_STARTED"', '"RUN_FINISHED"', '"INVOCATION_STARTED"', '"INVOCATION_FINISHED"',
-                  '"HEARTBEAT"', "liveness_line", "SESSION_DEADLINE", "INVOCATION_STALL_DEADLINE", "WATCHDOG"):
-        assert token not in text, token
+# test_journal_wires_no_stage2c_events_or_liveness retired here (Stage
+# 2C-3, dispatch q77-p5d-repair-stage2c3-implement-a): it guarded against
+# premature Stage-2C wiring landing before its own stage. Stage 2C-3 IS
+# that wiring landing -- its invariant is superseded by the positive
+# coverage below (STATE.md carries the dated record).
+
+
+# ======================================================================
+# Stage 2C-3: runner/workflow wiring of execution-safety controls
+# (ADR-0012 repair; dispatch q77-p5d-repair-stage2c3-implement-a).
+# ======================================================================
+
+
+# --- pre-control anchor/envelope construction ------------------------------
+
+
+def test_execute_pre_control_anchor_failure_takes_pre_provider_failure_path(tmp_path, monkeypatch, capfd):
+    module, args, artifacts, calls = _prepare_execute(
+        tmp_path, monkeypatch, session_fn=lambda: _session_result(True),
+        anchor_error=JobStartAnchorError("no matching job"),
+    )
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    captured = capfd.readouterr()
+    assert captured.out == (
+        "EXECUTE INFRASTRUCTURE_FAILURE: cause=PRE_PROVIDER_FAILURE exception_type=JobStartAnchorError\n"
+    )
+    assert "acquire_oidc" not in calls and "scrub" in calls
+    verdict = _t.verify_terminal_bytes((artifacts / _t.TERMINAL_FILENAME).read_bytes(), _identity())
+    assert verdict.kind == "TRUSTED_INFRASTRUCTURE_INVALID"
+    assert verdict.record.termination_source == "PRE_PROVIDER_FAILURE"
+
+
+def test_execute_pre_control_envelope_absent_takes_pre_provider_failure_path(tmp_path, monkeypatch, capfd):
+    module, args, artifacts, calls = _prepare_execute(
+        tmp_path, monkeypatch, session_fn=lambda: _session_result(True),
+        envelope_error=CommittedEnvelopeError("committed envelope is absent"),
+    )
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    captured = capfd.readouterr()
+    assert captured.out == (
+        "EXECUTE INFRASTRUCTURE_FAILURE: cause=PRE_PROVIDER_FAILURE exception_type=CommittedEnvelopeError\n"
+    )
+    assert "acquire_oidc" not in calls and "scrub" in calls
+    verdict = _t.verify_terminal_bytes((artifacts / _t.TERMINAL_FILENAME).read_bytes(), _identity())
+    assert verdict.kind == "TRUSTED_INFRASTRUCTURE_INVALID"
+    assert verdict.record.termination_source == "PRE_PROVIDER_FAILURE"
+
+
+# --- _run_gate_session wiring: composition, shared objects, abort ---------
+
+
+class _NullJournal:
+    def append(self, *a, **kw) -> None:
+        pass
+
+
+def _probe_run_gate_session(tmp_path, monkeypatch, *, trip_after_run=None):
+    """Drive module._run_gate_session directly with every provider-facing
+    seam faked (CagedCheckerStub, health_gated, deadline_guarded,
+    execute_run, ledger.open_ledger), so only the Stage-2C-3 wiring under
+    test -- deps_for's composition, the run-boundary SessionAborted
+    checks and the before_task_execute hook -- runs for real, never a
+    real provider call, ledger row or scoring pass. trip_after_run, if 1
+    or 2, trips a real shared SessionLatch as a side effect of that
+    execute_run call returning, so the run-boundary check right after it
+    observes a latched cause."""
+    module = _load_module()
+    from agents.checker import envelope_guard as guard_mod
+    from agents.checker import harness as harness_mod
+    from agents.checker import oidc as oidc_mod
+    from sentinel import ledger as ledger_mod
+    import sentinel.pipeline as pipeline_mod
+
+    guard_calls: list = []
+    health_calls: list = []
+    deps_captured: list = []
+    execute_run_call_count = {"n": 0}
+
+    def _fake_health_gated(query_fn, session):
+        health_calls.append((query_fn, session))
+        return ("health-wrapped", query_fn)
+
+    def _fake_deadline_guarded(query_fn, **kw):
+        guard_calls.append(kw)
+        return ("deadline-wrapped", query_fn, kw["run_ordinal"])
+
+    class _FakeStub:
+        def __init__(self, **kw) -> None:
+            self.query_fn = "raw-query-fn"
+
+    domain = module.ExecutionSafetyDomain()
+    latch = module.SessionLatch(domain)
+    registry = module.InvocationRegistry(domain)
+
+    class _FixedClock:
+        def monotonic_now(self) -> float:
+            return 0.0
+
+    clock = _FixedClock()
+
+    def _fake_execute_run(config, deps):
+        execute_run_call_count["n"] += 1
+        deps_captured.append(deps)
+        if trip_after_run == execute_run_call_count["n"]:
+            latch.trip("WATCHDOG", 0.0)
+        return object()
+
+    monkeypatch.setattr(oidc_mod, "health_gated", _fake_health_gated)
+    monkeypatch.setattr(guard_mod, "deadline_guarded", _fake_deadline_guarded)
+    monkeypatch.setattr(harness_mod, "CagedCheckerStub", _FakeStub)
+    monkeypatch.setattr(ledger_mod, "open_ledger", lambda *a, **kw: object())
+    monkeypatch.setattr(pipeline_mod, "execute_run", _fake_execute_run)
+
+    gate_root = tmp_path / "gate-root"
+    session = object()
+
+    def _run():
+        return module._run_gate_session(
+            gate_root=gate_root, coordinator=object(), session=session, expected_source_sha=_SHA,
+            clock=clock, latch=latch, registry=registry, journal=_NullJournal(),
+            stall_budget_ms=600_000, config=object(), terminate=lambda cfg: None,
+            on_control_failure=lambda: None,
+        )
+
+    return types.SimpleNamespace(
+        module=module, run=_run, latch=latch, registry=registry, clock=clock, session=session,
+        guard_calls=guard_calls, health_calls=health_calls, deps_captured=deps_captured,
+        execute_run_call_count=execute_run_call_count,
+    )
+
+
+def test_run_gate_session_wraps_query_fn_with_health_gated_then_deadline_guarded(tmp_path, monkeypatch):
+    probe = _probe_run_gate_session(tmp_path, monkeypatch, trip_after_run=1)
+    with pytest.raises(probe.module.SessionAborted):
+        probe.run()
+    assert len(probe.health_calls) == 1
+    assert probe.health_calls[0][1] is probe.session
+    assert len(probe.guard_calls) == 1
+    assert probe.guard_calls[0]["run_ordinal"] == 1
+    assert probe.guard_calls[0]["clock"] is probe.clock
+    assert probe.guard_calls[0]["latch"] is probe.latch
+    assert probe.guard_calls[0]["registry"] is probe.registry
+    assert probe.guard_calls[0]["stall_budget_ms"] == 600_000
+    stub_query_fn = probe.deps_captured[0].judgment.query_fn
+    assert stub_query_fn == ("deadline-wrapped", ("health-wrapped", "raw-query-fn"), 1)
+
+
+def test_execute_control_construction_shares_one_domain_across_both_runs(tmp_path, monkeypatch):
+    probe = _probe_run_gate_session(tmp_path, monkeypatch, trip_after_run=2)
+    with pytest.raises(probe.module.SessionAborted):
+        probe.run()
+    assert len(probe.guard_calls) == 2
+    assert probe.guard_calls[0]["latch"] is probe.guard_calls[1]["latch"] is probe.latch
+    assert probe.guard_calls[0]["registry"] is probe.guard_calls[1]["registry"] is probe.registry
+    assert probe.guard_calls[0]["clock"] is probe.guard_calls[1]["clock"] is probe.clock
+
+
+def test_before_task_execute_hook_aborts_reservation_once_latched(tmp_path, monkeypatch):
+    probe = _probe_run_gate_session(tmp_path, monkeypatch, trip_after_run=1)
+    with pytest.raises(probe.module.SessionAborted):
+        probe.run()
+    hook = probe.deps_captured[0].hooks.before_task_execute
+    with pytest.raises(probe.module.SessionAborted):
+        hook(object())
+
+
+def test_run1_final_task_latch_prevents_run2_from_starting(tmp_path, monkeypatch):
+    probe = _probe_run_gate_session(tmp_path, monkeypatch, trip_after_run=1)
+    with pytest.raises(probe.module.SessionAborted):
+        probe.run()
+    assert probe.execute_run_call_count["n"] == 1
+    assert len(probe.deps_captured) == 1
+
+
+def test_run2_final_task_latch_aborts_before_scoring(tmp_path, monkeypatch):
+    probe = _probe_run_gate_session(tmp_path, monkeypatch, trip_after_run=2)
+    with pytest.raises(probe.module.SessionAborted):
+        probe.run()
+    assert probe.execute_run_call_count["n"] == 2
+    assert [c["run_ordinal"] for c in probe.guard_calls] == [1, 2]
+
+
+# --- terminal commit seam ---------------------------------------------------
+
+
+def test_post_control_ordinary_invalid_commits_through_arbiter(tmp_path, monkeypatch, capfd):
+    from sentinel.phase5 import execution_control as ec_mod
+
+    commit_invalid_calls: list = []
+    real_commit_invalid = ec_mod.TerminalArbiter.commit_invalid
+
+    def _spy_commit_invalid(self, cause, replace):
+        commit_invalid_calls.append(cause)
+        return real_commit_invalid(self, cause, replace)
+
+    monkeypatch.setattr(ec_mod.TerminalArbiter, "commit_invalid", _spy_commit_invalid)
+
+    def _boom():
+        raise RuntimeError("post-control failure")
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=_boom)
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    assert capfd.readouterr().out == "EXECUTE INFRASTRUCTURE_FAILURE: cause=RUNNER_EXCEPTION exception_type=RuntimeError\n"
+    assert commit_invalid_calls == ["RUNNER_EXCEPTION"]
+    verdict = _t.verify_terminal_bytes((artifacts / _t.TERMINAL_FILENAME).read_bytes(), _identity())
+    assert verdict.kind == "TRUSTED_INFRASTRUCTURE_INVALID"
+
+
+def test_terminal_digest_preserved_through_arbiter_commit_quality(tmp_path, monkeypatch):
+    import hashlib
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=lambda: _session_result(True))
+    assert module.cmd_execute(args) == 0
+    data = (artifacts / _t.TERMINAL_FILENAME).read_bytes()
+    expected = hashlib.sha256(data).hexdigest()
+    events = read_journal(artifacts / _t.JOURNAL_FILENAME).events
+    completed = next(e for e in events if e.event == "TERMINAL_WRITE_COMPLETED" and e.record_kind == "QUALITY")
+    assert completed.sha256 == expected
+
+
+def test_terminal_digest_preserved_through_arbiter_commit_invalid(tmp_path, monkeypatch):
+    import hashlib
+
+    def _boom():
+        raise RuntimeError("boom")
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=_boom)
+    assert module.cmd_execute(args) == 1
+    data = (artifacts / _t.TERMINAL_FILENAME).read_bytes()
+    expected = hashlib.sha256(data).hexdigest()
+    events = read_journal(artifacts / _t.JOURNAL_FILENAME).events
+    completed = next(
+        e for e in events if e.event == "TERMINAL_WRITE_COMPLETED" and e.record_kind == "INFRASTRUCTURE_INVALID"
+    )
+    assert completed.sha256 == expected
+
+
+def test_quality_refused_builds_new_invalid_record_not_a_retry(tmp_path, monkeypatch, capfd):
+    run_gate_kwargs: list = []
+
+    def _session_fn():
+        run_gate_kwargs[-1]["latch"].trip("WATCHDOG", 0.0)
+        return _session_result(True)
+
+    module, args, artifacts, calls = _prepare_execute(
+        tmp_path, monkeypatch, session_fn=_session_fn, run_gate_kwargs=run_gate_kwargs,
+    )
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    assert capfd.readouterr().out == "EXECUTE INFRASTRUCTURE_FAILURE: cause=WATCHDOG exception_type=QualityRefused\n"
+    verdict = _t.verify_terminal_bytes((artifacts / _t.TERMINAL_FILENAME).read_bytes(), _identity())
+    assert verdict.kind == "TRUSTED_INFRASTRUCTURE_INVALID"
+    assert verdict.record.termination_source == "WATCHDOG"
+    assert verdict.record.disposition == "INFRASTRUCTURE_FAILURE"
+    events = read_journal(artifacts / _t.JOURNAL_FILENAME).events
+    completed = [e for e in events if e.event == "TERMINAL_WRITE_COMPLETED"]
+    assert len(completed) == 1 and completed[0].record_kind == "INFRASTRUCTURE_INVALID"
+
+
+def test_commit_point_session_deadline_journaled_exactly_once(tmp_path, monkeypatch, capfd):
+    module, args, artifacts, calls = _prepare_execute(
+        tmp_path, monkeypatch, session_fn=lambda: _session_result(True),
+        anchor_offset_s=-7200, envelope_session_duration_s=1,
+    )
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    assert capfd.readouterr().out == (
+        "EXECUTE INFRASTRUCTURE_FAILURE: cause=SESSION_DEADLINE exception_type=QualityRefused\n"
+    )
+    events = read_journal(artifacts / _t.JOURNAL_FILENAME).events
+    cause_latched = [e for e in events if e.event == "OBJECTIVE_CAUSE_LATCHED"]
+    assert len(cause_latched) == 1 and cause_latched[0].cause == "SESSION_DEADLINE"
+    verdict = _t.verify_terminal_bytes((artifacts / _t.TERMINAL_FILENAME).read_bytes(), _identity())
+    assert verdict.record.termination_source == "SESSION_DEADLINE"
+
+
+def test_already_latched_cause_does_not_duplicate_objective_cause_journal(tmp_path, monkeypatch, capfd):
+    def _session_fn():
+        # Let the real SessionMonitor's own background tick discover the
+        # already-expired clock and journal OBJECTIVE_CAUSE_LATCHED
+        # itself, winning the race before commit_quality is ever called.
+        time.sleep(1.2)
+        return _session_result(True)
+
+    module, args, artifacts, calls = _prepare_execute(
+        tmp_path, monkeypatch, session_fn=_session_fn,
+        anchor_offset_s=-7200, envelope_session_duration_s=1,
+    )
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    assert capfd.readouterr().out == (
+        "EXECUTE INFRASTRUCTURE_FAILURE: cause=SESSION_DEADLINE exception_type=QualityRefused\n"
+    )
+    events = read_journal(artifacts / _t.JOURNAL_FILENAME).events
+    cause_latched = [e for e in events if e.event == "OBJECTIVE_CAUSE_LATCHED"]
+    assert len(cause_latched) == 1 and cause_latched[0].cause == "SESSION_DEADLINE"
+
+
+def test_invalid_refused_fails_closed_without_recursive_retry(tmp_path, monkeypatch, capfd):
+    from sentinel.phase5 import execution_control as ec_mod
+
+    call_count = {"n": 0}
+
+    def _always_refuse(self, cause, replace):
+        call_count["n"] += 1
+        raise ec_mod.InvalidRefused(cause=cause, latched=None, state=self.state)
+
+    monkeypatch.setattr(ec_mod.TerminalArbiter, "commit_invalid", _always_refuse)
+
+    def _boom():
+        raise RuntimeError("post-control failure")
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=_boom)
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 3
+    assert capfd.readouterr().out == "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED\n"
+    assert call_count["n"] == 1
+    events = read_journal(artifacts / _t.JOURNAL_FILENAME).events
+    failed = [e for e in events if e.event == "TERMINAL_WRITE_FAILED"]
+    assert len(failed) == 1 and failed[0].exception_type == "InvalidRefused"
+    assert not (artifacts / _t.TERMINAL_FILENAME).exists()
+
+
+def test_quality_refused_with_none_cause_fails_closed_without_fabricating_cause(tmp_path, monkeypatch, capfd):
+    from sentinel.phase5 import execution_control as ec_mod
+
+    def _refuse_with_none_cause(self, replace):
+        raise ec_mod.QualityRefused(cause=None, state=ec_mod.TerminalCommitState.QUALITY_COMMITTED)
+
+    monkeypatch.setattr(ec_mod.TerminalArbiter, "commit_quality", _refuse_with_none_cause)
+    commit_invalid_calls: list = []
+    real_commit_invalid = ec_mod.TerminalArbiter.commit_invalid
+
+    def _spy_commit_invalid(self, cause, replace):
+        commit_invalid_calls.append(cause)
+        return real_commit_invalid(self, cause, replace)
+
+    monkeypatch.setattr(ec_mod.TerminalArbiter, "commit_invalid", _spy_commit_invalid)
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=lambda: _session_result(True))
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 3
+    assert capfd.readouterr().out == "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED\n"
+    assert commit_invalid_calls == []
+    events = read_journal(artifacts / _t.JOURNAL_FILENAME).events
+    failed = [e for e in events if e.event == "TERMINAL_WRITE_FAILED"]
+    assert len(failed) == 1 and failed[0].record_kind == "QUALITY" and failed[0].exception_type == "QualityRefused"
+    assert not (artifacts / _t.TERMINAL_FILENAME).exists()
+
+
+def test_session_aborted_at_run_boundary_routes_through_arbiter_with_latched_cause(tmp_path, monkeypatch, capfd):
+    from sentinel.phase5 import execution_control as ec_mod
+
+    commit_invalid_calls: list = []
+    real_commit_invalid = ec_mod.TerminalArbiter.commit_invalid
+
+    def _spy_commit_invalid(self, cause, replace):
+        commit_invalid_calls.append(cause)
+        return real_commit_invalid(self, cause, replace)
+
+    monkeypatch.setattr(ec_mod.TerminalArbiter, "commit_invalid", _spy_commit_invalid)
+
+    session_aborted_cls = _load_module().SessionAborted
+    run_gate_kwargs: list = []
+
+    def _session_fn():
+        latch = run_gate_kwargs[-1]["latch"]
+        latch.trip("INVOCATION_STALL_DEADLINE", 0.0)
+        raise session_aborted_cls(latch.cause)
+
+    module, args, artifacts, calls = _prepare_execute(
+        tmp_path, monkeypatch, session_fn=_session_fn, run_gate_kwargs=run_gate_kwargs,
+    )
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    assert capfd.readouterr().out == (
+        "EXECUTE INFRASTRUCTURE_FAILURE: cause=INVOCATION_STALL_DEADLINE exception_type=SessionAborted\n"
+    )
+    assert commit_invalid_calls == ["INVOCATION_STALL_DEADLINE"]
+    verdict = _t.verify_terminal_bytes((artifacts / _t.TERMINAL_FILENAME).read_bytes(), _identity())
+    assert verdict.record.termination_source == "INVOCATION_STALL_DEADLINE"
+
+
+def test_run_boundary_session_aborted_does_not_journal_runner_exception_with_stage2c_cause(
+    tmp_path, monkeypatch, capfd,
+):
+    session_aborted_cls = _load_module().SessionAborted
+    run_gate_kwargs: list = []
+
+    def _session_fn():
+        # Let the real SessionMonitor's own background tick trip AND
+        # journal OBJECTIVE_CAUSE_LATCHED itself, before this raises.
+        time.sleep(1.2)
+        latch = run_gate_kwargs[-1]["latch"]
+        raise session_aborted_cls(latch.cause)
+
+    module, args, artifacts, calls = _prepare_execute(
+        tmp_path, monkeypatch, session_fn=_session_fn, run_gate_kwargs=run_gate_kwargs,
+        anchor_offset_s=-7200, envelope_session_duration_s=1,
+    )
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 1
+    assert capfd.readouterr().out == (
+        "EXECUTE INFRASTRUCTURE_FAILURE: cause=SESSION_DEADLINE exception_type=SessionAborted\n"
+    )
+    events = read_journal(artifacts / _t.JOURNAL_FILENAME).events
+    cause_latched = [e for e in events if e.event == "OBJECTIVE_CAUSE_LATCHED"]
+    assert len(cause_latched) == 1 and cause_latched[0].cause == "SESSION_DEADLINE"
+    assert [e for e in events if e.event == "RUNNER_EXCEPTION"] == []
+    assert read_journal(artifacts / _t.JOURNAL_FILENAME).integrity == "OK"
+
+
+def test_quality_replace_raising_reaches_quality_failed_with_no_invalid_fallback(tmp_path, monkeypatch, capfd):
+    from sentinel.phase5 import execution_control as ec_mod
+
+    commit_invalid_calls: list = []
+    real_commit_invalid = ec_mod.TerminalArbiter.commit_invalid
+
+    def _spy_commit_invalid(self, cause, replace):
+        commit_invalid_calls.append(cause)
+        return real_commit_invalid(self, cause, replace)
+
+    monkeypatch.setattr(ec_mod.TerminalArbiter, "commit_invalid", _spy_commit_invalid)
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=lambda: _session_result(True))
+
+    def _fail(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(module, "write_terminal_atomically", _fail)
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 3
+    assert capfd.readouterr().out == "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED\n"
+    assert commit_invalid_calls == []
+    shape = _journal_shape(artifacts / _t.JOURNAL_FILENAME)
+    assert ("RUNNER", "TERMINAL_WRITE_FAILED", None, None, "QUALITY", None, None) in shape
+    assert not (artifacts / _t.TERMINAL_FILENAME).exists()
+
+
+def test_invalid_replace_raising_reaches_invalid_failed_with_no_retry(tmp_path, monkeypatch, capfd):
+    def _boom():
+        raise RuntimeError("post-control failure")
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=_boom)
+
+    write_calls = {"n": 0}
+
+    def _fail(*a, **kw):
+        write_calls["n"] += 1
+        raise OSError("disk full")
+
+    monkeypatch.setattr(module, "write_terminal_atomically", _fail)
+    capfd.readouterr()
+    assert module.cmd_execute(args) == 3
+    assert capfd.readouterr().out == "EXECUTE NO_RUNNER_TERMINAL_EVIDENCE: reason=TERMINAL_WRITE_FAILED\n"
+    assert write_calls["n"] == 1
+    shape = _journal_shape(artifacts / _t.JOURNAL_FILENAME)
+    assert ("RUNNER", "TERMINAL_WRITE_FAILED", None, None, "INFRASTRUCTURE_INVALID", None, None) in shape
+    assert not (artifacts / _t.TERMINAL_FILENAME).exists()
+
+
+# --- runner termination -----------------------------------------------------
+
+
+def test_make_runner_terminator_lock_acquired_calls_fake_exiter_once():
+    module = _load_module()
+    domain = module.ExecutionSafetyDomain()
+    exit_calls: list = []
+    module._make_runner_terminator(domain, exiter=exit_calls.append)("WATCHDOG", None)
+    assert exit_calls == [1]
+
+
+def test_make_runner_terminator_lock_timeout_still_calls_fake_exiter_once(monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(module, "RUNNER_EXIT_LOCK_WAIT_S", 0.05)
+    domain = module.ExecutionSafetyDomain()
+    exit_calls: list = []
+    release_event = threading.Event()
+    holder_ready = threading.Event()
+
+    def _hold_lock():
+        with domain.lock:
+            holder_ready.set()
+            release_event.wait(5.0)
+
+    holder = threading.Thread(target=_hold_lock, daemon=True)
+    holder.start()
+    try:
+        assert holder_ready.wait(5.0)
+        module._make_runner_terminator(domain, exiter=exit_calls.append)("WATCHDOG", None)
+        assert exit_calls == [1]
+    finally:
+        release_event.set()
+        holder.join(5.0)
+
+
+def test_make_runner_terminator_releases_lock_when_fake_exiter_returns():
+    module = _load_module()
+    domain = module.ExecutionSafetyDomain()
+    module._make_runner_terminator(domain, exiter=lambda status: None)("WATCHDOG", None)
+    assert domain.lock.acquire(blocking=False)
+    domain.lock.release()
+
+
+# --- session monitor lifecycle ----------------------------------------------
+
+
+def test_execute_starts_and_stops_session_monitor(tmp_path, monkeypatch):
+    from agents.checker import process_control as pc_mod
+
+    lifecycle: list = []
+    real_start = pc_mod.SessionMonitor.start
+    real_stop = pc_mod.SessionMonitor.stop
+
+    def _spy_start(self):
+        lifecycle.append("start")
+        return real_start(self)
+
+    def _spy_stop(self):
+        lifecycle.append("stop")
+        return real_stop(self)
+
+    monkeypatch.setattr(pc_mod.SessionMonitor, "start", _spy_start)
+    monkeypatch.setattr(pc_mod.SessionMonitor, "stop", _spy_stop)
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=lambda: _session_result(True))
+    assert module.cmd_execute(args) == 0
+    assert lifecycle == ["start", "stop"]
+
+
+def test_monitor_stays_alive_through_post_control_invalid_commit_then_stops_before_session_teardown(
+    tmp_path, monkeypatch,
+):
+    from agents.checker import process_control as pc_mod
+    from sentinel.phase5 import execution_control as ec_mod
+
+    def _boom():
+        raise RuntimeError("post-control failure")
+
+    module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=_boom)
+
+    real_start = pc_mod.SessionMonitor.start
+    real_stop = pc_mod.SessionMonitor.stop
+    real_commit_invalid = ec_mod.TerminalArbiter.commit_invalid
+
+    def _spy_start(self):
+        calls.append("monitor.start")
+        return real_start(self)
+
+    def _spy_stop(self):
+        calls.append("monitor.stop")
+        return real_stop(self)
+
+    def _spy_commit_invalid(self, cause, replace):
+        calls.append("commit_invalid")
+        return real_commit_invalid(self, cause, replace)
+
+    monkeypatch.setattr(pc_mod.SessionMonitor, "start", _spy_start)
+    monkeypatch.setattr(pc_mod.SessionMonitor, "stop", _spy_stop)
+    monkeypatch.setattr(ec_mod.TerminalArbiter, "commit_invalid", _spy_commit_invalid)
+
+    assert module.cmd_execute(args) == 1
+    ordered = [c for c in calls if c in ("monitor.start", "commit_invalid", "monitor.stop", "shutdown")]
+    assert ordered == ["monitor.start", "commit_invalid", "monitor.stop", "shutdown"]
+
+
+# --- surface checks ----------------------------------------------------------
+
+
+def test_expected_api_job_name_is_gate():
+    module = _load_module()
+    assert module.EXPECTED_API_JOB_NAME == "gate"
+
+
+def _references_os_exit(path: Path) -> bool:
+    """AST-level check (never a docstring/comment substring match): does
+    this file's code actually reference the os._exit attribute?"""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return any(
+        isinstance(node, ast.Attribute) and node.attr == "_exit"
+        and isinstance(node.value, ast.Name) and node.value.id == "os"
+        for node in ast.walk(tree)
+    )
+
+
+def test_os_exit_present_only_in_official_gate_runner():
+    assert _references_os_exit(GATE_RUNNER_PATH)
+    for relative in (
+        "agents/checker/process_control.py",
+        "agents/checker/envelope_guard.py",
+        "sentinel/phase5/execution_control.py",
+        "sentinel/phase5/execution_envelope.py",
+    ):
+        path = REPO_ROOT / Path(relative)
+        assert not _references_os_exit(path), relative
 
 
 # --- purpose-gated writer attribution --------------------------------------
