@@ -84,6 +84,7 @@ from sentinel.phase5.terminal import (  # noqa: E402
     consumption_from,
     copy_to_quarantine,
     decide_finalization,
+    decide_terminal_disposition,
     inventory_publication_root,
     move_to_quarantine,
     verify_terminal_bytes,
@@ -112,6 +113,35 @@ LATEST_ATTEMPT_START_S = 26.0
 MIN_ZERO_OBSERVATION_SPAN_S = 8.0
 LATEST_DOWNLOAD_START_S = 33.0
 CONFIRM_DOWNLOAD_DIRNAME = "confirm-download"
+
+# ---------------------------------------------------------------------------
+# Lanes (Stage 2C-B1; ADR-0012 section 12; owner ruling
+# q77-p5d-stage2cb1-finalizer-ruling-a)
+#
+# ``official`` is the default and is unchanged: marker reasoning, the
+# FINALIZER_CONSUMPTION event, the official gate purpose and the
+# official Sonnet model/profile identity.
+#
+# ``rehearsal`` serves the model-free GitHub job-level kill rehearsal,
+# which by ADR design has NO marker at all. It creates no marker,
+# consumes none, looks none up, fabricates no CONSUMED value and emits
+# no FINALIZER_CONSUMPTION event; it passes its own explicit
+# marker-not-applicable gate and then enters exactly the same
+# post-eligibility terminal-disposition table. Its purpose is
+# deliberately absent from ``artifact_names._PURPOSE_SLUGS``, so a
+# marker for it is unnameable by construction.
+# ---------------------------------------------------------------------------
+
+OFFICIAL_LANE = "official"
+REHEARSAL_LANE = "rehearsal"
+LANES = (OFFICIAL_LANE, REHEARSAL_LANE)
+
+REHEARSAL_PURPOSE = "P5D_KILL_REHEARSAL"
+# Truthful non-quality identity: no model was invoked on this lane and
+# no provider or OIDC path exists in it, so naming the official Sonnet
+# model or quality profile here would be a false claim.
+REHEARSAL_MODEL = "NO_MODEL_INVOKED"
+REHEARSAL_PROFILE_NAME = "p5d-kill-rehearsal"
 
 PUBLISHED_STATES = frozenset({"TERMINAL_EVIDENCE_PUBLISHED", "INVALID_EVIDENCE_PUBLISHED"})
 _CONFIRM_EXIT = {
@@ -182,27 +212,28 @@ def _quarantine(journal: OperationalJournal, decision, *, publication_root: Path
             journal.append("FINALIZER_QUARANTINED", path_class="UNEXPECTED", sha256=digest)
 
 
-def _finalize_consumed(
-    journal: OperationalJournal, *, identity, summary, consumption: str, execute_outcome: str,
-    publication_root: Path, staging_root: Path, quarantine_root: Path,
-) -> int:
-    journal.append("FINALIZER_CONSUMPTION", consumption=consumption)
-    try:
-        verdict = classify_candidate(publication_root, identity)
-    except TerminalEvidenceError:
-        journal.append("FINALIZER_DECISION", action="INTERNAL_ERROR")
-        _emit_terminal_required("true", "INTERNAL_ERROR")
-        print(f"FINALIZE: action=INTERNAL_ERROR consumption={consumption} candidate=n/a")
-        return 4
+def _classify_and_journal(journal: OperationalJournal, *, identity, publication_root: Path):
+    """Classify the ONE fixed terminal candidate and journal the verdict.
+    Shared by both lanes; raises ``TerminalEvidenceError`` exactly as
+    ``classify_candidate`` does."""
+    verdict = classify_candidate(publication_root, identity)
     candidate_fields = {"sha256": verdict.sha256} if verdict.sha256 else {}
     journal.append("FINALIZER_CANDIDATE", candidate_verdict=verdict.kind, **candidate_fields)
+    return verdict
 
-    decision = decide_finalization(
-        run_attempt=identity.run_attempt, consumption=consumption, candidate=verdict.kind,
-        journal=summary, execute_step_outcome=execute_outcome, candidate_replaceable=verdict.replaceable,
-    )
+
+def _apply_decision(
+    journal: OperationalJournal, decision, verdict, *, identity, summary,
+    publication_root: Path, staging_root: Path, quarantine_root: Path,
+    model: str, profile_name: str, purpose: str, envelope, consumption_label: str,
+) -> int:
+    """Shared post-decision record writing. Structurally incapable of
+    authoring a quality result: every record comes from
+    ``terminal.build_invalid_record``. ``model``/``profile_name``/
+    ``purpose`` are supplied by the caller's lane so neither lane can
+    claim the other's execution identity."""
     journal.append("FINALIZER_DECISION", action=decision.action)
-    line = f"FINALIZE: action={decision.action} consumption={consumption} candidate={verdict.kind}"
+    line = f"FINALIZE: action={decision.action} consumption={consumption_label} candidate={verdict.kind}"
 
     if decision.action == "INTERNAL_ERROR":
         _emit_terminal_required("true", decision.action)
@@ -217,9 +248,8 @@ def _finalize_consumed(
         raise TerminalEvidenceError("unexpected finalizer action for a consumed attempt")
 
     _quarantine(journal, decision, publication_root=publication_root, quarantine_root=quarantine_root)
-    model, profile_name = gate_profile_identity()
     common = dict(
-        identity=identity, envelope=ENVELOPE, created_at_utc=datetime.now(timezone.utc),
+        identity=identity, envelope=envelope, created_at_utc=datetime.now(timezone.utc),
         model=model, profile_name=profile_name,
     )
     if decision.action == "WRITE_INFRASTRUCTURE_INVALID":
@@ -231,7 +261,7 @@ def _finalize_consumed(
             **common, unclassified_basis=decision.unclassified_basis,
             observed_signals=decision.observed_signals,
         )
-    record = attribute_invalid_record(record, purpose=PURPOSE)
+    record = attribute_invalid_record(record, purpose=purpose)
     prior = PRIOR_ABSENT if verdict.kind == "ABSENT" else UntrustedPrior(sha256=verdict.sha256)
     write_terminal_atomically(
         record, publication_root=publication_root, staging_root=staging_root, prior=prior, identity=identity,
@@ -247,16 +277,92 @@ def _finalize_consumed(
     return 0
 
 
+def _finalize_consumed(
+    journal: OperationalJournal, *, identity, summary, consumption: str, execute_outcome: str,
+    publication_root: Path, staging_root: Path, quarantine_root: Path,
+) -> int:
+    journal.append("FINALIZER_CONSUMPTION", consumption=consumption)
+    try:
+        verdict = _classify_and_journal(journal, identity=identity, publication_root=publication_root)
+    except TerminalEvidenceError:
+        journal.append("FINALIZER_DECISION", action="INTERNAL_ERROR")
+        _emit_terminal_required("true", "INTERNAL_ERROR")
+        print(f"FINALIZE: action=INTERNAL_ERROR consumption={consumption} candidate=n/a")
+        return 4
+
+    decision = decide_finalization(
+        run_attempt=identity.run_attempt, consumption=consumption, candidate=verdict.kind,
+        journal=summary, execute_step_outcome=execute_outcome, candidate_replaceable=verdict.replaceable,
+    )
+    model, profile_name = gate_profile_identity()
+    return _apply_decision(
+        journal, decision, verdict, identity=identity, summary=summary,
+        publication_root=publication_root, staging_root=staging_root, quarantine_root=quarantine_root,
+        model=model, profile_name=profile_name, purpose=PURPOSE, envelope=ENVELOPE,
+        consumption_label=consumption,
+    )
+
+
+def _finalize_rehearsal(
+    journal: OperationalJournal, *, identity, summary, execute_outcome: str,
+    publication_root: Path, staging_root: Path, quarantine_root: Path,
+) -> int:
+    """The model-free kill-rehearsal lane's own eligibility gate.
+
+    A marker is NOT APPLICABLE here: this lane never creates, consumes
+    or looks one up, so it makes no consumption statement at all -- no
+    FINALIZER_CONSUMPTION event is journalled and no fabricated
+    CONSUMED value is supplied to the frozen table. Having passed its
+    own gate, it enters the SAME shared post-eligibility terminal
+    disposition rows the official lane uses."""
+    try:
+        verdict = _classify_and_journal(journal, identity=identity, publication_root=publication_root)
+    except TerminalEvidenceError:
+        journal.append("FINALIZER_DECISION", action="INTERNAL_ERROR")
+        _emit_terminal_required("true", "INTERNAL_ERROR")
+        print("FINALIZE: action=INTERNAL_ERROR consumption=NOT_APPLICABLE candidate=n/a")
+        return 4
+
+    decision = decide_terminal_disposition(
+        candidate=verdict.kind, journal=summary, execute_step_outcome=execute_outcome,
+        candidate_replaceable=verdict.replaceable,
+    )
+    return _apply_decision(
+        journal, decision, verdict, identity=identity, summary=summary,
+        publication_root=publication_root, staging_root=staging_root, quarantine_root=quarantine_root,
+        model=REHEARSAL_MODEL, profile_name=REHEARSAL_PROFILE_NAME, purpose=REHEARSAL_PURPOSE,
+        envelope=None, consumption_label="NOT_APPLICABLE",
+    )
+
+
 def _finalize(
     args, env, *, sleep: Callable[[float], None], monotonic: Callable[[], float],
 ) -> int:
     ctx = derive_github_context(env)
-    identity = terminal_identity(ctx, args.expected_source_sha, PURPOSE)
+    lane = getattr(args, "lane", OFFICIAL_LANE)
+    purpose = REHEARSAL_PURPOSE if lane == REHEARSAL_LANE else PURPOSE
+    identity = terminal_identity(ctx, args.expected_source_sha, purpose)
     publication_root, staging_root, quarantine_root = terminal_layout(args.artifacts_dir)
     journal_path = publication_root / JOURNAL_FILENAME
     # Read the runner's journal BEFORE the finalizer appends anything.
     summary = summarize_journal(read_journal(journal_path))
     execute_outcome = env.get("EXECUTE_STEP_OUTCOME", "")
+
+    if lane == REHEARSAL_LANE:
+        # No marker reasoning whatsoever on this lane: no REST lookup,
+        # no consumption_from call, no marker artifact name is even
+        # constructible for REHEARSAL_PURPOSE.
+        journal = OperationalJournal(journal_path, writer="FINALIZER").open()
+        restore_signal_handlers = install_observing_signal_handlers(journal)
+        try:
+            return _finalize_rehearsal(
+                journal, identity=identity, summary=summary, execute_outcome=execute_outcome,
+                publication_root=publication_root, staging_root=staging_root,
+                quarantine_root=quarantine_root,
+            )
+        finally:
+            restore_signal_handlers()
+            journal.close()
 
     if ctx.run_attempt != 1:
         decision = decide_finalization(
@@ -481,8 +587,13 @@ def cmd_confirm(
     artifact_name = "n/a"
     try:
         ctx = derive_github_context(env)
-        identity = terminal_identity(ctx, args.expected_source_sha, PURPOSE)
-        artifact_name = artifact_names.gate_evidence_name(ctx.run_id, ctx.run_attempt)
+        lane = getattr(args, "lane", OFFICIAL_LANE)
+        if lane == REHEARSAL_LANE:
+            identity = terminal_identity(ctx, args.expected_source_sha, REHEARSAL_PURPOSE)
+            artifact_name = artifact_names.rehearsal_evidence_name(ctx.run_id, ctx.run_attempt)
+        else:
+            identity = terminal_identity(ctx, args.expected_source_sha, PURPOSE)
+            artifact_name = artifact_names.gate_evidence_name(ctx.run_id, ctx.run_attempt)
         publication_root, _staging_root, _quarantine_root = terminal_layout(args.artifacts_dir)
         client = build_evidence_client(
             env, request_timeout_s=CONFIRM_REQUEST_TIMEOUT_S, download_timeout_s=CONFIRM_DOWNLOAD_TIMEOUT_S,
@@ -509,11 +620,13 @@ def main(argv: "list[str]") -> int:
     fin = sub.add_parser("finalize")
     fin.add_argument("--expected-source-sha", required=True)
     fin.add_argument("--artifacts-dir", type=Path, required=True)
+    fin.add_argument("--lane", choices=LANES, default=OFFICIAL_LANE)
 
     con = sub.add_parser("confirm")
     con.add_argument("--expected-source-sha", required=True)
     con.add_argument("--artifacts-dir", type=Path, required=True)
     con.add_argument("--work-root", type=Path, required=True)
+    con.add_argument("--lane", choices=LANES, default=OFFICIAL_LANE)
 
     args = parser.parse_args(argv)
     if args.command == "finalize":

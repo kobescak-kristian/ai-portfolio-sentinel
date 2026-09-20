@@ -4346,3 +4346,242 @@ merges every change."
   binding: the N=24 Sonnet timing rehearsal, the GitHub kill rehearsal,
   and committing artifacts/phase5_execution_envelope.json) as its own
   bounded child dispatch; not begun here.
+- 2026-09-19 - ADR-0012 REPAIR STAGE 2C-B1 LANDED: MODEL-FREE KILL-REHEARSAL
+  SURFACE BUILT, NEVER EXECUTED (dispatch
+  `q77-p5d-repair-stage2cb1-implement-b`, approved plan
+  `q77-p5d-repair-stage2cb1-plan-d`). ADR-0012 §12 requires a model-free
+  GitHub rehearsal of the actual job-level timeout/cancellation class,
+  exercising in order: fake execution, a real job-level kill, the real
+  finalizer, the real publication path, post-run download, and strict
+  parsing of the resulting execution-invalid evidence. No such surface
+  existed. This stage builds it and stops: the new workflow is
+  `workflow_dispatch`-only and was NEVER dispatched by this dispatch.
+  Execution and adjudication are Stage 2C-B2.
+  OWNER RULING `q77-p5d-stage2cb1-finalizer-ruling-a` (2026-09-19) is the
+  authority for the one `sentinel/phase5/terminal.py` change. Planning
+  established from source why a marker-free lane cannot honestly traverse
+  the frozen table end to end: `decide_finalization`'s single use of
+  `consumption` is a gate conflating two questions that coincide only in
+  the official lane — "did this attempt consume the one-shot?" and "does
+  this attempt owe terminal evidence?". For the rehearsal the honest
+  answers diverge (it consumed nothing; producing terminal evidence is the
+  entire point), so the honest input yields `NO_TERMINAL_REQUIRED` and
+  `CONSUMED` would invent a marker. The plan therefore STOPPED and sought
+  a ruling rather than choosing. WHAT THE RULING AUTHORIZED: candidate R1
+  only — the minimum behaviour-preserving extraction of
+  `decide_terminal_disposition` from `decide_finalization`, separating
+  official marker eligibility from post-eligibility terminal-disposition
+  selection, so the marker-free lane reaches the same rows through its own
+  explicit gate. WHAT THE RULING EXPLICITLY DID NOT AUTHORIZE: candidate
+  R2; adding `NO_MARKER_LANE`; widening `MarkerConsumption`; changing the
+  journal consumption vocabulary; changing any existing decision outcome
+  or predicate; and any execution whatsoever — no kill rehearsal, no
+  workflow dispatch, no provider call, no OIDC, no marker action, no
+  timing rehearsal, no envelope creation, no replacement readiness, no
+  P5-E. NO ADR-0012 AMENDMENT WAS MADE, per the ruling's own rationale:
+  §12 already requires a marker-free, model-free rehearsal to exercise the
+  real finalizer and publication path, so R1 is an implementation refactor
+  enabling an already-adopted architecture and changes no frozen quality
+  surface, one-shot semantics, terminal classification rule or replacement
+  governance. `adr/0012-p5d-replacement-execution-envelope.md` is
+  untouched.
+  EQUIVALENCE EVIDENCE (the ruling's load-bearing condition):
+  `tests/test_phase5_terminal.py` carries
+  `_reference_decide_finalization`, an independent transcription of the
+  pre-extraction rows taken from blob
+  `249dfb0fe08010ceaff65686ed5b2dda6603f742`, which never delegates to or
+  is regenerated from the post-refactor implementation.
+  `test_r1_extraction_is_return_equivalent_across_the_finite_decision_domain`
+  compares it against the live `decide_finalization` over the full finite
+  decision domain: both `run_attempt` classes, all three
+  `MarkerConsumption` values, every `CandidateVerdictKind` plus an unknown
+  verdict, both `candidate_replaceable` values, four execute-step
+  outcomes, and a full product of 720 `JournalSummary` values across all
+  four integrity states, five signal shapes, six objective-cause values,
+  three runner-exception causes and both terminal-write-failed states —
+  190,080 comparisons, all equal. `MarkerConsumption` is separately pinned
+  to exactly its three existing members and `consumption_from` to those
+  members only.
+  FINALIZER LANE SPLIT: `scripts/run_phase5_gate_finalizer.py` gains
+  `--lane {official,rehearsal}`, defaulting to `official`, which remains
+  byte-behaviour-unchanged (marker reasoning, the `FINALIZER_CONSUMPTION`
+  event, the official purpose and `gate_profile_identity()`). The
+  `rehearsal` lane creates no marker, consumes none, looks none up, calls
+  `consumption_from` never, supplies no fabricated `CONSUMED` value and
+  emits NO `FINALIZER_CONSUMPTION` event — it passes its own explicit
+  marker-not-applicable gate and enters the SAME shared post-eligibility
+  rows. `consumption` is not a field of `GateEvidenceRecord`, so no
+  consumption statement, true or false, ever reaches published terminal
+  evidence. There is still exactly ONE finalizer implementation and no new
+  shared module.
+  TRUTHFUL REHEARSAL RECORD: the pre-existing shared core called
+  `gate_profile_identity()` internally, which would have stamped
+  `claude-sonnet-5` and the official quality profile into a record for a
+  run where no model executed. That call is lifted out to the official
+  lane's caller; the core now takes `model`/`profile_name`/`purpose` per
+  lane. The rehearsal lane uses exactly `model = "NO_MODEL_INVOKED"`,
+  `profile_name = "p5d-kill-rehearsal"`, `purpose = "P5D_KILL_REHEARSAL"`
+  and `auth_mode = None`. `GateEvidenceRecord` is UNCHANGED: `model` and
+  `profile_name` are plain non-empty `str` and `verify_terminal_bytes`
+  never reads them. The record cannot be mistaken for official or
+  replacement evidence for five independent structural reasons: its
+  `workflow_identity` is the kill-rehearsal workflow, so
+  `validate_replacement_provenance` fails on its first check; all six
+  replacement-provenance fields are `None`, so under the replacement
+  purpose it classifies `PROVENANCE_INVALID`; its disposition is
+  `UNCLASSIFIED_TERMINATION`, which can never satisfy P5-D; it carries no
+  quality content (schema-enforced); and its artifact name sits outside
+  every official discovery prefix. `P5D_KILL_REHEARSAL` is deliberately
+  absent from `artifact_names._PURPOSE_SLUGS`, so a marker for it is
+  unnameable by construction — `oneshot_marker_name` raises.
+  ARTIFACT NAMING: `sentinel/phase5/artifact_names.py` is UNCHANGED. The
+  existing `rehearsal_evidence_name` namespace
+  (`sentinel-p5-rehearsal-r<run>-a<attempt>`) is reused: it is
+  collision-free by construction (distinct literal segment, fully anchored
+  per-kind patterns) and per-run unique via `github.run_id`. Observations
+  travel in a separate artifact,
+  `sentinel-p5-rehearsal-observations-r<run>-a<attempt>`, which parses to
+  "not one of ours" and enters no official discovery prefix. Keeping the
+  terminal artifact to exactly the three allowlisted publication files is
+  what lets the real `confirm` path run unchanged.
+  PPID ANCESTRY CORRECTION (carried from plan-c to plan-d, and
+  load-bearing here): an earlier plan revision incorrectly equated
+  session/process-group isolation with ancestry escape. Live source
+  disproves it — `agents/checker/process_control.py`'s `ProcessStat`
+  carries exactly `pid`, `ppid`, `state`, `starttime` (no PGID, no SID),
+  `descendants_of` BFSes purely over PPID edges, signals go to individual
+  PIDs and there is no `killpg` anywhere. A process may therefore sit in a
+  new session AND a new process group and remain a direct PPID descendant.
+  What actually escapes is PPID reparenting (classically
+  fork-and-parent-exit). The rehearsal evidence is stratified accordingly:
+  class A is an ancestry-intact child/grandchild tree that MUST be
+  discovered and terminated; class B is a deliberately double-forked
+  survivor whose escape is EXPECTED EVIDENCE of the documented boundary
+  and is never by itself a stop; C-static is a model-free `ast` inspection
+  of the pinned transport source reporting three separate groups (child
+  creation mechanism; session/process-group configuration, DESCRIPTIVE
+  ONLY and never a pass/stop input; source-visible ancestry-breaking
+  mechanisms) with verdicts `ANCESTRY_PRESERVED_AT_PYTHON_LAYER`,
+  `ANCESTRY_ESCAPE_MECHANISM_PRESENT` or `UNKNOWN`. There is deliberately
+  no `spawn_detached` rule anywhere. Only a source-visible mechanism that
+  actually reparents execution outside the driver's PPID ancestry is an
+  escape finding; `UNKNOWN` is an honest non-result and never evidence of
+  safety. No child subreaper was added.
+  C-STATIC BOUNDED INFERENCE: the inspection covers the Python transport
+  layer only and records that limit in its own payload. It cannot
+  establish whether the bundled Node CLI forks, daemonizes or reparents
+  itself after launch. The bundled CLI is inspected statically and NEVER
+  executed, because spawning it — even with a non-network flag — risks
+  provider contact that §12 does not permit.
+  RESIDUAL CARRIED FORWARD, NOT CLOSED: `REAL_CLI_TOPOLOGY_UNOBSERVED`.
+  Stage 2C-B1 does not close the reparenting residual, and neither will
+  B2 alone. Closure belongs to the N=24 Sonnet timing rehearsal
+  (ADR-0012 §13), the only lane that will run the real CLI on a real Linux
+  runner, which must capture: the CLI `(pid, starttime)` identity; its
+  PPID ancestry back to the controlled root while live; the ancestry of
+  every CLI-created descendant while live; whether any process becomes
+  reparented outside that tree at any point during the invocation, sampled
+  across it rather than observed once; process identities before, during
+  and after each invocation; and a final survivor scan after all 24
+  proving no CLI-related process survived outside the tree. `sid`/`pgid`
+  may be supplemental descriptive fields and are never decisive.
+  JOB-TIMEOUT BOUNDARY KEPT EMPIRICAL: GitHub's cancellation reference
+  documents the SIGINT / 7500 ms / SIGTERM / 2500 ms sequence, the
+  re-evaluation of unfinished steps' `if` conditions and the 5-minute
+  cancellation timeout — but it describes CANCELLATION and does not state
+  that a job-level `timeout-minutes` expiry follows the same path, which
+  is exactly what ADR-0012 A5 says only the real rehearsal can establish.
+  Nothing in this stage cites that sequence as proof. The tail's 1/2/1
+  budget is sized by analogy to the official gate's own pinned budget — a
+  design choice, not evidence. B2 may PASS only on empirical evidence that
+  the required sequence actually occurred, and must STOP if job-timeout
+  behaviour prevents real finalization/publication.
+  WORKFLOW SURFACE: `.github/workflows/sentinel-kill-rehearsal.yml` is
+  `workflow_dispatch`-only with a required `expected_source_sha`, has
+  permissions of exactly `contents: read` + `actions: read` (the
+  token-issuing permission is absent, so OIDC is structurally unreachable
+  rather than merely unused), carries no provider environment variable,
+  uses concurrency group `sentinel-kill-rehearsal`, runs on
+  `ubuntu-latest` with a JOB timeout of 8 minutes, and pins the same three
+  frozen action SHAs. Step order is probe, upload observations,
+  fake-execute, finalize, upload terminal evidence, confirm. The
+  fake-execute step deliberately carries NO step-level timeout, because a
+  step timeout would prove the wrong thing; the JOB timeout is what must
+  fire. Observations are uploaded BEFORE the kill so they cannot be lost
+  to the cancellation window. The terminal upload lists exactly
+  `phase5_official_gate.json`, `phase5_official_gate_checks.json` and
+  `phase5_gate_journal.jsonl` — no glob, no staging, no quarantine.
+  TEST-BOUNDARY NARROWINGS (per-path, never blanket): in
+  `tests/test_phase5_terminal.py`, `_PERMITTED_WIRING_SCRIPTS` gains
+  exactly `scripts/run_phase5_kill_rehearsal.py`; in
+  `tests/test_checker_process_control.py`,
+  `test_nothing_outside_tests_imports_the_new_modules` now permits
+  `process_control` and `runtime_identity` in that one new driver only.
+  `envelope_guard` stays forbidden there, and `runtime_identity` stays
+  forbidden in `scripts/run_phase5_official_gate.py`. Runtime identity is
+  captured as rehearsal EVIDENCE only and is bound to no readiness claim.
+  VERIFICATION: focused set 357 passed / 12 skipped; full suite 2272
+  passed / 31 skipped locally; coverage 92.5%; `python -m pip check` clean;
+  `python .githooks/validate_artifacts.py .` Tier 0 PASS;
+  `python scripts/check_phase1_frozen.py` PASS. Every local skip is an
+  existing platform-conditional design on this Windows workstation
+  (Linux-only `/proc` ancestry and termination, POSIX symlink, fd
+  inheritance, signal re-delivery and file-mode semantics), none waived
+  for convenience; exactly 2 of the 31 are this stage's own Linux-only
+  class-A/class-B ancestry probes, which therefore run for the first time
+  under exact-SHA CI on `ubuntu-latest`. The new workflow was additionally
+  parsed statically and pinned for permissions, 8-minute job timeout,
+  dispatch-only trigger, absent token-issuing permission, absent provider
+  environment, absent step timeout on fake-execute, 1/2/1 tail, absent
+  marker step and absent provider/OIDC invocation.
+  Executing model: Opus 5 (the routing named Opus 5; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 11 declared paths):
+  `.github/workflows/sentinel-kill-rehearsal.yml`,
+  `scripts/run_phase5_kill_rehearsal.py`,
+  `scripts/run_phase5_gate_finalizer.py`, `sentinel/phase5/terminal.py`,
+  `tests/test_phase5_kill_rehearsal.py`,
+  `tests/test_phase5_gate_finalizer.py`, `tests/test_phase5_terminal.py`,
+  `tests/test_phase5_workflow_contracts.py`,
+  `tests/test_checker_process_control.py`, `STATE.md` (this entry),
+  `.publicgate-allow` (one entry for this entry's status line). No ADR,
+  `runtime_identity.py`, `process_control.py`, `envelope_guard.py`,
+  `artifact_names.py`, `journal.py`, `evidence_records.py`,
+  `run_phase5_official_gate.py`, `sentinel-official-gate.yml`, harness,
+  OIDC, pipeline, envelope, fixture, prompt, scorer, checker, threshold,
+  evaluation, requirements, receipt-registry, `FINDINGS.md` or telemetry
+  change.
+  NON-EVENTS: the new rehearsal workflow was created and pushed but NEVER
+  EXECUTED — no manual dispatch, rerun or cancel of it or any other
+  workflow; no model or provider call; no bundled-CLI execution; no
+  OIDC/WIF exchange; no federation-rule, provider-cap, secret, variable or
+  environment mutation; no marker of any purpose created, reset or
+  consumed; no N=24 Sonnet timing rehearsal; no
+  `artifacts/phase5_execution_envelope.json` and `ENVELOPE` stays `None`;
+  no runtime-identity readiness binding; no replacement readiness
+  declared; no replacement gate authorized or executed; no P5-E work; no
+  original Sonnet quality content inspected; no frozen quality-surface
+  change; no investigation, diagnosis or remediation of scheduled run
+  `r-b2312774c5c34303b8dcfa3d045a39c9` or its 73 dead-letter tasks.
+  RESIDUALS (recorded, not closed here): `REAL_CLI_TOPOLOGY_UNOBSERVED` as
+  specified above; whether a job-level `timeout-minutes` expiry follows
+  the documented cancellation path remains unproven until B2; the class-A,
+  class-B and C-static evidence classes have never run on a real GitHub
+  runner, so every B2 PASS/STOP predicate remains a specification rather
+  than a result; the post-control code paths remain exercised only via
+  dependency injection and against no committed envelope; whether a child
+  subreaper is needed remains a readiness matter and none was added.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  ADR-0012 repair Stage 1, Stage 2A, Stage 2B-1, Stage 2B-2, Stage 2C-1,
+  Stage 2C-2, Stage 2C-3 and Stage 2C-B1 LANDED, durable single-attempt
+  consumption latch PENDING, model-free GitHub kill rehearsal NOT
+  EXECUTED, Sonnet timing rehearsal NOT EXECUTED, fresh replacement
+  readiness NOT COMPLETE, replacement NOT READY / NOT AUTHORIZED FOR
+  DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B1 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2C-B2 — execute and adjudicate the model-free GitHub
+  job-level kill rehearsal against the landed surface, as its own bounded
+  child dispatch; not begun here.

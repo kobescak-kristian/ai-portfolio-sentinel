@@ -875,14 +875,28 @@ def test_nothing_outside_tests_imports_the_new_modules():
     into exactly one runner path, scripts/run_phase5_official_gate.py;
     every other script/workflow file, and runtime_identity everywhere
     (including that one runner), remain forbidden -- runtime-identity
-    readiness binding is still deferred past this stage."""
+    readiness binding is still deferred past this stage.
+
+    Stage 2C-B1 (dispatch q77-p5d-repair-stage2cb1-implement-b, owner
+    ruling q77-p5d-stage2cb1-finalizer-ruling-a) narrows this once
+    more, for exactly one additional path: the model-free kill-rehearsal
+    driver scripts/run_phase5_kill_rehearsal.py may reference
+    process_control (it exercises descendant termination against its own
+    synthetic probe tree) and runtime_identity (it captures the Linux
+    runtime identity as rehearsal evidence only, bound to no readiness
+    claim). envelope_guard stays forbidden there, and runtime_identity
+    stays forbidden in the official gate runner. Per-path allowances
+    only -- never a blanket allowance."""
     all_tokens = ("process_control", "envelope_guard", "runtime_identity")
-    allowed_runner = REPO_ROOT / "scripts" / "run_phase5_official_gate.py"
+    permitted_by_path = {
+        REPO_ROOT / "scripts" / "run_phase5_official_gate.py": {"process_control", "envelope_guard"},
+        REPO_ROOT / "scripts" / "run_phase5_kill_rehearsal.py": {"process_control", "runtime_identity"},
+    }
     for root in ("scripts", ".github"):
         for path in (REPO_ROOT / root).rglob("*"):
             if path.is_file() and path.suffix in (".py", ".yml", ".yaml"):
                 text = path.read_text(encoding="utf-8")
-                permitted = {"process_control", "envelope_guard"} if path == allowed_runner else set()
+                permitted = permitted_by_path.get(path, set())
                 for token in all_tokens:
                     if token not in permitted:
                         assert token not in text, (path, token)

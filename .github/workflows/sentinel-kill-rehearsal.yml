@@ -1,0 +1,125 @@
+name: sentinel-kill-rehearsal
+
+# P5-D model-free GitHub job-level kill rehearsal (ADR-0012 section 12
+# and Amendment A5/A8; approved plan q77-p5d-repair-stage2cb1-plan-d;
+# owner ruling q77-p5d-stage2cb1-finalizer-ruling-a, Stage 2C-B1).
+#
+# Stage 2C-B1 CREATES this surface and never executes it. Execution is
+# Stage 2C-B2, a separate governed dispatch.
+#
+# Structurally model-free: the token-issuing permission is absent from
+# this lane, so OIDC is unreachable rather than merely unused; no
+# provider environment variable is present; no one-shot gate artifact
+# of any purpose is created, consumed or looked up; the bundled CLI is
+# inspected statically and never executed.
+#
+# The kill under test is a real JOB-level timeout. The fake-execute
+# step deliberately carries NO step-level timeout -- a step timeout
+# would prove the wrong thing (ADR-0012 section 12: a step-level
+# timeout never substitutes for job-level proof). Observations are
+# published BEFORE the kill so they cannot be lost to the platform's
+# cancellation window; only the terminal tail depends on post-timeout
+# behaviour, which is exactly what this rehearsal exists to measure.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: "Exact 40-lowercase-hex commit SHA this rehearsal is running against"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: sentinel-kill-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  kill-rehearsal:
+    name: kill-rehearsal
+    if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - name: probe
+        id: probe
+        timeout-minutes: 4
+        run: >
+          python scripts/run_phase5_kill_rehearsal.py probe
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --work-root "$WORK_ROOT"
+          --artifacts-dir "$ARTIFACTS_DIR"
+          --observations-out "$WORK_ROOT/rehearsal/phase5_kill_rehearsal_observations.json"
+        env:
+          WORK_ROOT: ${{ runner.temp }}/p5-kill-rehearsal
+          ARTIFACTS_DIR: ${{ runner.temp }}/p5-kill-rehearsal/artifacts
+      - name: upload rehearsal observations
+        id: observations
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: sentinel-p5-rehearsal-observations-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/p5-kill-rehearsal/rehearsal/phase5_kill_rehearsal_observations.json
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: false
+      - name: fake-execute
+        id: fake_execute
+        run: >
+          python scripts/run_phase5_kill_rehearsal.py fake-execute
+          --artifacts-dir "$ARTIFACTS_DIR"
+        env:
+          WORK_ROOT: ${{ runner.temp }}/p5-kill-rehearsal
+          ARTIFACTS_DIR: ${{ runner.temp }}/p5-kill-rehearsal/artifacts
+      - name: finalize
+        id: finalize
+        if: always()
+        timeout-minutes: 1
+        run: >
+          python scripts/run_phase5_gate_finalizer.py finalize
+          --lane rehearsal
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --artifacts-dir "$ARTIFACTS_DIR"
+        env:
+          EXECUTE_STEP_OUTCOME: ${{ steps.fake_execute.outcome }}
+          WORK_ROOT: ${{ runner.temp }}/p5-kill-rehearsal
+          ARTIFACTS_DIR: ${{ runner.temp }}/p5-kill-rehearsal/artifacts
+      - name: upload rehearsal evidence
+        id: upload
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: sentinel-p5-rehearsal-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/p5-kill-rehearsal/artifacts/phase5_official_gate.json
+            ${{ runner.temp }}/p5-kill-rehearsal/artifacts/phase5_official_gate_checks.json
+            ${{ runner.temp }}/p5-kill-rehearsal/artifacts/phase5_gate_journal.jsonl
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: false
+      - name: confirm rehearsal evidence publication
+        id: confirm
+        if: always()
+        timeout-minutes: 1
+        run: >
+          python scripts/run_phase5_gate_finalizer.py confirm
+          --lane rehearsal
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --artifacts-dir "$ARTIFACTS_DIR"
+          --work-root "$WORK_ROOT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPLOAD_STEP_OUTCOME: ${{ steps.upload.outcome }}
+          UPLOADED_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          UPLOADED_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          WORK_ROOT: ${{ runner.temp }}/p5-kill-rehearsal
+          ARTIFACTS_DIR: ${{ runner.temp }}/p5-kill-rehearsal/artifacts

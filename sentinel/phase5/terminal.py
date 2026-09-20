@@ -668,17 +668,24 @@ def consumption_from(marker_step_outcome: str, rest_marker_visible: bool | None)
     return "ASSUMED_CONSUMED_REST_UNAVAILABLE"
 
 
-def decide_finalization(
+def decide_terminal_disposition(
     *,
-    run_attempt: int,
-    consumption: MarkerConsumption,
     candidate: CandidateVerdictKind,
     journal: JournalSummary,
     execute_step_outcome: str,
     candidate_replaceable: bool = True,
 ) -> FinalizerDecision:
-    """The frozen Stage-2B finalizer decision table, extended minimally
-    in Stage 2C-1. Pure; no I/O.
+    """Post-eligibility terminal-disposition selection. Callers reach
+    here only after their own lane's eligibility gate has already
+    passed, so this function asks no eligibility question of its own.
+
+    Extracted verbatim from ``decide_finalization`` under owner ruling
+    ``q77-p5d-stage2cb1-finalizer-ruling-a`` (Stage 2C-B1) so a
+    marker-free lane can reach the same rows through its own explicit
+    marker-not-applicable gate. No existing row, predicate or outcome
+    changed; ``MarkerConsumption`` and ``consumption_from`` are
+    untouched, and ``decide_finalization`` remains return-equivalent
+    across its whole finite decision domain.
 
     Signal != cause: any observed signal (or a platform-cancelled execute
     step) yields UNCLASSIFIED_TERMINATION, never INFRASTRUCTURE_FAILURE.
@@ -689,11 +696,6 @@ def decide_finalization(
     with later observed signals carried as descriptive only. A CORRUPT
     journal never gains that authority, and trusted candidate kinds
     remain the highest authority regardless of journal content."""
-    if run_attempt != 1:
-        return FinalizerDecision(action="NO_TERMINAL_REQUIRED", reason="RUN_ATTEMPT_GT_1")
-    if consumption == "NOT_CONSUMED_BY_THIS_ATTEMPT":
-        return FinalizerDecision(action="NO_TERMINAL_REQUIRED", reason="NOT_CONSUMED_BY_THIS_ATTEMPT")
-
     signals: tuple[ObservedSignal, ...] = tuple(dict.fromkeys(journal.signals))
     if execute_step_outcome == "cancelled" and not signals:
         signals = ("UNKNOWN_EXTERNAL_TERMINATION",)
@@ -744,3 +746,34 @@ def decide_finalization(
         )
 
     return FinalizerDecision(action="INTERNAL_ERROR", reason="UNKNOWN_CANDIDATE_VERDICT")
+
+
+def decide_finalization(
+    *,
+    run_attempt: int,
+    consumption: MarkerConsumption,
+    candidate: CandidateVerdictKind,
+    journal: JournalSummary,
+    execute_step_outcome: str,
+    candidate_replaceable: bool = True,
+) -> FinalizerDecision:
+    """The frozen Stage-2B finalizer decision table, extended minimally
+    in Stage 2C-1. Pure; no I/O.
+
+    The official gate's eligibility gates stay here and stay unchanged:
+    a rerun attempt and a marker this attempt did not consume both owe
+    no terminal evidence. Everything after those two gates is the
+    shared ``decide_terminal_disposition`` table (Stage 2C-B1, owner
+    ruling ``q77-p5d-stage2cb1-finalizer-ruling-a``), which this
+    function delegates to without altering any row, predicate or
+    outcome."""
+    if run_attempt != 1:
+        return FinalizerDecision(action="NO_TERMINAL_REQUIRED", reason="RUN_ATTEMPT_GT_1")
+    if consumption == "NOT_CONSUMED_BY_THIS_ATTEMPT":
+        return FinalizerDecision(action="NO_TERMINAL_REQUIRED", reason="NOT_CONSUMED_BY_THIS_ATTEMPT")
+    return decide_terminal_disposition(
+        candidate=candidate,
+        journal=journal,
+        execute_step_outcome=execute_step_outcome,
+        candidate_replaceable=candidate_replaceable,
+    )

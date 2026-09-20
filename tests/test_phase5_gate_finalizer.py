@@ -780,3 +780,191 @@ def test_finalizer_journal_events_are_finalizer_scoped_and_content_free(fin, run
     journal_bytes = (artifacts / t.JOURNAL_FILENAME).read_bytes()
     for forbidden in (b"HONEST_FAIL", b"GREEN", b"pooled", b"emitted"):
         assert forbidden not in journal_bytes
+
+
+# ===========================================================================
+# Stage 2C-B1 rehearsal lane (dispatch q77-p5d-repair-stage2cb1-implement-b;
+# owner ruling q77-p5d-stage2cb1-finalizer-ruling-a).
+#
+# The model-free kill rehearsal has NO marker by ADR design. This lane
+# creates none, consumes none, looks none up, fabricates no CONSUMED
+# value and journals no consumption statement -- it passes its own
+# marker-not-applicable gate and enters the SAME shared
+# post-eligibility rows the official lane uses.
+# ===========================================================================
+
+KILL_WORKFLOW = ".github/workflows/sentinel-kill-rehearsal.yml"
+REHEARSAL_ARTIFACT = f"sentinel-p5-rehearsal-r{RUN_ID}-a1"
+
+
+def _rehearsal_world(runner, tmp_path, monkeypatch, *, execute="failure", **env):
+    output, _summary = _set_env(
+        monkeypatch, tmp_path, EXECUTE_STEP_OUTCOME=execute,
+        GITHUB_WORKFLOW_REF=f"kobescak-kristian/ai-portfolio-sentinel/{KILL_WORKFLOW}@refs/heads/main",
+        **env,
+    )
+    work = tmp_path / "p5-kill-rehearsal"
+    work.mkdir()
+    artifacts = work / "artifacts"
+    runner.establish_preflight_journal(artifacts)
+    args = argparse.Namespace(expected_source_sha=SHA, artifacts_dir=artifacts, lane="rehearsal")
+    return args, artifacts, work, output
+
+
+def _written_record(artifacts: Path) -> GateEvidenceRecord:
+    return GateEvidenceRecord.model_validate_json(
+        (artifacts / t.TERMINAL_FILENAME).read_text(encoding="utf-8")
+    )
+
+
+def _forbid_consumption(monkeypatch, fin):
+    def _forbidden(*args, **kwargs):
+        raise AssertionError("the rehearsal lane must never ask about marker consumption")
+
+    monkeypatch.setattr(fin, "consumption_from", _forbidden)
+
+
+def test_rehearsal_lane_makes_no_marker_rest_call_and_journals_no_consumption(
+    fin, runner, tmp_path, monkeypatch
+):
+    args, artifacts, _work, output = _rehearsal_world(runner, tmp_path, monkeypatch)
+    _no_rest(monkeypatch, fin)
+    _forbid_consumption(monkeypatch, fin)
+    assert fin.cmd_finalize(args) == 0
+    events = _events(artifacts)
+    assert "FINALIZER_CONSUMPTION" not in [e.event for e in events]
+    assert "FINALIZER_CANDIDATE" in [e.event for e in events]
+    assert "FINALIZER_DECISION" in [e.event for e in events]
+    assert all(e.consumption is None for e in events)
+    assert _outputs(output)["terminal_required"] == "true"
+
+
+def test_rehearsal_lane_absent_candidate_reaches_shared_write_unclassified(
+    fin, runner, tmp_path, monkeypatch, capsys
+):
+    args, artifacts, _work, output = _rehearsal_world(runner, tmp_path, monkeypatch, execute="cancelled")
+    _no_rest(monkeypatch, fin)
+    _forbid_consumption(monkeypatch, fin)
+    assert fin.cmd_finalize(args) == 0
+    assert _outputs(output) == {"terminal_required": "true", "decision": "WRITE_UNCLASSIFIED"}
+    assert "consumption=NOT_APPLICABLE" in capsys.readouterr().out
+    record = _written_record(artifacts)
+    assert record.disposition == "UNCLASSIFIED_TERMINATION"
+    assert record.unclassified_basis == "OBSERVED_SIGNAL"
+    assert record.observed_signals == ("UNKNOWN_EXTERNAL_TERMINATION",)
+
+
+def test_rehearsal_record_carries_truthful_non_quality_identity(fin, runner, tmp_path, monkeypatch):
+    args, artifacts, _work, _output = _rehearsal_world(runner, tmp_path, monkeypatch)
+    _no_rest(monkeypatch, fin)
+    assert fin.cmd_finalize(args) == 0
+    record = _written_record(artifacts)
+    # No model was invoked on this lane, and no quality profile ran.
+    assert record.model == "NO_MODEL_INVOKED" == fin.REHEARSAL_MODEL
+    assert record.profile_name == "p5d-kill-rehearsal" == fin.REHEARSAL_PROFILE_NAME
+    assert fin.REHEARSAL_PURPOSE == "P5D_KILL_REHEARSAL"
+    # No authentication occurred: the lane has no token-issuing permission.
+    assert record.auth_mode is None
+    assert record.model != "claude-sonnet-5"
+    # Structurally non-quality.
+    assert record.run_ids == () and record.scoring == {} and record.cost_rows == ()
+    assert record.accounted_total_eur_micros == 0
+    assert record.terminal_writer is None
+
+
+def test_rehearsal_record_has_no_replacement_provenance_and_is_rejected_as_replacement(
+    fin, runner, tmp_path, monkeypatch
+):
+    args, artifacts, _work, _output = _rehearsal_world(runner, tmp_path, monkeypatch)
+    _no_rest(monkeypatch, fin)
+    assert fin.cmd_finalize(args) == 0
+    record = _written_record(artifacts)
+    for field in ("replacement_of_run_id", "owner_ruling_id", "marker_purpose",
+                  "envelope_id", "envelope_version", "terminal_writer"):
+        assert getattr(record, field) is None, field
+    from sentinel.phase5.evidence_records import validate_replacement_provenance
+    with pytest.raises(ValueError):
+        validate_replacement_provenance(record, expected_source_sha=SHA)
+    # Under the replacement purpose the bytes classify as PROVENANCE_INVALID.
+    replacement_identity = _identity(
+        workflow_identity=KILL_WORKFLOW, purpose="P5D_REPLACEMENT_SONNET_GATE"
+    )
+    assert t.verify_terminal_bytes(_bytes(record), replacement_identity).kind == "PROVENANCE_INVALID"
+
+
+def test_rehearsal_lane_cannot_author_a_quality_result(fin, runner, tmp_path, monkeypatch):
+    """The shared core writes only terminal.build_invalid_record output,
+    so no rehearsal run can ever produce GREEN or HONEST_FAIL."""
+    args, artifacts, _work, _output = _rehearsal_world(runner, tmp_path, monkeypatch)
+    _no_rest(monkeypatch, fin)
+    assert fin.cmd_finalize(args) == 0
+    assert _written_record(artifacts).disposition == "UNCLASSIFIED_TERMINATION"
+    tree = ast.parse(FINALIZER_PATH.read_text(encoding="utf-8"))
+    literals = {
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert "GREEN" not in literals and "HONEST_FAIL" not in literals
+
+
+def test_rehearsal_lane_preserves_trusted_runner_evidence(fin, runner, tmp_path, monkeypatch):
+    """Trusted-candidate precedence is shared, unchanged behaviour."""
+    args, artifacts, _work, output = _rehearsal_world(runner, tmp_path, monkeypatch)
+    _no_rest(monkeypatch, fin)
+    identity = _identity(workflow_identity=KILL_WORKFLOW, purpose=fin.REHEARSAL_PURPOSE)
+    raw = t.build_invalid_record(
+        identity=identity, envelope=None, created_at_utc=datetime(2026, 9, 19, tzinfo=timezone.utc),
+        model=fin.REHEARSAL_MODEL, profile_name=fin.REHEARSAL_PROFILE_NAME,
+        infrastructure_cause="RUNNER_EXCEPTION", writer="RUNNER",
+    )
+    data = _bytes(runner.attribute_invalid_record(raw, purpose=fin.REHEARSAL_PURPOSE))
+    (artifacts / t.TERMINAL_FILENAME).write_bytes(data)
+    assert fin.cmd_finalize(args) == 0
+    assert _outputs(output)["decision"] == "PRESERVE_RUNNER_EVIDENCE"
+    assert (artifacts / t.TERMINAL_FILENAME).read_bytes() == data
+
+
+def test_rehearsal_confirm_targets_the_rehearsal_artifact_namespace(fin, tmp_path, monkeypatch, capsys):
+    _set_env(monkeypatch, tmp_path, UPLOAD_STEP_OUTCOME="success",
+             GITHUB_WORKFLOW_REF=f"kobescak-kristian/ai-portfolio-sentinel/{KILL_WORKFLOW}@refs/heads/main")
+    work, root = _roots(tmp_path)
+    asked: list = []
+    clock = _Clock()
+
+    class _NameSpy:
+        def list_run_artifacts_named(self, run_id, name):
+            asked.append(name)
+            raise GithubEvidenceError("stop here; the requested name is what this test pins")
+
+    monkeypatch.setattr(fin, "build_evidence_client", lambda env, **kw: _NameSpy())
+    args = argparse.Namespace(
+        expected_source_sha=SHA, artifacts_dir=root, work_root=work, lane="rehearsal"
+    )
+    fin.cmd_confirm(args, sleep=clock.sleep, monotonic=clock.monotonic)
+    assert asked and set(asked) == {REHEARSAL_ARTIFACT}
+    assert not any(name.startswith("sentinel-p5-gate-evidence-") for name in asked)
+    assert REHEARSAL_ARTIFACT in capsys.readouterr().out
+
+
+def test_official_lane_is_the_default_and_is_unchanged(fin, runner, tmp_path, monkeypatch, capsys):
+    """No --lane means official: marker reasoning, the consumption event
+    and the official Sonnet identity all still apply."""
+    args, artifacts, _work, output = _finalize_world(runner, tmp_path, monkeypatch)
+    assert not hasattr(args, "lane")
+    _no_rest(monkeypatch, fin)
+    assert fin.cmd_finalize(args) == 0
+    events = _events(artifacts)
+    consumption = [e for e in events if e.event == "FINALIZER_CONSUMPTION"]
+    assert len(consumption) == 1 and consumption[0].consumption == "CONSUMED"
+    assert "consumption=CONSUMED" in capsys.readouterr().out
+    record = _written_record(artifacts)
+    assert (record.model, record.profile_name) == runner.gate_profile_identity()
+    assert record.model != fin.REHEARSAL_MODEL
+    assert _outputs(output)["terminal_required"] == "true"
+
+
+def test_lane_vocabulary_is_closed_and_unknown_lanes_are_rejected(fin):
+    assert fin.LANES == ("official", "rehearsal")
+    assert fin.OFFICIAL_LANE == "official" and fin.REHEARSAL_LANE == "rehearsal"
+    with pytest.raises(SystemExit):
+        fin.main(["finalize", "--expected-source-sha", SHA, "--artifacts-dir", "a", "--lane", "nope"])

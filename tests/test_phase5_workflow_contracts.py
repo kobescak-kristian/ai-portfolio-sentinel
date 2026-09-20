@@ -30,6 +30,7 @@ EXPECTED_FILES = {
     "sentinel-wif-probe.yml",
     "sentinel-official-gate.yml",
     "sentinel-window-control.yml",
+    "sentinel-kill-rehearsal.yml",
 }
 
 P5_WORKFLOWS = {
@@ -38,6 +39,9 @@ P5_WORKFLOWS = {
     "sentinel-wif-probe.yml": {"timeout": 20, "concurrency": "sentinel-oneshot-p5c", "id_token": True},
     "sentinel-official-gate.yml": {"timeout": 30, "concurrency": "sentinel-oneshot-p5d", "id_token": True},
     "sentinel-window-control.yml": {"timeout": 15, "concurrency": "sentinel-window-control", "id_token": False},
+    # Stage 2C-B1: the model-free job-level kill rehearsal. A short JOB
+    # timeout is the whole point -- it is what must fire.
+    "sentinel-kill-rehearsal.yml": {"timeout": 8, "concurrency": "sentinel-kill-rehearsal", "id_token": False},
 }
 
 
@@ -67,7 +71,8 @@ def test_schedule_workflow_trigger_is_exact_cron_only():
 
 
 @pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-wif-probe.yml",
-                                   "sentinel-official-gate.yml", "sentinel-window-control.yml"])
+                                   "sentinel-official-gate.yml", "sentinel-window-control.yml",
+                                   "sentinel-kill-rehearsal.yml"])
 def test_manual_workflows_trigger_only_on_workflow_dispatch(name):
     data = _load(name)
     trigger = data[True]
@@ -75,7 +80,7 @@ def test_manual_workflows_trigger_only_on_workflow_dispatch(name):
 
 
 @pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-wif-probe.yml",
-                                   "sentinel-official-gate.yml"])
+                                   "sentinel-official-gate.yml", "sentinel-kill-rehearsal.yml"])
 def test_manual_workflows_declare_required_expected_source_sha_input(name):
     data = _load(name)
     inputs = data[True]["workflow_dispatch"]["inputs"]
@@ -166,7 +171,9 @@ def test_per_lane_federation_rule_variable_maps_to_the_provider_env_name(name, r
         assert other not in text
 
 
-@pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-window-control.yml"])
+@pytest.mark.parametrize(
+    "name", ["sentinel-rehearsal.yml", "sentinel-window-control.yml", "sentinel-kill-rehearsal.yml"]
+)
 def test_model_free_workflows_have_no_anthropic_env(name):
     text = (WORKFLOWS_DIR / name).read_text(encoding="utf-8")
     assert "ANTHROPIC_" not in text
@@ -217,6 +224,7 @@ def test_entrypoint_commands_reference_existing_script_files():
     script_names = [
         "run_phase5_scheduled.py", "run_phase5_rehearsal.py", "run_phase5_wif_probe.py",
         "run_phase5_official_gate.py", "run_phase5_window_freeze.py",
+        "run_phase5_kill_rehearsal.py",
     ]
     all_text = "\n".join((WORKFLOWS_DIR / name).read_text(encoding="utf-8") for name in P5_WORKFLOWS)
     for script in script_names:
@@ -423,3 +431,127 @@ def test_official_gate_no_step_echoes_terminal_or_journal_content():
         run = step.get("run", "")
         for token in ("cat ", "phase5_gate_journal", "phase5_official_gate.json", "GITHUB_STEP_SUMMARY", "echo "):
             assert token not in run, (step.get("name"), token)
+
+
+# =====================================================================
+# Stage 2C-B1 (dispatch q77-p5d-repair-stage2cb1-implement-b; owner
+# ruling q77-p5d-stage2cb1-finalizer-ruling-a): the model-free
+# job-level kill rehearsal. Created here, NEVER executed here.
+# =====================================================================
+
+KILL_REHEARSAL = "sentinel-kill-rehearsal.yml"
+
+
+def _kill_steps() -> list:
+    data = _load(KILL_REHEARSAL)
+    return next(iter(data["jobs"].values()))["steps"]
+
+
+def _kill_step(name: str) -> dict:
+    return next(s for s in _kill_steps() if s.get("name") == name)
+
+
+def test_kill_rehearsal_runs_on_ubuntu_and_names_its_job():
+    data = _load(KILL_REHEARSAL)
+    assert data["jobs"]["kill-rehearsal"]["name"] == "kill-rehearsal"
+    assert data["jobs"]["kill-rehearsal"]["runs-on"] == "ubuntu-latest"
+
+
+def test_kill_rehearsal_step_order_is_probe_observations_fake_finalize_upload_confirm():
+    names = [s.get("name") for s in _kill_steps() if s.get("name")]
+    order = [
+        "probe", "upload rehearsal observations", "fake-execute", "finalize",
+        "upload rehearsal evidence", "confirm rehearsal evidence publication",
+    ]
+    assert [n for n in names if n in order] == order
+
+
+def test_kill_rehearsal_observations_upload_precedes_fake_execution():
+    """Observations must be published BEFORE the kill, so they can never
+    be lost to the platform's cancellation window."""
+    names = [s.get("name") for s in _kill_steps() if s.get("name")]
+    assert names.index("upload rehearsal observations") < names.index("fake-execute")
+
+
+def test_kill_rehearsal_fake_execute_has_no_step_level_timeout():
+    """ADR-0012 section 12: a step-level timeout never substitutes for
+    job-level proof. The JOB timeout is what must fire."""
+    assert "timeout-minutes" not in _kill_step("fake-execute")
+
+
+def test_kill_rehearsal_finalization_tail_is_1_2_1():
+    finalize = _kill_step("finalize")["timeout-minutes"]
+    upload = _kill_step("upload rehearsal evidence")["timeout-minutes"]
+    confirm = _kill_step("confirm rehearsal evidence publication")["timeout-minutes"]
+    assert (finalize, upload, confirm) == (1, 2, 1)
+    assert finalize + upload + confirm <= 4
+    assert _load(KILL_REHEARSAL)["jobs"]["kill-rehearsal"]["timeout-minutes"] == 8
+
+
+def test_kill_rehearsal_tail_steps_are_always():
+    for name in ("upload rehearsal observations", "finalize",
+                 "upload rehearsal evidence", "confirm rehearsal evidence publication"):
+        assert _kill_step(name)["if"] == "always()", name
+    assert _kill_step("fake-execute").get("if") is None
+
+
+def test_kill_rehearsal_artifact_names_are_exact_and_non_colliding():
+    observations = _kill_step("upload rehearsal observations")["with"]["name"]
+    terminal = _kill_step("upload rehearsal evidence")["with"]["name"]
+    assert terminal == "sentinel-p5-rehearsal-r${{ github.run_id }}-a${{ github.run_attempt }}"
+    assert observations == (
+        "sentinel-p5-rehearsal-observations-r${{ github.run_id }}-a${{ github.run_attempt }}"
+    )
+    for name in (observations, terminal):
+        assert not name.startswith("sentinel-p5-oneshot-")
+        assert not name.startswith("sentinel-p5-gate-evidence-")
+
+
+def test_kill_rehearsal_terminal_upload_is_exactly_the_three_allowlisted_files():
+    upload = _kill_step("upload rehearsal evidence")
+    paths = upload["with"]["path"].splitlines()
+    assert [p.rsplit("/", 1)[1] for p in paths] == [
+        "phase5_official_gate.json", "phase5_official_gate_checks.json", "phase5_gate_journal.jsonl",
+    ]
+    assert not any("*" in p or "staging" in p or "quarantine" in p for p in paths)
+    assert upload["with"]["overwrite"] is False
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
+def test_kill_rehearsal_has_no_marker_step_and_no_provider_or_oidc_invocation():
+    text = (WORKFLOWS_DIR / KILL_REHEARSAL).read_text(encoding="utf-8")
+    assert "id-token" not in text
+    assert "ANTHROPIC_" not in text
+    assert "oneshot" not in text.lower()
+    assert "marker" not in text.lower()
+    for step in _kill_steps():
+        assert "marker" not in (step.get("name") or "").lower()
+        run = step.get("run", "")
+        assert "run_phase5_official_gate.py" not in run
+        assert "--lane official" not in run
+
+
+def test_kill_rehearsal_drives_the_rehearsal_lane_of_the_single_finalizer():
+    finalize = _kill_step("finalize")
+    confirm = _kill_step("confirm rehearsal evidence publication")
+    assert "run_phase5_gate_finalizer.py finalize" in finalize["run"]
+    assert "run_phase5_gate_finalizer.py confirm" in confirm["run"]
+    for step in (finalize, confirm):
+        assert "--lane rehearsal" in step["run"]
+        assert '--expected-source-sha "${{ inputs.expected_source_sha }}"' in step["run"]
+    assert finalize["env"]["EXECUTE_STEP_OUTCOME"] == "${{ steps.fake_execute.outcome }}"
+    assert confirm["env"]["UPLOAD_STEP_OUTCOME"] == "${{ steps.upload.outcome }}"
+
+
+def test_kill_rehearsal_probe_and_fake_execute_share_the_artifacts_dir():
+    probe = _kill_step("probe")
+    fake = _kill_step("fake-execute")
+    finalize = _kill_step("finalize")
+    for key in ("WORK_ROOT", "ARTIFACTS_DIR"):
+        assert probe["env"][key] == fake["env"][key] == finalize["env"][key]
+    assert "run_phase5_kill_rehearsal.py probe" in probe["run"]
+    assert "run_phase5_kill_rehearsal.py fake-execute" in fake["run"]
+
+
+def test_kill_rehearsal_driver_exists():
+    assert (Path("scripts") / "run_phase5_kill_rehearsal.py").exists()

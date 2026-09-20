@@ -1010,6 +1010,160 @@ def test_consumption_mapping(outcome, rest, expected):
 
 
 # ======================================================================
+# Stage 2C-B1 R1 extraction: independent return-equivalence proof
+# (owner ruling q77-p5d-stage2cb1-finalizer-ruling-a)
+# ======================================================================
+
+
+def _reference_decide_finalization(
+    *, run_attempt, consumption, candidate, journal, execute_step_outcome, candidate_replaceable=True
+):
+    """Independent transcription of ``decide_finalization`` EXACTLY as it
+    stood BEFORE the Stage 2C-B1 R1 extraction (blob
+    249dfb0fe08010ceaff65686ed5b2dda6603f742).
+
+    This is the load-bearing reference for the owner ruling's
+    return-equivalence condition. It is deliberately a standalone copy
+    of the pre-extraction rows: it must NEVER be regenerated from, or
+    delegate to, ``terminal.decide_finalization`` or
+    ``terminal.decide_terminal_disposition``, because doing so would
+    make the equivalence assertion vacuous."""
+    D = t.FinalizerDecision
+    if run_attempt != 1:
+        return D(action="NO_TERMINAL_REQUIRED", reason="RUN_ATTEMPT_GT_1")
+    if consumption == "NOT_CONSUMED_BY_THIS_ATTEMPT":
+        return D(action="NO_TERMINAL_REQUIRED", reason="NOT_CONSUMED_BY_THIS_ATTEMPT")
+
+    signals = tuple(dict.fromkeys(journal.signals))
+    if execute_step_outcome == "cancelled" and not signals:
+        signals = ("UNKNOWN_EXTERNAL_TERMINATION",)
+
+    if candidate in t.TRUSTED_KINDS:
+        return D(
+            action="PRESERVE_RUNNER_EVIDENCE",
+            quarantine_ancillary=candidate != "TRUSTED_QUALITY",
+            quarantine_unexpected=True,
+        )
+
+    if candidate == "ABSENT":
+        if journal.integrity in ("OK", "TRAILING_FRAGMENT") and journal.objective_cause in t._CANONICAL_CAUSES:
+            return D(
+                action="WRITE_INFRASTRUCTURE_INVALID",
+                infrastructure_cause=journal.objective_cause,
+                observed_signals=signals,
+                quarantine_ancillary=True, quarantine_unexpected=True,
+            )
+        if signals:
+            return D(
+                action="WRITE_UNCLASSIFIED", unclassified_basis="OBSERVED_SIGNAL",
+                observed_signals=signals, quarantine_ancillary=True, quarantine_unexpected=True,
+            )
+        if journal.integrity in ("OK", "TRAILING_FRAGMENT") and (
+            journal.runner_exception_cause is not None or journal.terminal_write_failed
+        ):
+            return D(
+                action="WRITE_INFRASTRUCTURE_INVALID",
+                infrastructure_cause=journal.runner_exception_cause or "RUNNER_EXCEPTION",
+                quarantine_ancillary=True, quarantine_unexpected=True,
+            )
+        return D(
+            action="WRITE_UNCLASSIFIED", unclassified_basis="RUNNER_TERMINAL_EVIDENCE_ABSENT",
+            quarantine_ancillary=True, quarantine_unexpected=True,
+        )
+
+    if candidate in t.UNTRUSTED_KINDS:
+        if candidate == "NOT_REGULAR_FILE" and not candidate_replaceable:
+            return D(action="INTERNAL_ERROR", reason="CANDIDATE_NOT_REPLACEABLE")
+        return D(
+            action="WRITE_UNCLASSIFIED", unclassified_basis="RUNNER_TERMINAL_EVIDENCE_UNTRUSTED",
+            observed_signals=signals, quarantine_candidate=candidate != "NOT_REGULAR_FILE",
+            quarantine_ancillary=True, quarantine_unexpected=True,
+        )
+
+    return D(action="INTERNAL_ERROR", reason="UNKNOWN_CANDIDATE_VERDICT")
+
+
+_EQUIV_CANDIDATES = tuple(typing.get_args(t.CandidateVerdictKind)) + ("SOMETHING_ELSE",)
+_EQUIV_OUTCOMES = ("success", "failure", "cancelled", "skipped")
+_EQUIV_SIGNALS = ((), ("SIGINT",), ("SIGTERM",), ("SIGINT", "SIGTERM"), ("UNKNOWN_EXTERNAL_TERMINATION",))
+_EQUIV_OBJECTIVE = (None,) + tuple(sorted(t._CANONICAL_CAUSES))
+_EQUIV_RUNNER_EXC = (None, "PRE_PROVIDER_FAILURE", "RUNNER_EXCEPTION")
+
+
+def _equivalence_summaries():
+    for integrity in typing.get_args(t.JournalIntegrity):
+        for signals in _EQUIV_SIGNALS:
+            for objective in _EQUIV_OBJECTIVE:
+                for runner_exc in _EQUIV_RUNNER_EXC:
+                    for twf in (False, True):
+                        yield t.JournalSummary(
+                            integrity=integrity, signals=signals, runner_exception_cause=runner_exc,
+                            terminal_write_failed=twf, objective_cause=objective,
+                        )
+
+
+def test_r1_extraction_is_return_equivalent_across_the_finite_decision_domain():
+    """Owner ruling q77-p5d-stage2cb1-finalizer-ruling-a requires the
+    extraction to be behaviour-identical. Every combination of
+    run_attempt class, MarkerConsumption value, CandidateVerdictKind,
+    candidate_replaceable, execute-step outcome and a full product of
+    JournalSummary fields is compared against the independent
+    pre-extraction reference above."""
+    summaries = list(_equivalence_summaries())
+    assert len(summaries) == 4 * 5 * 6 * 3 * 2  # 720 distinct journal summaries
+    consumptions = typing.get_args(t.MarkerConsumption)
+    checked = 0
+    for summary in summaries:
+        for candidate in _EQUIV_CANDIDATES:
+            for replaceable in (True, False):
+                for consumption in consumptions:
+                    for run_attempt in (1, 2):
+                        for outcome in _EQUIV_OUTCOMES:
+                            kwargs = dict(
+                                run_attempt=run_attempt, consumption=consumption, candidate=candidate,
+                                journal=summary, execute_step_outcome=outcome,
+                                candidate_replaceable=replaceable,
+                            )
+                            assert t.decide_finalization(**kwargs) == _reference_decide_finalization(**kwargs), kwargs
+                            checked += 1
+    assert checked == len(summaries) * len(_EQUIV_CANDIDATES) * 2 * len(consumptions) * 2 * len(_EQUIV_OUTCOMES)
+
+
+def test_decide_terminal_disposition_matches_the_post_eligibility_reference():
+    """The extracted helper alone must equal the reference's own
+    post-eligibility behaviour, entered through an eligible caller."""
+    for summary in _equivalence_summaries():
+        for candidate in _EQUIV_CANDIDATES:
+            for replaceable in (True, False):
+                for outcome in _EQUIV_OUTCOMES:
+                    direct = t.decide_terminal_disposition(
+                        candidate=candidate, journal=summary, execute_step_outcome=outcome,
+                        candidate_replaceable=replaceable,
+                    )
+                    reference = _reference_decide_finalization(
+                        run_attempt=1, consumption="CONSUMED", candidate=candidate, journal=summary,
+                        execute_step_outcome=outcome, candidate_replaceable=replaceable,
+                    )
+                    assert direct == reference, (candidate, summary, outcome, replaceable)
+
+
+def test_marker_consumption_vocabulary_is_exactly_the_three_existing_members():
+    """Stage 2C-B1 must NOT widen the marker vocabulary. R2 /
+    NO_MARKER_LANE was explicitly not authorized."""
+    assert typing.get_args(t.MarkerConsumption) == (
+        "CONSUMED", "NOT_CONSUMED_BY_THIS_ATTEMPT", "ASSUMED_CONSUMED_REST_UNAVAILABLE",
+    )
+    assert "NO_MARKER_LANE" not in (REPO_ROOT / "sentinel" / "phase5" / "terminal.py").read_text(encoding="utf-8")
+
+
+def test_consumption_from_still_only_yields_the_three_existing_members():
+    permitted = set(typing.get_args(t.MarkerConsumption))
+    for outcome in ("skipped", "success", "failure", "cancelled", "", "weird"):
+        for rest in (True, False, None):
+            assert t.consumption_from(outcome, rest) in permitted
+
+
+# ======================================================================
 # Unarmed (J)
 # ======================================================================
 
@@ -1026,6 +1180,10 @@ _PERMITTED_WIRING_SCRIPTS = frozenset(
         "scripts/run_phase5_official_gate.py",
         "scripts/run_phase5_gate_finalizer.py",
         "scripts/_phase5_common.py",
+        # Stage 2C-B1 (owner ruling q77-p5d-stage2cb1-finalizer-ruling-a):
+        # the model-free kill-rehearsal driver establishes the same
+        # terminal layout and RUNNER journal the official gate does.
+        "scripts/run_phase5_kill_rehearsal.py",
     }
 )
 # The P5-E seam validator legitimately names the replacement purpose (it
