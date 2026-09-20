@@ -4585,3 +4585,214 @@ merges every change."
   Next action: Stage 2C-B2 — execute and adjudicate the model-free GitHub
   job-level kill rehearsal against the landed surface, as its own bounded
   child dispatch; not begun here.
+- 2026-09-21 - ADR-0012 REPAIR STAGE 2C-B3 LANDED: MODEL-FREE GITHUB
+  JOB-LEVEL KILL REHEARSAL EXECUTED AND RECORDED — STAGE 2C-B2 **PASS**
+  (recording dispatch `q77-p5d-repair-stage2cb3-record-a`; execution
+  dispatch `q77-p5d-repair-stage2cb2-execute-a`). ADR-0012 §12's
+  model-free rehearsal of the real job-level timeout class has now been
+  performed exactly once against the Stage-2C-B1 surface, and this entry
+  is its durable record. No repository code, test, workflow, ADR or
+  evidence schema changed in either stage.
+  IDENTITY: GitHub run `35541478181`, attempt 1, event
+  `workflow_dispatch`, workflow `sentinel-kill-rehearsal`, source SHA
+  `d93ba557ce907ba7f1f1c973467af768624bd194` (the Stage-2C-B1 surface
+  landed at `50c9b4e2023859319afaa52b9ff28ec9af85cc50`). Job
+  `kill-rehearsal` (id `106159829456`) ran 2026-09-20T22:22:28Z →
+  22:30:46Z. Exactly ONE rehearsal was dispatched; no rerun, no manual
+  cancellation, no second attempt.
+  EMPIRICAL JOB-TIMEOUT RESULT — the open question ADR-0012 A5 said only
+  the real rehearsal could settle is now settled. GitHub's own check-run
+  annotation (level `failure`) states verbatim: "The job has exceeded the
+  maximum execution time of 8m0s", naming the workflow's configured
+  job-level timeout. This was NOT a step timeout — the `fake-execute`
+  step carries no `timeout-minutes` at all, proven from source before
+  dispatch — and NOT a manual cancellation: one dispatch was issued and
+  no cancel command was ever sent. The kill landed while `fake-execute`
+  was active: it started 22:22:45Z, emitted 30-second heartbeats through
+  `elapsed_seconds=450` at 22:30:16Z, and its own log stream carries
+  `##[error]The operation was canceled.` at 22:30:41.133Z. The workflow
+  and job conclusion `cancelled` is the EXPECTED outcome of a rehearsal
+  whose purpose is to be killed, and is not itself a failure.
+  POST-KILL SURVIVAL SEQUENCE — the §12 sequence completed in full after
+  the real job-level kill: `finalize` ran and succeeded (22:30:41Z,
+  `FINALIZE: action=WRITE_UNCLASSIFIED consumption=NOT_APPLICABLE
+  candidate=ABSENT`); execution-invalid terminal evidence was created;
+  `upload rehearsal evidence` succeeded (22:30:42Z); external artifact
+  publication succeeded; `confirm rehearsal evidence publication` ran and
+  reported `PUBLICATION: state=INVALID_EVIDENCE_PUBLISHED` with
+  `DISPOSITION: UNCLASSIFIED_TERMINATION`; post-run REST download
+  succeeded; strict verification succeeded. CONFIRM-STEP NUANCE, recorded
+  precisely: that step's GitHub conclusion is `failure` solely because the
+  finalizer intentionally maps `INVALID_EVIDENCE_PUBLISHED` to exit code 1
+  (`_CONFIRM_EXIT`). Publication itself SUCCEEDED and was confirmed; the
+  non-zero exit is the designed encoding of invalid-evidence publication,
+  not a publication failure.
+  A5 TIMING: from the nominal job-timeout instant (job start + 8m0s =
+  22:30:28Z) to completion of the last required tail step (22:30:44Z) is
+  approximately 16 seconds; from the observed `fake-execute` cancellation
+  (22:30:41.133Z) to that same completion is approximately 2.87 seconds.
+  Both are far inside ADR-0012 A5's 5-minute cancellation bound. GitHub's
+  step timestamps are second-granular, so no greater precision is claimed
+  than the evidence carries.
+  ARTIFACT IDENTITY (exactly two artifacts; no third): terminal
+  `sentinel-p5-rehearsal-r35541478181-a1`, id `10615366134`, digest
+  `sha256:0a826d1ed79b3d99f90314e83b71eee986eaf11a7bedbdbb50e971cd602c29e4`;
+  observations `sentinel-p5-rehearsal-observations-r35541478181-a1`, id
+  `10615345592`, digest
+  `sha256:34748c5253c177fed5f57cfbe4832df8ffe42a385b92e429334252339d04a698`.
+  Preserved payload SHA-256, re-hashed at recording time and matching the
+  B2 adjudication: observations
+  `b1e8a0469ddb85d75eef60666fdc1a01ffbbd70dae16ec8857859696e5f06e64`;
+  journal
+  `783ff94423199937d33b49fb9152257fabc55c6e5572168d0c6405d0cd6a7f8c`;
+  terminal
+  `394bc38705b77031edef0de8400caee465a561f5a7a2b6933e29251bbe38245b`.
+  The raw artifacts are NOT copied into this repository; they are held as
+  external evidence outside the working tree.
+  PROVIDER / AUTH / MARKER NON-EVENTS, from the published observations
+  payload: `provider_calls` 0; no model execution; bundled CLI NOT
+  executed (`bundled_cli_executed` false); no OIDC/WIF
+  (`oidc_attempted` false); no token-issuing permission on the lane
+  (`id_token_permission_present` false); no provider environment
+  (`anthropic_env_present` false); `marker_created` false;
+  `oneshot_consumed` false. The run's complete artifact listing contains
+  nothing matching the one-shot or official gate-evidence prefixes.
+  RUNTIME IDENTITY — CAPTURE ONLY, EXPLICITLY NOT BOUND TO REPLACEMENT
+  READINESS. Captured on the real Linux runner:
+  `runtime_identity_id` =
+  `08701922ee4a20263ae20cfad48e05fbcf05bec56797a631395e0bf7a009219b`;
+  CPython 3.12.14; linux x86_64, kernel 6.17.0-1022-azure; runner image
+  `ubuntu24` version `20260907.300.1`, X64, github-hosted;
+  `claude-agent-sdk==0.2.110` with `sdk_pin_matches` true; SDK RECORD
+  SHA-256
+  `804ef91bfce646f925a4f04ac0d22df01348195b84992104678989e21bce870e`;
+  transport `claude_agent_sdk/_internal/transport/subprocess_cli.py`
+  SHA-256
+  `08da90c17d934a245e1190e2092bbe9b767c1eeb6cda006cef69f4db7cb2d55a`
+  (declared == actual); bundled CLI `claude_agent_sdk/_bundled/claude`
+  SHA-256
+  `1038dba88bdf1b80941dc3e383e93b088325b00497329ac50da460c8786d5bee`,
+  239438648 bytes, executable, declared CLI version 2.1.191;
+  `cli_selection` `BUNDLED_FIRST` verified; 33 installed distributions.
+  This identity is evidence only: it is NOT bound to replacement
+  readiness by this stage, and no readiness claim follows from it.
+  TOPOLOGY RESULT — reasoned in PPID ancestry terms throughout, because
+  descendant discovery walks `/proc` parent-child edges and consults
+  neither SID nor PGID. CLASS A (ordinary ancestry-intact tree): 2
+  discovered, 2 terminated, SURVIVORS 0, 2 SIGTERM signalled, 0 SIGKILL
+  needed, 4 scans, max depth 2 — PASS; both probe processes were inside
+  the controlled PPID closure and neither survived. CLASS B (deliberate
+  double fork): pid 2085 moved from ppid 2084 to ppid 1 when its
+  intermediate parent exited, leaving the controlled PPID ancestry
+  (`in_ppid_descendant_closure` false, `reparented` true). That escape is
+  EVIDENCE of the already-documented descendant-walking boundary and is
+  NOT a failure; the harness still cleaned the process up. C-STATIC: the
+  pinned transport creates a DIRECT child via `anyio.open_process`, with
+  no session or process-group isolation whatsoever
+  (`start_new_session`, `preexec_fn`, `process_group`, `creationflags`
+  all false) and NO source-visible ancestry-breaking mechanism; verdict
+  `ANCESTRY_PRESERVED_AT_PYTHON_LAYER`; transport hash declared ==
+  actual. INFERENCE LIMIT, recorded in the payload itself and repeated
+  here: this covers the Python transport layer only and does NOT prove
+  the bundled Node CLI preserves ancestry after launch. C-DYNAMIC:
+  `observed` false; the residual remains exactly
+  `REAL_CLI_TOPOLOGY_UNOBSERVED`, with closure still assigned to the
+  ADR-0012 §13 N=24 real Sonnet timing rehearsal. Stage 2C-B2 does NOT
+  close that residual and makes no claim that it does.
+  TERMINAL RECORD, verified with the repository's own
+  `verify_terminal_bytes` against the exact rehearsal `TerminalIdentity`
+  for this run: verdict `TRUSTED_UNCLASSIFIED`. The downloaded artifact
+  tree is a subset of the publication allowlist with nothing outside it
+  (`phase5_official_gate.json` and `phase5_gate_journal.jsonl`;
+  `phase5_official_gate_checks.json` legitimately absent because no
+  quality run occurred). Record fields: `model` `NO_MODEL_INVOKED`,
+  `profile_name` `p5d-kill-rehearsal`, `auth_mode` None, `disposition`
+  `UNCLASSIFIED_TERMINATION`, `unclassified_basis` `OBSERVED_SIGNAL`,
+  `observed_signals` `("UNKNOWN_EXTERNAL_TERMINATION",)`,
+  `termination_source` None — no objective cause was inferred from the
+  cancellation. All six replacement-provenance fields are None;
+  `validate_replacement_provenance` rejects the record on its
+  `workflow_identity` check and it classifies `PROVENANCE_INVALID` under
+  the replacement purpose; zero quality content.
+  JOURNAL — BOTH FACTS RECORDED PRECISELY. (1) The journal SURVIVED: its
+  bytes are present in the downloaded terminal artifact (2539 bytes) and
+  `read_journal` reports integrity `OK`, so journal survival is claimed
+  on evidence rather than assumed. Its events are `JOURNAL_OPENED`
+  (RUNNER) → `STATE_TRANSITION` to `PREFLIGHTED` → `JOURNAL_OPENED`
+  (RUNNER, the fake-execute process) → `JOURNAL_OPENED` (FINALIZER) →
+  `FINALIZER_CANDIDATE` `ABSENT` → `FINALIZER_DECISION`
+  `WRITE_UNCLASSIFIED`; zero `FINALIZER_CONSUMPTION` events, as the
+  marker-free lane requires. (2) NO `SIGNAL_OBSERVED` event was captured
+  under the real job-timeout kill. That absence is NOT a Stage-2C-B2
+  failure. Interpretation: the real external job timeout produced no
+  runner-journal signal event, so the finalizer correctly used the
+  cancelled execute-step outcome to classify an UNKNOWN EXTERNAL
+  TERMINATION, and no objective infrastructure cause was inferred from a
+  raw signal or from cancellation.
+  WHY THIS DOES NOT INVALIDATE THE OBJECTIVE-CAUSE ARCHITECTURE (verified
+  against live source at recording time, not assumed):
+  `OBJECTIVE_CAUSE_LATCHED` is a distinct journal event, independent of
+  `SIGNAL_OBSERVED`; `summarize_journal` establishes an objective cause
+  from a trusted-integrity journal whenever the latch precedes every
+  observed signal, and its guard is `objective is None and not
+  signal_seen` — so with ZERO observed signals an already-latched
+  objective cause is established, not invalidated (confirmed empirically:
+  a latch plus zero signals yields the cause; a latch followed by a
+  signal still yields it; only a signal BEFORE the latch suppresses it).
+  The official runner obtains its Stage-2C objective causes from the
+  SessionLatch and execution controls — `agents/checker/envelope_guard.py`
+  and `agents/checker/process_control.py`'s SessionMonitor, plus the
+  runner's own session-deadline path — never from raw signal observation.
+  Accordingly NO code remediation and NO second kill rehearsal are
+  authorized or required by this finding. It is kept as a factual
+  residual: a raw external job timeout, absent a previously established
+  objective cause, safely falls back to `UNCLASSIFIED_TERMINATION`.
+  B2 ADJUDICATION: **Stage 2C-B2 PASS.** All frozen B2 PASS predicates
+  were established; no STOP predicate triggered; exactly one rehearsal
+  was dispatched; no rerun is authorized or required. The `cancelled`
+  workflow conclusion is the designed outcome of this rehearsal and is
+  not a failed rehearsal.
+  Executing model: Opus 5 (the routing named Opus 5; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 2 declared paths): `STATE.md` (this
+  entry), `.publicgate-allow` (one entry for this entry's status line).
+  No code, test, workflow, ADR-0012, receipt-registry, evidence-schema,
+  `runtime_identity.py`, `process_control.py`, `FINDINGS.md` or telemetry
+  change; no raw B2 artifact copied into the repository.
+  NON-EVENTS: no rehearsal rerun and no workflow dispatch of any kind in
+  this stage; no model or provider call; no bundled-CLI execution; no
+  OIDC/WIF; no marker created, reset or consumed; no receipt-registry or
+  schema change; no ADR-0012 modification; no Stage 2C-B4 work; no N=24
+  timing execution; no `artifacts/phase5_execution_envelope.json`; no
+  runtime-identity readiness binding; no replacement readiness declared;
+  no durable single-attempt latch implemented; no replacement authorized
+  or executed; no P5-E work; no original Sonnet quality content
+  inspected.
+  RESIDUALS (recorded, not closed here): `REAL_CLI_TOPOLOGY_UNOBSERVED`
+  stays OPEN and routed to the ADR-0012 §13 N=24 timing rehearsal, whose
+  closure must capture the CLI `(pid, starttime)` identity, its PPID
+  ancestry back to the controlled root while live, the ancestry of every
+  CLI-created descendant, whether anything reparents out of that tree
+  during an invocation, identities before/during/after each invocation,
+  and a final survivor scan; the execution envelope is still NOT
+  committed or bound and `ENVELOPE` stays `None`; the durable
+  single-attempt consumption latch is still PENDING; the no-signal
+  finding above is retained as a factual residual requiring no
+  remediation.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  ADR-0012 repair Stage 1, Stage 2A, Stage 2B-1, Stage 2B-2, Stage 2C-1,
+  Stage 2C-2, Stage 2C-3 and Stage 2C-B1 LANDED, Stage 2C-B2 PASS with
+  the one-shot model-free GitHub kill rehearsal COMPLETE, Stage 2C-B3
+  durable recording LANDED, Sonnet N=24 timing rehearsal NOT EXECUTED,
+  `REAL_CLI_TOPOLOGY_UNOBSERVED` OPEN and routed to that timing
+  rehearsal, execution envelope NOT YET COMMITTED / BOUND, durable
+  single-attempt consumption latch PENDING, fresh replacement readiness
+  NOT COMPLETE, replacement NOT READY / NOT AUTHORIZED FOR DISPATCH.
+  P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B3 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2C-B4 — build and commit the N=24 Sonnet
+  timing-rehearsal pre-registration and harness, as its own bounded child
+  dispatch; not begun here.
