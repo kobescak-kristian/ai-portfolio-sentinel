@@ -1,0 +1,94 @@
+name: sentinel-timing-rehearsal
+
+# P5-D N=24 real-Sonnet timing rehearsal (ADR-0012 section 13 and
+# Amendment A3/A5/A8; approved plan q77-p5d-repair-stage2cb4-plan-d;
+# dispatch q77-p5d-repair-stage2cb4-implement-a, Stage 2C-B4).
+#
+# Stage 2C-B4 CREATES this lane and NEVER executes it. Execution is
+# Stage 2C-B5, a separate governed dispatch that additionally requires
+# the human-controlled provider preparation stage (section 14/15): the
+# temporary federation rule bound to this workflow only, the repository
+# variable below, and fresh provider-cap arithmetic covering the
+# EUR 2.50 class-B exposure. Until then this lane fails closed at
+# agents.checker.auth.assert_wif_config_ready.
+#
+# The job timeout is an infrastructure backstop at GitHub's platform
+# ceiling, never a calibration threshold: the experiment measures only
+# query_fn invocation durations, and no per-invocation deadline is
+# applied, because truncating a legitimately slow call would understate
+# max_observed. Reaching the backstop is a STOP.
+#
+# This lane creates and consumes no one-shot gate artifact of any
+# purpose, and its evidence artifact name sits outside every official
+# and replacement discovery prefix.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: "Exact 40-lowercase-hex commit SHA this rehearsal is running against"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: sentinel-timing-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  timing:
+    name: timing
+    if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.SENTINEL_P5D_TIMING_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - name: preflight
+        id: preflight
+        run: >
+          python scripts/run_phase5_timing_rehearsal.py preflight
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --work-root "$WORK_ROOT"
+          --fx-state-path "$WORK_ROOT/fx-state.json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/anthropic_identity_token
+          WORK_ROOT: ${{ runner.temp }}/p5-timing
+      - name: execute
+        id: execute
+        run: >
+          python scripts/run_phase5_timing_rehearsal.py execute
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --work-root "$WORK_ROOT"
+          --fx-state-path "$WORK_ROOT/fx-state.json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/anthropic_identity_token
+          WORK_ROOT: ${{ runner.temp }}/p5-timing
+      - name: upload timing evidence
+        id: upload
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: sentinel-p5-timing-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/p5-timing/evidence/phase5_timing_events.jsonl
+            ${{ runner.temp }}/p5-timing/evidence/phase5_timing_runtime_identity.json
+            ${{ runner.temp }}/p5-timing/evidence/phase5_timing_topology.json
+            ${{ runner.temp }}/p5-timing/evidence/phase5_timing_summary.json
+            ${{ runner.temp }}/p5-timing/evidence/phase5_timing_stop.json
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: false

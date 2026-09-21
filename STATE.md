@@ -4796,3 +4796,255 @@ merges every change."
   Next action: Stage 2C-B4 — build and commit the N=24 Sonnet
   timing-rehearsal pre-registration and harness, as its own bounded child
   dispatch; not begun here.
+- 2026-09-22 - ADR-0012 REPAIR STAGE 2C-B4 LANDED: N=24 SONNET
+  TIMING-REHEARSAL PRE-REGISTRATION AND HARNESS BUILT, REHEARSAL NOT
+  EXECUTED (dispatch `q77-p5d-repair-stage2cb4-implement-a`, approved plan
+  `q77-p5d-repair-stage2cb4-plan-d`, base
+  `6f0668aea6e37061b25f0fd941521de4a9ef1abb`). ADR-0012 §13 requires that,
+  before the first provider call, a committed pre-registration freeze N,
+  the corpus, the strata, the model, the SDK, the cage, the measurement
+  boundary, the ordering, the statistic, the budget arithmetic and the
+  PASS/STOP rules, so the executing stage cannot reinterpret anything
+  after observing timings. None of that existed. This stage builds and
+  commits it and stops: **the timing workflow is `workflow_dispatch`-only
+  and was NEVER executed by this dispatch.** Execution is Stage 2C-B5.
+  FROZEN CORPUS. Two strata of 12 drawn from the two real production
+  input classes, because the live inventory does not run the two check
+  classes over one population: `stale-STATE-marker` is created only
+  against `STATE.md`, and `missing-synthetic-label` against the
+  configured link-scanned markdown paths. `STATE_SURFACE` (12,
+  `stale-STATE-marker`) line counts 9, 28, 32, 32, 32, 34, 36, 38, 71,
+  71, 459, 459 — 1,301 lines. `LINK_SCANNED_SURFACE` (12,
+  `missing-synthetic-label`) line counts 3, 18, 33, 41, 70, 100, 138,
+  183, 246, 298, 430, 738 — 2,298 lines. Corpus total **3,599 lines**
+  across exactly **24 items**, ids `tim-state-01..12` and
+  `tim-link-01..12`, ordinals interleaved (`2k-1` STATE, `2k` LINK) so
+  warm-up or throttling drift loads both strata equally. Sizes were
+  rank-selected from the reconciled live populations (STATE n=10, LINK
+  n=94) and every anchor is an actually observed value — no
+  interpolation. OWNER TAIL RULING APPLIED: the 4,798-line extreme tail
+  present in both populations, which is this repository's own `STATE.md`
+  inflated by the Q-77 repair log, is excluded prospectively; in each
+  stratum the final rank-selected anchor is replaced by the largest
+  observed value strictly below it (459 for STATE, 738 for LINK). That is
+  one frozen ruling for this corpus, not a general outlier-removal
+  algorithm, and it is not a post-hoc timing adjustment — no provider
+  timing exists. Corpus content is synthetic and self-authored from a
+  deterministic template; no production prose, official fixture or
+  answer-key content was copied, and `fixtures/`/`evals/` were not used.
+  Both committed files ARE their canonical bytes (sorted keys, compact
+  separators, UTF-8, no trailing newline), so their SHA-256 values are
+  verifiable by hashing the files: corpus
+  `98cdba8a183b3fab128f413f95bb3647e15961d711bbfd6fedb9ce73c42a471d`,
+  pre-registration
+  `17549d3fd5789a8eeae04d15364d2aec0c94ef5f8ee25a02cf0391d354ff065b`.
+  Both are directly usable at B6 as
+  `TimingRehearsalProvenance.corpus_sha256` and
+  `preregistration_sha256` with no schema translation.
+  PRODUCTION RETRY DEFAULT UNCHANGED; TIMING LIMITED TO ONE ATTEMPT.
+  `CagedCheckerStub.judge()` owns the ADR-0008 bounded-attempt loop
+  internally and evaluates `retry_available` only AFTER attempt 0
+  terminalizes, so on `SDK_BUDGET_CEILING` it would reserve and start
+  attempt 2 before the driver regained control — which ADR-0012 A3 rule 4
+  forbids, since any invocation reaching its SDK budget ceiling is an
+  immediate rehearsal STOP. Under the owner ruling recorded in plan-d,
+  `agents/checker/harness.py` gains exactly one instance field,
+  `max_model_attempts_per_task: int = MAX_MODEL_ATTEMPTS_PER_TASK`, and
+  the two executable uses inside `judge()` now read `self.` — three lines
+  in total. The module constant is UNCHANGED at 2; every existing caller
+  (Haiku, the WIF probe, the official gate, `build_caged_judgment_stub`
+  and every test) omits the field and therefore keeps exact two-attempt
+  behavior. The timing harness alone supplies `1`, which makes
+  `retry_available = is_retryable(...) and 0 + 1 < 1` false regardless of
+  failure class, so the second `reserve()` and the second `_invoke` are
+  mechanically unreachable. `tests/test_adr0008.py` pins all four
+  properties, including that a budget-ceiling outcome in timing mode
+  performs exactly one `reserve()` and exactly one `query_fn` invocation.
+  Production retry was not weakened, classification was not
+  special-cased, no module global is mutated and `is_retryable` is not
+  monkeypatched.
+  HARNESS REUSE. The driver measures one COMPLETE logical invocation at
+  the production `query_fn` seam — every model turn and every tool turn,
+  including `create_sdk_mcp_server`, which lives inside `run_query`. The
+  wrapper is assigned after construction exactly as `health_gated` and
+  `deadline_guarded` already do, is `async def`, preserves the five-argument
+  signature and uses `functools.wraps`, because the harness dispatches on
+  `inspect.iscoroutinefunction`. The real `ClaudeAgentOptions` cage, the
+  real prompt builders, the single MCP tool, `MAX_TURNS = 10` and
+  `MAX_TOOL_CALLS_PER_CHECK = 5` are all inherited unchanged.
+  `deadline_guarded` is deliberately NOT applied: a per-invocation
+  deadline could truncate a legitimately slow call and understate
+  `max_observed`, the one statistic this rehearsal exists to produce.
+  A3 BUDGET CONTROLS BUILT. `RunBudgetCoordinator` is constructed with
+  `total_eur_micros = 2_500_000` and
+  `max_per_call_reserve_eur_micros = 1_000_000`, the production-equivalent
+  reservation. Before EVERY invocation the driver requires
+  `remaining_eur_micros() >= 1_000_000` and otherwise STOPs BEFORE
+  provider contact — an explicit pre-check, because `reserve()` only
+  refuses at `remaining <= 0` and would otherwise silently truncate to
+  `min(remaining, max_per_call)`, and a reduced SDK allowance could end a
+  slow call earlier than production would. Equivalently, cumulative
+  accounted consumption before any invocation must not exceed 1,500,000
+  micro-EUR. The frozen closed STOP vocabulary is `SDK_BUDGET_CEILING`,
+  `UNDER_RESERVATION_REFUSAL`, `COST_OVERSHOOT`, `BUDGET_EXHAUSTED`,
+  `INFRASTRUCTURE_FAULT`, `AUTH_OR_OIDC_FAULT`, `TOPOLOGY_ESCAPE`,
+  `TOPOLOGY_CLI_UNIDENTIFIED`, `INCOMPLETE_N`, `FEASIBILITY_FAILURE`,
+  `PRIOR_RUN_PRESENT`, `HASH_MISMATCH`. No observation may be discarded
+  and no automatic second rehearsal is authorized. **No prediction is
+  made that all 24 invocations fit inside EUR 2.50** — the frozen rules
+  either admit all 24 or the rehearsal STOPs.
+  EVENT DURABILITY BUILT. One append-only `phase5_timing_events.jsonl`,
+  every record written, flushed and `os.fsync`ed before proceeding, with
+  the closed vocabulary `RUN_STARTED`, `INVOCATION_STARTED`,
+  `INVOCATION_FINISHED`, `OBSERVATION_ACCOUNTED`, `RUN_FINISHED`, `STOP`.
+  `INVOCATION_STARTED` is fsynced BEFORE the wrapper awaits the real
+  seam; that ordering is load-bearing and is proven structurally by test.
+  If the runner is killed while invocation k is in flight, the published
+  evidence shows 1..k-1 FINISHED, k STARTED with its full reservation,
+  and no FINISHED for k. The frozen adjudication rule is that
+  `started_count != finished_count` means an invocation was interrupted
+  and is `INCOMPLETE_N` / `INFRASTRUCTURE_FAULT` — it is NEVER read as
+  "only k-1 invocations occurred". No prompt or response content enters
+  any record.
+  C-DYNAMIC TOPOLOGY CAPTURE BUILT. A sampler thread records the
+  controlled PPID closure while each invocation is live, using
+  `(pid, starttime)` identities and never bare PIDs, reusing
+  `read_process_table`, `read_process_stat`, `descendants_of` and
+  `ancestors_of`; `agents/checker/process_control.py` is NOT modified.
+  The bundled CLI is identified by descendant-of-root plus
+  `/proc/<pid>/exe` against the captured bundled-CLI path — never
+  `/proc` cmdline, which can carry prompt material. Captured: the
+  controlled Python root, the CLI identity, the live PPID chain, all
+  CLI-created descendants, identities before/during/after each
+  invocation, any process whose PPID leaves the closure, and a final
+  survivor scan. `sid`/`pgid` are supplemental only and ancestry is never
+  redefined in those terms. No child subreaper is added. C-dynamic closes
+  only if the CLI and all observed descendants remain inside the closure
+  and the final survivor scan is empty; escape, survivors or an
+  unidentifiable CLI are STOPs.
+  RUNTIME AND RESOLVED-MODEL IDENTITY. The driver captures a fresh
+  timing-run runtime identity; the Stage-2C-B2 identity is prior evidence
+  only and is neither reused nor bound. From the pinned SDK's
+  `ResultMessage.model_usage` only the resolved model identifier KEY SET
+  is retained — never `AssistantMessage`, which would mean forking
+  `run_query`. If no identifier is exposed, evidence records
+  `resolved_model_identity = UNAVAILABLE`; that does not invalidate B5
+  timing but remains an explicit A8 readiness residual.
+  EVIDENCE FIREWALL. Retained: item id, stratum, ordinal, elapsed ms,
+  SDK `duration_ms`/`duration_api_ms`, timestamps, reserved and accounted
+  micro-EUR, subtype/is_error/num_turns, failure class, runtime-identity
+  reference, resolved-model key set, topology observations. Never
+  persisted: model response content, `ResultMessage.result`, transcripts,
+  content blocks, prompt text, `/proc` cmdline. Emitted findings are
+  counted for runtime shape and never recorded. The ephemeral SQLite
+  ledger and the FX state live OUTSIDE the evidence directory and are
+  never uploaded. No scoring, no answer key, no threshold application, no
+  GREEN/HONEST_FAIL.
+  WORKFLOW SURFACE, BUILT AND NEVER EXECUTED.
+  `.github/workflows/sentinel-timing-rehearsal.yml` is
+  `workflow_dispatch`-only with a required `expected_source_sha`, has no
+  schedule, push or pull_request trigger, permissions of exactly
+  `contents: read` + `actions: read` + `id-token: write`, concurrency
+  group `sentinel-timing-rehearsal`, `ubuntu-latest`, and
+  `timeout-minutes: 360`. That 360 is GitHub's platform ceiling used as
+  an infrastructure backstop, never a calibration threshold; reaching it
+  is a STOP. The `if: always()` evidence upload is bounded at
+  `timeout-minutes: 2`, the value Stage 2C-B2 empirically proved
+  sufficient. The artifact is
+  `sentinel-p5-timing-r<run>-a<attempt>`, outside every official and
+  replacement discovery prefix, and the upload lists exactly five
+  explicit evidence paths under a dedicated `evidence/` directory with no
+  glob, so the ledger, identity token and work root cannot be swept in.
+  No official or replacement marker is created, consumed or referenced.
+  EXACTLY-ONCE CONTROLS. `run_attempt == 1` is required; prior-run
+  refusal uses the already-present `GithubEvidenceClient.list_workflow_runs`
+  over the complete visible retained history from 2026-01-01, excluding
+  only the current run id, and ANY other visible run of the timing
+  workflow STOPs — a previous failed preflight is not permission to try
+  again. Discovery overflow, a malformed response or incomplete discovery
+  all STOP. The source SHA is rechecked live immediately before the
+  provider boundary. No new durable receipt or latch was added; GitHub
+  run retention makes this practical, not permanent, exactly-once, which
+  satisfies §13/A3's prohibition on an AUTOMATIC second rehearsal.
+  B5 PROVIDER PREPARATION STILL NOT DONE. Per the owner ruling recorded
+  in plan-d, no provider-side preparation occurred here: the temporary
+  federation rule is not created or mutated, the repository variable
+  `SENTINEL_P5D_TIMING_FEDERATION_RULE_ID` is not created, no OIDC
+  exchange occurred and the provider cap is unchanged. The lane fails
+  closed at `agents.checker.auth.assert_wif_config_ready` until that
+  separate human-controlled stage and an explicit owner GO.
+  Executing model: Opus 5 (the routing named Opus 5; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 11 declared paths):
+  `rehearsal/timing/corpus.json`,
+  `rehearsal/timing/preregistration.json`,
+  `scripts/run_phase5_timing_rehearsal.py`,
+  `.github/workflows/sentinel-timing-rehearsal.yml`,
+  `agents/checker/harness.py`, `tests/test_adr0008.py`,
+  `tests/test_phase5_timing_rehearsal.py`,
+  `tests/test_phase5_workflow_contracts.py`,
+  `tests/test_checker_process_control.py`, `STATE.md` (this entry),
+  `.publicgate-allow` (one entry for this entry's status line). No ADR,
+  `config.py`, `budget.py`, `prompts.py`, `tools.py`, `fx.py`, `auth.py`,
+  `oidc.py`, `failures.py`, `process_control.py`, `envelope_guard.py`,
+  `sentinel/phase5/*`, existing P5 runner or workflow, fixture, eval,
+  answer-key, scorer, threshold, receipt-registry, `FINDINGS.md` or
+  telemetry change. `MAX_MODEL_ATTEMPTS_PER_TASK` and
+  `MAX_MARKDOWN_FILES_PER_REPO` are unchanged.
+  VERIFICATION: focused set 375 passed / 8 skipped; full suite 2345
+  passed / 32 skipped locally; coverage 92.5%; `python -m pip check`
+  clean; `python .githooks/validate_artifacts.py .` Tier 0 PASS;
+  `python scripts/check_phase1_frozen.py` PASS with `fixtures/` and
+  `evals/` both MATCH — the mechanical proof that the timing corpus is
+  genuinely separate from the frozen quality surface. Every local skip is
+  an existing platform-conditional design on this Windows workstation
+  (Linux-only `/proc` and POSIX semantics), none waived; the Linux-only
+  `/proc` sampling assertion runs for the first time under exact-SHA CI
+  on `ubuntu-latest`. The new workflow was additionally parsed statically
+  and pinned across fifteen checks covering trigger, permissions, the
+  360-minute backstop, the `always()` 2-minute upload, pinned action
+  SHAs, artifact naming, the five-path evidence allowlist, and the
+  absence of any marker step or provider/OIDC invocation.
+  NON-EVENTS: the timing workflow was created and pushed but NEVER
+  EXECUTED — no manual dispatch, rerun or cancel of it or any other
+  workflow; no model or provider call; no bundled-CLI execution; no
+  OIDC/WIF exchange; no federation-rule, provider-cap, secret, variable
+  or environment mutation; no marker of any purpose created, reset or
+  consumed; no `artifacts/phase5_execution_envelope.json` and `ENVELOPE`
+  stays `None`; no runtime-identity readiness binding; no replacement
+  readiness declared; no replacement authorized or executed; no P5-E
+  work; no original Sonnet quality content inspected; no frozen
+  quality-surface change; no N=24 timing rehearsal executed.
+  RESIDUALS (recorded, not closed here): `REAL_CLI_TOPOLOGY_UNOBSERVED`
+  remains OPEN and is closable only by the real B5 run, because only a
+  live bundled CLI can be observed; the corpus is calibrated against live
+  monitored surfaces rather than the official fixture corpus, whose size
+  distribution is deliberately uninspected, so `max_observed` transfer to
+  the replacement gate remains a real risk that ADR-0012 §13's
+  "production-representative prompt structure, where safe" anticipates;
+  the live population is itself truncated by the frozen
+  `MAX_MARKDOWN_FILES_PER_REPO = 25`, so the corpus represents what the
+  scheduled lane actually processes; `SDK_BUDGET_CEILING` is a hard STOP
+  with no second rehearsal authorized; `model_usage` may be empty,
+  deferring the A8 resolved-model binding to readiness; exactly-once is
+  practical rather than permanent; every PASS/STOP predicate remains a
+  specification rather than a result until B5 runs.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  ADR-0012 repair Stage 1, Stage 2A, Stage 2B-1, Stage 2B-2, Stage 2C-1,
+  Stage 2C-2, Stage 2C-3, Stage 2C-B1, Stage 2C-B3 and Stage 2C-B4
+  LANDED, Stage 2C-B2 PASS with the model-free GitHub kill rehearsal
+  COMPLETE, Stage 2C-B5 NOT EXECUTED, Sonnet N=24 timing rehearsal NOT
+  EXECUTED, B5 provider preparation NOT DONE,
+  `REAL_CLI_TOPOLOGY_UNOBSERVED` OPEN until B5, execution envelope NOT
+  COMMITTED / BOUND, durable single-attempt consumption latch PENDING,
+  fresh replacement readiness NOT COMPLETE, replacement NOT READY / NOT
+  AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B4 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: Stage 2C-B5 — the separate human-controlled provider
+  preparation (temporary federation rule bound to this workflow only, the
+  repository variable, and fresh provider-cap arithmetic covering the
+  EUR 2.50 class-B exposure), an explicit owner GO, and then exactly one
+  real N=24 Sonnet timing rehearsal; not begun here.

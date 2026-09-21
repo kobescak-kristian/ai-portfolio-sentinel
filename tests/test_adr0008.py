@@ -1840,3 +1840,93 @@ def test_adopted_bounds_are_unchanged_by_adr_0008():
     assert MAX_TURNS == 10
     assert MAX_TOOL_CALLS_PER_CHECK == 5
     assert MODEL == "claude-haiku-4-5-20251001"
+
+
+# =====================================================================
+# Stage 2C-B4 (dispatch q77-p5d-repair-stage2cb4-implement-a): the
+# ADR-0008 bounded-attempt loop now reads an INSTANCE value whose
+# default IS MAX_MODEL_ATTEMPTS_PER_TASK. Every existing caller keeps
+# exact two-attempt behavior by omitting it. Only the N=24 timing
+# rehearsal supplies 1, because ADR-0012 Amendment A3 rule 4 makes any
+# invocation that reaches its SDK budget ceiling an immediate rehearsal
+# STOP -- so attempt 2 must be unreachable BEFORE it would start.
+# =====================================================================
+
+
+class _CountingCoordinator:
+    """Wraps a real coordinator and counts reserve() calls, so a test can
+    prove no SECOND reservation is taken in timing mode."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.reserves = 0
+
+    def reserve(self):
+        self.reserves += 1
+        return self._inner.reserve()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def test_b4_attempt_bound_defaults_to_the_frozen_module_constant(ledger_conn):
+    """The production default is unchanged and still comes from the
+    module constant, which itself is untouched."""
+    stub = _stub(ledger_conn, ScriptedQuery(_step(_result(total_cost_usd=0.01))))
+    assert MAX_MODEL_ATTEMPTS_PER_TASK == 2
+    assert stub.max_model_attempts_per_task == MAX_MODEL_ATTEMPTS_PER_TASK == 2
+
+
+def test_b4_default_callers_still_get_the_bounded_second_attempt(ledger_conn):
+    """Omitting the field preserves today's retry behavior exactly: a
+    budget-ceiling first attempt is followed by a real second attempt."""
+    query = ScriptedQuery(
+        _step(QueryOutcome(result=_budget_ceiling_result(), error=_TRAILING_BUDGET_EXCEPTION)),
+        _step(_result(total_cost_usd=0.05), emits=["Coverage: 85.5 percent"]),
+    )
+    stub = _stub(ledger_conn, query)
+    _judge(stub)
+    assert query.invocations == 2
+
+
+def test_b4_timing_mode_budget_ceiling_starts_exactly_one_provider_call(ledger_conn):
+    """The load-bearing proof. With the timing bound of 1, a cleanly
+    classified SDK_BUDGET_CEILING -- the ONLY retryable class -- must
+    still produce exactly one reserve() and exactly one query_fn
+    invocation, then raise. Attempt 2 is mechanically unreachable."""
+    counting = _CountingCoordinator(_coordinator())
+    query = ScriptedQuery(
+        _step(QueryOutcome(result=_budget_ceiling_result(), error=_TRAILING_BUDGET_EXCEPTION)),
+        _step(_result(total_cost_usd=0.05), emits=["Coverage: 85.5 percent"]),
+    )
+    with patch("agents.checker.harness.auth.assert_no_auth_override_risk", return_value=None):
+        stub = CagedCheckerStub(
+            run_id="r-1",
+            conn=ledger_conn,
+            coordinator=counting,
+            clock=lambda: T0,
+            query_fn=query,
+            max_model_attempts_per_task=1,
+        )
+    with pytest.raises(CheckerAgentError):
+        _judge(stub)
+    assert query.invocations == 1
+    assert counting.reserves == 1
+
+
+def test_b4_timing_mode_clean_completion_still_returns_findings(ledger_conn):
+    """The bound of 1 constrains retries only; an ordinary clean call is
+    unaffected."""
+    query = ScriptedQuery(_step(_result(total_cost_usd=0.05), emits=["Coverage: 85.5 percent"]))
+    with patch("agents.checker.harness.auth.assert_no_auth_override_risk", return_value=None):
+        stub = CagedCheckerStub(
+            run_id="r-1",
+            conn=ledger_conn,
+            coordinator=_coordinator(),
+            clock=lambda: T0,
+            query_fn=query,
+            max_model_attempts_per_task=1,
+        )
+    findings = _judge(stub)
+    assert query.invocations == 1
+    assert len(findings) == 1

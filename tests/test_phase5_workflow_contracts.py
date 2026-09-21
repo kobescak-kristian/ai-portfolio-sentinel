@@ -31,6 +31,7 @@ EXPECTED_FILES = {
     "sentinel-official-gate.yml",
     "sentinel-window-control.yml",
     "sentinel-kill-rehearsal.yml",
+    "sentinel-timing-rehearsal.yml",
 }
 
 P5_WORKFLOWS = {
@@ -42,6 +43,10 @@ P5_WORKFLOWS = {
     # Stage 2C-B1: the model-free job-level kill rehearsal. A short JOB
     # timeout is the whole point -- it is what must fire.
     "sentinel-kill-rehearsal.yml": {"timeout": 8, "concurrency": "sentinel-kill-rehearsal", "id_token": False},
+    # Stage 2C-B4: the N=24 real-Sonnet timing rehearsal. 360 is the
+    # platform ceiling used as an infrastructure backstop, never a
+    # calibration threshold -- no per-invocation deadline is applied.
+    "sentinel-timing-rehearsal.yml": {"timeout": 360, "concurrency": "sentinel-timing-rehearsal", "id_token": True},
 }
 
 
@@ -72,7 +77,7 @@ def test_schedule_workflow_trigger_is_exact_cron_only():
 
 @pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-wif-probe.yml",
                                    "sentinel-official-gate.yml", "sentinel-window-control.yml",
-                                   "sentinel-kill-rehearsal.yml"])
+                                   "sentinel-kill-rehearsal.yml", "sentinel-timing-rehearsal.yml"])
 def test_manual_workflows_trigger_only_on_workflow_dispatch(name):
     data = _load(name)
     trigger = data[True]
@@ -80,7 +85,8 @@ def test_manual_workflows_trigger_only_on_workflow_dispatch(name):
 
 
 @pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-wif-probe.yml",
-                                   "sentinel-official-gate.yml", "sentinel-kill-rehearsal.yml"])
+                                   "sentinel-official-gate.yml", "sentinel-kill-rehearsal.yml",
+                                   "sentinel-timing-rehearsal.yml"])
 def test_manual_workflows_declare_required_expected_source_sha_input(name):
     data = _load(name)
     inputs = data[True]["workflow_dispatch"]["inputs"]
@@ -158,6 +164,7 @@ def test_every_uses_is_a_frozen_full_sha_pin(name):
     ("sentinel-schedule.yml", "SENTINEL_SCHEDULE_FEDERATION_RULE_ID"),
     ("sentinel-wif-probe.yml", "SENTINEL_P5C_FEDERATION_RULE_ID"),
     ("sentinel-official-gate.yml", "SENTINEL_P5D_FEDERATION_RULE_ID"),
+    ("sentinel-timing-rehearsal.yml", "SENTINEL_P5D_TIMING_FEDERATION_RULE_ID"),
 ])
 def test_per_lane_federation_rule_variable_maps_to_the_provider_env_name(name, rule_var):
     text = (WORKFLOWS_DIR / name).read_text(encoding="utf-8")
@@ -165,7 +172,7 @@ def test_per_lane_federation_rule_variable_maps_to_the_provider_env_name(name, r
     # no other lane's rule variable name appears in this file
     other_vars = {
         "SENTINEL_SCHEDULE_FEDERATION_RULE_ID", "SENTINEL_P5C_FEDERATION_RULE_ID",
-        "SENTINEL_P5D_FEDERATION_RULE_ID",
+        "SENTINEL_P5D_FEDERATION_RULE_ID", "SENTINEL_P5D_TIMING_FEDERATION_RULE_ID",
     } - {rule_var}
     for other in other_vars:
         assert other not in text
@@ -179,7 +186,8 @@ def test_model_free_workflows_have_no_anthropic_env(name):
     assert "ANTHROPIC_" not in text
 
 
-@pytest.mark.parametrize("name", ["sentinel-schedule.yml", "sentinel-wif-probe.yml", "sentinel-official-gate.yml"])
+@pytest.mark.parametrize("name", ["sentinel-schedule.yml", "sentinel-wif-probe.yml",
+                                   "sentinel-official-gate.yml", "sentinel-timing-rehearsal.yml"])
 def test_identity_token_file_points_into_runner_temp(name):
     text = (WORKFLOWS_DIR / name).read_text(encoding="utf-8")
     assert "ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/anthropic_identity_token" in text
@@ -224,7 +232,7 @@ def test_entrypoint_commands_reference_existing_script_files():
     script_names = [
         "run_phase5_scheduled.py", "run_phase5_rehearsal.py", "run_phase5_wif_probe.py",
         "run_phase5_official_gate.py", "run_phase5_window_freeze.py",
-        "run_phase5_kill_rehearsal.py",
+        "run_phase5_kill_rehearsal.py", "run_phase5_timing_rehearsal.py",
     ]
     all_text = "\n".join((WORKFLOWS_DIR / name).read_text(encoding="utf-8") for name in P5_WORKFLOWS)
     for script in script_names:
@@ -555,3 +563,119 @@ def test_kill_rehearsal_probe_and_fake_execute_share_the_artifacts_dir():
 
 def test_kill_rehearsal_driver_exists():
     assert (Path("scripts") / "run_phase5_kill_rehearsal.py").exists()
+
+
+# =====================================================================
+# Stage 2C-B4 (dispatch q77-p5d-repair-stage2cb4-implement-a): the N=24
+# real-Sonnet timing rehearsal. Created here, NEVER executed here.
+# =====================================================================
+
+TIMING = "sentinel-timing-rehearsal.yml"
+
+
+def _timing_steps() -> list:
+    data = _load(TIMING)
+    return next(iter(data["jobs"].values()))["steps"]
+
+
+def _timing_step(name: str) -> dict:
+    return next(s for s in _timing_steps() if s.get("name") == name)
+
+
+def test_timing_job_is_named_and_runs_on_ubuntu():
+    data = _load(TIMING)
+    assert data["jobs"]["timing"]["name"] == "timing"
+    assert data["jobs"]["timing"]["runs-on"] == "ubuntu-latest"
+
+
+def test_timing_trigger_is_dispatch_only_with_no_schedule_push_or_pr():
+    data = _load(TIMING)
+    trigger = data[True]
+    assert set(trigger) == {"workflow_dispatch"}
+    for forbidden in ("schedule", "push", "pull_request", "pull_request_target"):
+        assert forbidden not in trigger
+    text = (WORKFLOWS_DIR / TIMING).read_text(encoding="utf-8")
+    assert "\nschedule:" not in text and "cron" not in text
+
+
+def test_timing_permissions_are_exactly_the_minimum_three():
+    data = _load(TIMING)
+    assert data["permissions"] == {"contents": "read", "actions": "read", "id-token": "write"}
+
+
+def test_timing_job_backstop_is_the_platform_ceiling():
+    """360 is GitHub's platform ceiling used as an infrastructure
+    backstop, never a calibration threshold: no per-invocation deadline
+    may truncate a legitimately slow timing observation."""
+    data = _load(TIMING)
+    assert data["jobs"]["timing"]["timeout-minutes"] == 360
+
+
+def test_timing_step_order_is_preflight_execute_upload():
+    names = [s.get("name") for s in _timing_steps() if s.get("name")]
+    assert [n for n in names if n in ("preflight", "execute", "upload timing evidence")] == [
+        "preflight", "execute", "upload timing evidence",
+    ]
+
+
+def test_timing_execute_has_no_step_timeout_and_upload_is_always_bounded():
+    assert "timeout-minutes" not in _timing_step("execute")
+    assert "timeout-minutes" not in _timing_step("preflight")
+    upload = _timing_step("upload timing evidence")
+    assert upload["if"] == "always()"
+    assert upload["timeout-minutes"] == 2
+
+
+def test_timing_artifact_name_cannot_collide_with_official_or_replacement():
+    name = _timing_step("upload timing evidence")["with"]["name"]
+    assert name == "sentinel-p5-timing-r${{ github.run_id }}-a${{ github.run_attempt }}"
+    for prefix in ("sentinel-p5-oneshot-", "sentinel-p5-gate-evidence-", "sentinel-p5-rehearsal-"):
+        assert not name.startswith(prefix)
+
+
+def test_timing_upload_tree_is_exactly_the_five_evidence_files():
+    upload = _timing_step("upload timing evidence")
+    paths = upload["with"]["path"].splitlines()
+    assert [p.rsplit("/", 1)[1] for p in paths] == [
+        "phase5_timing_events.jsonl",
+        "phase5_timing_runtime_identity.json",
+        "phase5_timing_topology.json",
+        "phase5_timing_summary.json",
+        "phase5_timing_stop.json",
+    ]
+    for p in paths:
+        assert p.endswith(tuple([".jsonl", ".json"]))
+        assert "/evidence/" in p
+        assert "*" not in p
+    joined = "\n".join(paths)
+    for forbidden in (".sqlite3", "anthropic_identity_token", "fx-state"):
+        assert forbidden not in joined
+    assert upload["with"]["retention-days"] == 90
+    assert upload["with"]["overwrite"] is False
+
+
+def test_timing_has_no_marker_step_and_no_oneshot_semantics():
+    text = (WORKFLOWS_DIR / TIMING).read_text(encoding="utf-8")
+    assert "oneshot" not in text.lower()
+    assert "marker" not in text.lower()
+    for step in _timing_steps():
+        assert "marker" not in (step.get("name") or "").lower()
+
+
+def test_timing_drives_only_its_own_driver():
+    for step_name in ("preflight", "execute"):
+        run = _timing_step(step_name)["run"]
+        assert "run_phase5_timing_rehearsal.py" in run
+        assert "run_phase5_official_gate.py" not in run
+        assert "run_phase5_gate_finalizer.py" not in run
+        assert '--expected-source-sha "${{ inputs.expected_source_sha }}"' in run
+
+
+def test_timing_preflight_and_execute_share_the_work_root():
+    pre, exe = _timing_step("preflight"), _timing_step("execute")
+    for key in ("WORK_ROOT", "ANTHROPIC_IDENTITY_TOKEN_FILE"):
+        assert pre["env"][key] == exe["env"][key]
+
+
+def test_timing_driver_exists():
+    assert (Path("scripts") / "run_phase5_timing_rehearsal.py").exists()

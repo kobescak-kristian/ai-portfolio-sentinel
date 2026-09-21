@@ -891,6 +891,19 @@ def test_nothing_outside_tests_imports_the_new_modules():
     permitted_by_path = {
         REPO_ROOT / "scripts" / "run_phase5_official_gate.py": {"process_control", "envelope_guard"},
         REPO_ROOT / "scripts" / "run_phase5_kill_rehearsal.py": {"process_control", "runtime_identity"},
+        # Stage 2C-B4 (dispatch q77-p5d-repair-stage2cb4-implement-a): the
+        # N=24 timing-rehearsal driver samples the controlled PPID closure
+        # while the real bundled CLI is live, and captures a fresh
+        # timing-run runtime identity as evidence only. envelope_guard
+        # stays forbidden there -- no per-invocation deadline may truncate
+        # a timing observation. Per-path allowance, never blanket.
+        REPO_ROOT / "scripts" / "run_phase5_timing_rehearsal.py": {"process_control", "runtime_identity"},
+        # The timing workflow itself imports nothing. It matches only
+        # because one file in its explicit evidence-upload allowlist is
+        # named phase5_timing_runtime_identity.json -- a filename, not a
+        # module reference. process_control and envelope_guard remain
+        # forbidden there.
+        REPO_ROOT / ".github" / "workflows" / "sentinel-timing-rehearsal.yml": {"runtime_identity"},
     }
     for root in ("scripts", ".github"):
         for path in (REPO_ROOT / root).rglob("*"):

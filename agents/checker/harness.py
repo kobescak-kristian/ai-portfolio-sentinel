@@ -173,6 +173,16 @@ class CagedCheckerStub:
     # Haiku/local-OAuth behavior exactly for every existing caller.
     model: str = MODEL
     auth_profile: AuthProfile = field(default=auth.LOCAL_OAUTH)
+    #: Stage 2C-B4 (owner ruling under q77-p5d-repair-stage2cb4-plan-d):
+    #: the ADR-0008 bounded-attempt loop below reads this instance value
+    #: instead of the module constant. The default IS
+    #: ``MAX_MODEL_ATTEMPTS_PER_TASK``, so every existing caller keeps
+    #: exactly today's two-attempt behavior by omitting it. Only the
+    #: model-free-budget timing rehearsal supplies ``1``, because
+    #: ADR-0012 Amendment A3 rule 4 makes any invocation that reaches
+    #: its SDK budget ceiling an immediate rehearsal STOP -- a second
+    #: attempt must therefore be unreachable BEFORE it would start.
+    max_model_attempts_per_task: int = MAX_MODEL_ATTEMPTS_PER_TASK
 
     #: Run-lifetime fail-closed latch. Set once ``_advance_budget``
     #: catches a coordinator accounting failure, i.e. after this call's
@@ -230,7 +240,7 @@ class CagedCheckerStub:
         # MAX_MODEL_ATTEMPTS_PER_TASK actual SDK invocations happen for
         # one logical judgment task, and the only way to reach a second
         # iteration is a cleanly classified SDK_BUDGET_CEILING.
-        for attempt_index in range(MAX_MODEL_ATTEMPTS_PER_TASK):
+        for attempt_index in range(self.max_model_attempts_per_task):
             try:
                 reservation = self.coordinator.reserve()
             except BudgetExhausted as exc:
@@ -292,7 +302,7 @@ class CagedCheckerStub:
 
             retry_available = (
                 failures.is_retryable(failure_class)
-                and attempt_index + 1 < MAX_MODEL_ATTEMPTS_PER_TASK
+                and attempt_index + 1 < self.max_model_attempts_per_task
             )
             if not retry_available:
                 raise CheckerAgentError(
