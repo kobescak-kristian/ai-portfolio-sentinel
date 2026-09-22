@@ -5424,3 +5424,73 @@ merges every change."
   Next action: the `B5_SOURCE_SHA` freeze and the no-push window
   (plan-d Part 6), then Stage 2C-B5-P1 read-only verification; not begun
   here.
+- 2026-09-23 - PRE-FREEZE PROVENANCE CORRECTION AND LOCAL SCHEDULER
+  MAINTENANCE HOLD (dispatch
+  `q77-p5d-repair-stage2cb5-prefreeze-provenance-scheduler-hold-a`, base
+  `20e61424aa49a47c0717592aa160c82de69c3926`). Governance and operations
+  record only. **`B5_SOURCE_SHA` is NOT frozen, no no-push window is
+  open, and B5-P1 is NOT executed.** The preceding freeze dispatch
+  (`q77-p5d-repair-stage2cb5-freeze-p1-b`) stopped PRE-FREEZE BLOCKED
+  because the provenance named for run `r-266d94e9` did not hold; this
+  entry corrects that record.
+  PROVENANCE CORRECTION (owner-approved). Commit
+  `20e61424aa49a47c0717592aa160c82de69c3926` records the generated
+  operational evidence bytes correctly, but its commit-message sentence
+  saying `r-266d94e9ec4d4705861a92021b6000ea` was produced by GitHub
+  scheduled workflow run 35724684630 is factually INCORRECT. Facts
+  re-derived read-only: run 35724684630 (`sentinel-schedule`, event
+  `schedule`, created 2026-09-22T12:00:56Z, job completed
+  2026-09-22T12:01:53Z, conclusion success) uploaded exactly one
+  artifact, `sentinel-p5-prewindow-r35724684630-a1`, whose evidence reads
+  `S01_DERIVE_GITHUB_CONTEXT` OK, `S02_DISCOVER_ACTIVE_WINDOW`
+  EARLY_EXIT, reason `NO_ACTIVE_WINDOW`; it produced NO operational run
+  and no run_id appears in its evidence or log. `r-266d94e9` was produced
+  by the standing local Windows scheduler task `SentinelDailyRun`:
+  the task's last run began 2026-09-22T12:45:25Z with
+  `LastTaskResult=0`; the gitignored local ledger holds `r-266d94e9` as
+  live, COMPLETED, started 2026-09-22T12:46:22+00:00, finished
+  2026-09-22T12:47:56+00:00, 244/244 tasks terminal; and its
+  `run.started` event is in the task's own scheduled log. The
+  `FINDINGS.md` block (exactly one) and the `telemetry/cost_ledger.jsonl`
+  CostRow (exactly one) for `r-266d94e9` remain valid and are NOT
+  altered. The error is provenance metadata in the `20e6142` commit
+  message, not corruption of the operational evidence. That commit is
+  NOT rewritten, amended, rebased or force-pushed; this entry supersedes
+  its provenance sentence.
+  LOCAL SCHEDULER MAINTENANCE HOLD. `SentinelDailyRun` (task folder
+  `\Sentinel\`) writes `FINDINGS.md` and `telemetry/cost_ledger.jsonl`
+  in this working tree, so a fire during the B5 no-push window would
+  dirty the tree the freeze depends on. Read back before the change:
+  exactly one task of that name; enabled, state Ready; action
+  `python -m sentinel run --run-kind live --source live` against the
+  operator's own public repositories, with the local ledger, findings,
+  scheduled-log and cost-ledger targets; daily trigger at 07:15 local
+  time; interactive, limited-run-level principal; last run as above;
+  next run 2026-09-23 07:15 local. The ONLY change made: enabled state
+  ENABLED -> DISABLED. Read back after: state Disabled,
+  `Settings.Enabled=False`; a before/after export of the full task
+  definition differs by exactly one element (`<Enabled>false</Enabled>`),
+  so action, arguments, working directory, trigger and principal are
+  unchanged. The task was not deleted, no task was created, and no
+  workflow or provider configuration was touched. This is a TEMPORARY
+  B5 hold: the task stays disabled until the B5 timing workflow is
+  terminal, and re-enabling it is a separate post-B5 action. While it
+  is disabled no daily operational live run is produced, and that gap
+  is expected, not a scheduler fault.
+  Executing model: Opus 5.5.
+  ACTUAL WRITE SET (exactly 1 path): `STATE.md` (this entry). No
+  `FINDINGS.md`, `telemetry/cost_ledger.jsonl`, code, test, workflow,
+  corpus, pre-registration, ADR or `.publicgate-allow` change. Both
+  frozen inputs re-hashed and BYTE-IDENTICAL: corpus
+  `98cdba8a183b3fab128f413f95bb3647e15961d711bbfd6fedb9ce73c42a471d`,
+  pre-registration
+  `17549d3fd5789a8eeae04d15364d2aec0c94ef5f8ee25a02cf0391d354ff065b`.
+  The timing workflow still has ZERO visible runs.
+  NON-EVENTS: no `B5_SOURCE_SHA` freeze; no no-push window; no B5-P1,
+  P2 or P3 work; no repository-variable mutation; no federation rule
+  created or mutated; no OIDC or WIF request; no provider or model call;
+  no workflow dispatch, rerun or cancel; no optional WIF validation
+  probe; no B5 or B6 work.
+  Next action: re-dispatch the `B5_SOURCE_SHA` freeze and B5-P1
+  read-only verification against a tip that includes this entry, with
+  `SentinelDailyRun` still disabled.
