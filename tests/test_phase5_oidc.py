@@ -661,3 +661,264 @@ def test_scheduled_runner_still_skips_wrapping_when_no_session_exists(monkeypatc
     run_sentinel = scheduled._build_run_sentinel({}, github_owner="owner", session_holder={})
     run_sentinel(working_state, "12345")
     assert captured["query_fn"] == "raw-query-fn"
+
+
+# ---------------------------------------------------------------------------
+# The background refresher uses the SAME bounded acquisition policy
+# (dispatch q77-p5d-repair-stage2cb5-p0-refresh-retry-repair-a).
+#
+# The B5-P0 repair gave the initial acquisition and the per-invocation prepare
+# a bounded 3-attempt policy but left install_and_start constructing the
+# refresher WITHOUT fetch_token, so the background producer silently kept
+# TokenFileRefresher's historical single-attempt default. One transient
+# failure during a long invocation would then latch _fault, and the next
+# assert_healthy() would refuse -- stopping a run that had already consumed
+# the one-shot lane.
+#
+# Model-free throughout: every fetch seam is injected, so no test here makes a
+# real OIDC, network, provider or model call.
+# ---------------------------------------------------------------------------
+
+
+def _plain_session(tmp_path):
+    """A session left on its PRODUCTION acquisition policy (no override)."""
+    env = {"ANTHROPIC_IDENTITY_TOKEN_FILE": str(tmp_path / "identity.jwt")}
+    source = oidc.OidcRequestSource(request_url="https://example/token", request_token="req-tok")
+    session = oidc.OidcSession(source=source, first_jwt="jwt-initial")
+    oidc.write_placeholder_token_file(env)
+    return env, session
+
+
+def test_default_acquisition_policy_is_callable_with_one_argument(tmp_path, monkeypatch):
+    """Regression: the production path with NOTHING injected.
+
+    ``fetch_token`` is an init=False dataclass field. Declared with a plain
+    ``default`` it stays a CLASS attribute, so ``self.fetch_token`` binds as a
+    method and ``self.fetch_token(self.source)`` passes the session itself as
+    the first argument -- a TypeError on every real invocation, which in the
+    timing driver becomes AUTH_OR_OIDC_FAULT at ordinal 1 and consumes the
+    one-shot lane.
+
+    Every other test in this file injects ``session.fetch_token`` as an
+    instance attribute, which masks that entirely. This test deliberately does
+    not, and injects only the transport."""
+    env, session = _plain_session(tmp_path)
+    assert not hasattr(session.fetch_token, "__self__"), (
+        "fetch_token must be a plain function on the instance, not a bound method"
+    )
+    assert session.fetch_token is oidc.fetch_github_oidc_token_with_retry
+
+    calls = []
+
+    def fake_inner(source, *, audience=None, opener=None):
+        calls.append(source)
+        return "jwt-default-policy"
+
+    monkeypatch.setattr(oidc, "fetch_github_oidc_token", fake_inner)
+    session.prepare_fresh_assertion(env)
+
+    assert _installed(env) == "jwt-default-policy"
+    assert calls == [session.source], "the request source, not the session, must be passed"
+
+
+def test_background_refresh_default_policy_is_also_callable(tmp_path, monkeypatch):
+    """The same regression, through the background producer."""
+    env, session = _plain_session(tmp_path)
+    calls = []
+
+    def fake_inner(source, *, audience=None, opener=None):
+        calls.append(source)
+        return "jwt-background-default"
+
+    monkeypatch.setattr(oidc, "fetch_github_oidc_token", fake_inner)
+    session.install_and_start(env, interval_seconds=3600)
+    try:
+        session.refresher.tick()
+        session.assert_healthy()
+    finally:
+        session.refresher.stop()
+
+    assert _installed(env) == "jwt-background-default"
+    assert calls == [session.source]
+
+
+def test_install_and_start_wires_the_refresher_to_the_session_policy(tmp_path):
+    """Property 1: not TokenFileRefresher's single-attempt default."""
+    env, session = _plain_session(tmp_path)
+    # The production default, before anything is injected.
+    assert session.fetch_token is oidc.fetch_github_oidc_token_with_retry
+    assert oidc.TokenFileRefresher.__dataclass_fields__["fetch_token"].default is (
+        oidc.fetch_github_oidc_token
+    ), "the historical single-attempt default is still the field default"
+
+    session.install_and_start(env, interval_seconds=3600)
+    try:
+        assert session.refresher.fetch_token is session.fetch_token
+        assert session.refresher.fetch_token is oidc.fetch_github_oidc_token_with_retry
+        assert session.refresher.fetch_token is not oidc.fetch_github_oidc_token
+        # The shared producer lock stays load-bearing.
+        assert session.refresher.lock is session.install_lock
+    finally:
+        session.refresher.stop()
+
+
+def test_install_and_start_carries_an_injected_policy_through(tmp_path):
+    """The same wiring keeps a test policy in force for the background path."""
+    env, session = _plain_session(tmp_path)
+    session.fetch_token = lambda src: "jwt-injected"
+    session.install_and_start(env, interval_seconds=3600)
+    try:
+        assert session.refresher.fetch_token is session.fetch_token
+        session.refresher.tick()
+        assert _installed(env) == "jwt-injected"
+    finally:
+        session.refresher.stop()
+
+
+def _bounded_through_opener(opener, slept):
+    """Route the session policy through the REAL bounded wrapper, with the
+    transport and the clock injected so no network call and no real sleep
+    occurs."""
+    return lambda src: oidc.fetch_github_oidc_token_with_retry(
+        src, opener=opener, sleep=slept.append
+    )
+
+
+def test_background_refresh_retries_a_transient_failure_within_the_bound(tmp_path):
+    """Properties 2 and 3: bounded 3 attempts, 1s then 2s, and a transient
+    failure followed by success must NOT latch a fault."""
+    env, session = _plain_session(tmp_path)
+    attempts, slept = [], []
+
+    def opener(request, timeout=None):
+        attempts.append(1)
+        if len(attempts) < 3:
+            return _FakeResponse(503, b"unavailable")
+        return _FakeResponse(200, b'{"value":"jwt-refreshed"}')
+
+    session.fetch_token = _bounded_through_opener(opener, slept)
+    session.install_and_start(env, interval_seconds=3600)
+    try:
+        session.refresher.tick()
+    finally:
+        session.refresher.stop()
+
+    assert len(attempts) == 3
+    assert slept == [1.0, 2.0]
+    assert _installed(env) == "jwt-refreshed"
+    session.assert_healthy()  # no latched fault: the refresh ultimately succeeded
+
+
+def test_background_refresh_exhaustion_latches_fault_and_blocks_next_invocation(tmp_path):
+    """Property 4: fail-closed semantics are unchanged once the bound is spent."""
+    env, session = _plain_session(tmp_path)
+    attempts, slept = [], []
+
+    def opener(request, timeout=None):
+        attempts.append(1)
+        return _FakeResponse(503, b"unavailable")
+
+    session.fetch_token = _bounded_through_opener(opener, slept)
+    session.install_and_start(env, interval_seconds=3600)
+    try:
+        session.refresher.tick()
+    finally:
+        session.refresher.stop()
+
+    assert len(attempts) == 3, "the bound is three attempts, not one and not unbounded"
+    assert slept == [1.0, 2.0], "no sleep after the final failed attempt"
+
+    with pytest.raises(oidc.OidcRefreshFault):
+        session.assert_healthy()
+
+    ran = []
+
+    def query_fn(check_class, reservation, state, user_prompt, model=None):
+        ran.append(True)
+
+    with pytest.raises(oidc.OidcRefreshFault):
+        oidc.assertion_refreshed(query_fn, session, env)("c", None, None, "p")
+    assert ran == [], "a latched refresh fault must prevent the next invocation"
+
+
+@pytest.mark.parametrize("status, body", [(403, b"forbidden"), (404, b"missing")])
+def test_background_refresh_does_not_retry_deterministic_rejection(tmp_path, status, body):
+    """Property 5: an authorization or configuration rejection is single-attempt."""
+    env, session = _plain_session(tmp_path)
+    attempts, slept = [], []
+
+    def opener(request, timeout=None):
+        attempts.append(1)
+        return _FakeResponse(status, body)
+
+    session.fetch_token = _bounded_through_opener(opener, slept)
+    session.install_and_start(env, interval_seconds=3600)
+    try:
+        session.refresher.tick()
+    finally:
+        session.refresher.stop()
+
+    assert len(attempts) == 1
+    assert slept == []
+    with pytest.raises(oidc.OidcRefreshFault):
+        session.assert_healthy()
+
+
+def test_background_refresh_leaks_no_token_value_and_makes_no_real_request(tmp_path):
+    """Property 6: the refresh path carries no credential into any message."""
+    env, session = _plain_session(tmp_path)
+    secret = "jwt-refresher-secret-value"
+    calls = []
+
+    def opener(request, timeout=None):
+        calls.append(request.full_url)
+        return _FakeResponse(200, ('{"value":"%s"}' % secret).encode("ascii"))
+
+    slept = []
+    session.fetch_token = _bounded_through_opener(opener, slept)
+    session.install_and_start(env, interval_seconds=3600)
+    try:
+        session.refresher.tick()
+        assert _installed(env) == secret
+        assert secret not in repr(session)
+        assert secret not in repr(session.refresher)
+        assert secret not in repr(session.source)
+        assert "req-tok" not in repr(session.refresher)
+    finally:
+        session.refresher.stop()
+
+    # The only transport touched is the injected opener.
+    assert calls and all(url.startswith("https://example/token") for url in calls)
+
+    # And a failure message still carries a status only, never a credential.
+    def failing_opener(request, timeout=None):
+        return _FakeResponse(500, secret.encode("ascii"))
+
+    session.fetch_token = _bounded_through_opener(failing_opener, [])
+    refresher = oidc.TokenFileRefresher(
+        source=session.source, env=env, interval_seconds=3600,
+        fetch_token=session.fetch_token, lock=session.install_lock,
+    )
+    refresher.tick()
+    with pytest.raises(oidc.OidcRefreshFault) as excinfo:
+        refresher.assert_healthy()
+    assert secret not in str(excinfo.value)
+    assert "req-tok" not in str(excinfo.value)
+
+
+def test_all_three_acquisition_paths_share_one_policy(tmp_path):
+    """Initial acquisition, per-invocation prepare and background refresh."""
+    env, session = _plain_session(tmp_path)
+    used = []
+    session.fetch_token = lambda src: (used.append("policy"), "jwt-x")[1]
+    session.install_and_start(env, interval_seconds=3600)
+    try:
+        session.prepare_fresh_assertion(env)
+        session.refresher.tick()
+    finally:
+        session.refresher.stop()
+    assert used == ["policy", "policy"]
+
+    source = (REPO_ROOT / "agents" / "checker" / "oidc.py").read_text(encoding="utf-8")
+    assert "first_jwt = fetch_github_oidc_token_with_retry(source, audience=audience)" in source
+    assert "fetch_token=self.fetch_token," in source

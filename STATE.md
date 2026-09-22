@@ -5300,3 +5300,123 @@ merges every change."
   still outstanding (provider-cap headroom, provider cap after B5, and
   the optional pre-B5 WIF validation probe), an explicit owner GO, and
   then exactly one real N=24 Sonnet timing rehearsal; none begun here.
+- 2026-09-22 - ADR-0012 REPAIR STAGE 2C-B5-P0 FOLLOW-UP: BACKGROUND
+  REFRESH RETRY WIRING REPAIRED, PLUS A SECOND DEFECT FOUND WHILE
+  REPAIRING IT (dispatch
+  `q77-p5d-repair-stage2cb5-p0-refresh-retry-repair-a`, base
+  `70958d14ed83f8125b2c84d9a7392d6aa9d0cbef`). Both defects were
+  introduced by Stage 2C-B5-P0 itself and are recorded as such. **No B5
+  execution, no provider or model call, no real OIDC or WIF request, no
+  GitHub or provider configuration mutation, no workflow dispatch; the
+  timing workflow still has ZERO executions.**
+  DEFECT 1, AS REPORTED BY INDEPENDENT POST-LANDING REVIEW. The bounded
+  3-attempt acquisition policy reached the initial acquisition and the
+  per-invocation prepare, but `OidcSession.install_and_start` built the
+  `TokenFileRefresher` without passing `fetch_token`, so the background
+  producer silently kept that class's historical single-attempt default.
+  One transient GitHub failure during a long invocation would latch
+  `_fault`, and the next `assert_healthy()` would refuse -- stopping a
+  run that had already consumed the one-shot lane, for a failure the
+  adopted policy exists to absorb. Repaired by passing
+  `fetch_token=self.fetch_token` at that construction site, alongside
+  the already-shared producer lock. All three acquisition paths now use
+  one policy. No second retry loop was added, no bound was changed, no
+  cadence was changed, `check_jti` semantics are untouched, the
+  refresher is retained, and fail-closed behaviour after genuine
+  exhaustion is unchanged.
+  DEFECT 2, FOUND WHILE WRITING THE TEST FOR DEFECT 1, AND MORE SEVERE.
+  `OidcSession.fetch_token` was declared as an `init=False` dataclass
+  field with a plain `default`. For an `init=False` field the generated
+  `__init__` assigns nothing, so the callable stayed a CLASS attribute
+  and ordinary attribute access bound it as a METHOD: on the real
+  production path `self.fetch_token(self.source)` passed the session
+  itself as the first argument and raised
+  `TypeError: fetch_github_oidc_token_with_retry() takes 1 positional
+  argument but 2 were given`. `prepare_fresh_assertion` would therefore
+  have raised on EVERY invocation, which the timing driver classifies as
+  `AUTH_OR_OIDC_FAULT` at ordinal 1 -- consuming the one-shot lane with
+  no timing result, and breaking every provider invocation on the
+  scheduled lane as well. `TokenFileRefresher.fetch_token` was never
+  affected because it is an `init=True` field, which does assign
+  per-instance. Repaired with `default_factory` in place of `default`,
+  so the generated `__init__` assigns a plain function to the instance.
+  WHY THE WHOLE SUITE MISSED IT, RECORDED PLAINLY. Every test written
+  for Stage 2C-B5-P0 injected `session.fetch_token` as an instance
+  attribute, which shadows the class attribute and so masks the binding
+  entirely. The landed surface therefore had a green full suite, green
+  exact-SHA CI, and a provider path that could not execute a single
+  invocation. A regression test now exercises the default policy with
+  NOTHING injected except the transport, and asserts both that
+  `fetch_token` is a plain function rather than a bound method and that
+  the request source -- not the session -- is what reaches the fetch.
+  TESTS ADDED (all model-free; every fetch seam injected, no real
+  OIDC, network, provider or model call): the refresher is wired to the
+  session policy and not to the historical single-attempt default; an
+  injected policy carries through to the background path; a transient
+  failure inside the bound retries 3 times with 1s then 2s and does NOT
+  latch a fault; exhaustion after three attempts DOES latch
+  `OidcRefreshFault` and prevents the next invocation through
+  `assertion_refreshed`; deterministic 403 and 404 rejection stays
+  single-attempt with no sleep; no token or credential value appears in
+  any repr, refresher state or fault message, and the only transport
+  touched is the injected opener; all three acquisition paths share one
+  policy; and the two default-policy regression tests above.
+  MUTATION-CHECKED, BOTH FIXES. Reverting the refresher wiring fails 9
+  tests; reverting `default_factory` to `default` fails 3, including
+  both regression tests. Neither fix passes vacuously.
+  Executing model: Opus 5 (the routing named Opus 5; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 4 declared paths):
+  `agents/checker/oidc.py`, `tests/test_phase5_oidc.py`, `STATE.md`
+  (this entry), `.publicgate-allow` (one entry for this entry's status
+  line). No other path was mechanically necessary. No
+  `rehearsal/timing/*` change; no workflow change; no driver, gate,
+  scheduled-runner, evidence-record or cost-recorder change; no ADR,
+  fixture, eval, answer-key, scorer, threshold or receipt-registry
+  change; `FINDINGS.md` and `telemetry/cost_ledger.jsonl` standing
+  scheduler output was left unstaged and unabsorbed.
+  VERIFICATION: focused set (oidc, timing rehearsal, gate runner, probe
+  runner, orchestrator) 264 passed / 8 skipped; full suite 2416 passed /
+  32 skipped locally, the same 32 skips as the Stage 2C-B4 baseline;
+  `python -m pip check` clean; `python .githooks/validate_artifacts.py .`
+  Tier 0 PASS; `python scripts/check_phase1_frozen.py` PASS. Both frozen
+  inputs re-hashed and BYTE-IDENTICAL: corpus
+  `98cdba8a183b3fab128f413f95bb3647e15961d711bbfd6fedb9ce73c42a471d`,
+  pre-registration
+  `17549d3fd5789a8eeae04d15364d2aec0c94ef5f8ee25a02cf0391d354ff065b`.
+  The timing workflow's `on:` block was re-parsed and is still
+  `workflow_dispatch`-only, and `gh run list` for it returned an empty
+  list before and after this repair.
+  NON-EVENTS: no provider or model call; no OIDC or WIF request, real or
+  simulated; no federation rule created, mutated or referenced; no
+  provider-capacity change; no secret, variable or environment mutation,
+  and `SENTINEL_P5D_TIMING_FEDERATION_RULE_ID` was not set; no workflow
+  dispatch, rerun or cancel; no bundled-CLI execution; no marker
+  activity; no CostRow appended; no envelope work; no
+  `B5_SOURCE_SHA` freeze and no no-push window opened; no B5-P1/P2/P3
+  work; no optional WIF validation probe; no B6 work; no N=24 timing
+  rehearsal executed.
+  RESIDUAL RECORDED, NOT CLOSED: the Stage 2C-B5-P0 surface was landed
+  with green local tests and green exact-SHA CI while carrying a defect
+  that made the provider path non-functional, because its tests injected
+  past the production default. Before the `B5_SOURCE_SHA` freeze, the
+  B5-P1 read-only verification should treat "the repair is in force" as
+  requiring evidence that the DEFAULT, uninjected path works, not only
+  that the injected paths do.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  ADR-0012 repair Stage 1, Stage 2A, Stage 2B-1, Stage 2B-2, Stage 2C-1,
+  Stage 2C-2, Stage 2C-3, Stage 2C-B1, Stage 2C-B3, Stage 2C-B4 and
+  Stage 2C-B5-P0 (with this follow-up repair) LANDED, Stage 2C-B2 PASS
+  with the model-free GitHub kill rehearsal COMPLETE, Stage 2C-B5 NOT
+  EXECUTED, Sonnet N=24 timing rehearsal NOT EXECUTED, B5 provider
+  preparation NOT DONE, `REAL_CLI_TOPOLOGY_UNOBSERVED` OPEN until B5,
+  execution envelope NOT COMMITTED / BOUND, durable single-attempt
+  consumption latch PENDING, fresh replacement readiness NOT COMPLETE,
+  replacement NOT READY / NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B5-P0 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: the `B5_SOURCE_SHA` freeze and the no-push window
+  (plan-d Part 6), then Stage 2C-B5-P1 read-only verification; not begun
+  here.

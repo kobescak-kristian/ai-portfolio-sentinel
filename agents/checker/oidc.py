@@ -359,8 +359,17 @@ class OidcSession:
     install_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     # Injectable only so tests can drive assertion freshness without a network
     # call. Production always uses the bounded-retry GitHub fetch.
+    #
+    # default_factory, NOT default: this field is init=False, so a plain
+    # default would stay a CLASS attribute and ordinary attribute access would
+    # bind it as a method -- self.fetch_token(self.source) would then pass the
+    # session itself as the first argument. default_factory makes the generated
+    # __init__ assign a plain function to the instance instead, so the callable
+    # is invoked with exactly one argument. (TokenFileRefresher.fetch_token is
+    # an init=True field, which already assigns per-instance, which is why it
+    # never needed this.)
     fetch_token: Callable[[OidcRequestSource], str] = field(
-        default=fetch_github_oidc_token_with_retry, init=False, repr=False
+        default_factory=lambda: fetch_github_oidc_token_with_retry, init=False, repr=False
     )
 
     def assert_healthy(self) -> None:
@@ -392,6 +401,15 @@ class OidcSession:
         self.refresher = TokenFileRefresher(
             source=self.source, env=env, interval_seconds=interval_seconds,
             lock=self.install_lock,
+            # The background producer performs the SAME GitHub assertion
+            # acquisition as the other two paths, so it must use the same
+            # bounded policy. Without this the refresher would silently fall
+            # back to TokenFileRefresher's historical single-attempt default:
+            # one transient failure mid-invocation would latch _fault, and the
+            # next assert_healthy() would refuse -- stopping a run that had
+            # already consumed the one-shot lane. Passing the session's own
+            # callable also keeps an injected test policy in force here.
+            fetch_token=self.fetch_token,
         )
         self.refresher.start()
 
