@@ -9,6 +9,7 @@ import importlib.metadata
 import importlib.util
 import io
 import json
+import os
 import sys
 import types
 import zipfile
@@ -1375,12 +1376,17 @@ def _probe_run_gate_session(tmp_path, monkeypatch, *, trip_after_run=None):
 
     guard_calls: list = []
     health_calls: list = []
+    assertion_calls: list = []
     deps_captured: list = []
     execute_run_call_count = {"n": 0}
 
     def _fake_health_gated(query_fn, session):
         health_calls.append((query_fn, session))
         return ("health-wrapped", query_fn)
+
+    def _fake_assertion_refreshed(query_fn, session, env):
+        assertion_calls.append((query_fn, session, env))
+        return ("assertion-refreshed", query_fn)
 
     def _fake_deadline_guarded(query_fn, **kw):
         guard_calls.append(kw)
@@ -1408,6 +1414,7 @@ def _probe_run_gate_session(tmp_path, monkeypatch, *, trip_after_run=None):
         return object()
 
     monkeypatch.setattr(oidc_mod, "health_gated", _fake_health_gated)
+    monkeypatch.setattr(oidc_mod, "assertion_refreshed", _fake_assertion_refreshed)
     monkeypatch.setattr(guard_mod, "deadline_guarded", _fake_deadline_guarded)
     monkeypatch.setattr(harness_mod, "CagedCheckerStub", _FakeStub)
     monkeypatch.setattr(ledger_mod, "open_ledger", lambda *a, **kw: object())
@@ -1426,8 +1433,8 @@ def _probe_run_gate_session(tmp_path, monkeypatch, *, trip_after_run=None):
 
     return types.SimpleNamespace(
         module=module, run=_run, latch=latch, registry=registry, clock=clock, session=session,
-        guard_calls=guard_calls, health_calls=health_calls, deps_captured=deps_captured,
-        execute_run_call_count=execute_run_call_count,
+        guard_calls=guard_calls, health_calls=health_calls, assertion_calls=assertion_calls,
+        deps_captured=deps_captured, execute_run_call_count=execute_run_call_count,
     )
 
 
@@ -1437,6 +1444,15 @@ def test_run_gate_session_wraps_query_fn_with_health_gated_then_deadline_guarded
         probe.run()
     assert len(probe.health_calls) == 1
     assert probe.health_calls[0][1] is probe.session
+    # Every gate invocation spawns a fresh CLI process that performs its own
+    # provider exchange, so a never-exchanged assertion is installed first
+    # (Q-77 B5-P0 Part 1). assertion_refreshed sits OUTSIDE health_gated and
+    # INSIDE deadline_guarded, and receives the same session plus the process
+    # environment the token file is named in.
+    assert len(probe.assertion_calls) == 1
+    assert probe.assertion_calls[0][0] == ("health-wrapped", "raw-query-fn")
+    assert probe.assertion_calls[0][1] is probe.session
+    assert probe.assertion_calls[0][2] is os.environ
     assert len(probe.guard_calls) == 1
     assert probe.guard_calls[0]["run_ordinal"] == 1
     assert probe.guard_calls[0]["clock"] is probe.clock
@@ -1444,7 +1460,9 @@ def test_run_gate_session_wraps_query_fn_with_health_gated_then_deadline_guarded
     assert probe.guard_calls[0]["registry"] is probe.registry
     assert probe.guard_calls[0]["stall_budget_ms"] == 600_000
     stub_query_fn = probe.deps_captured[0].judgment.query_fn
-    assert stub_query_fn == ("deadline-wrapped", ("health-wrapped", "raw-query-fn"), 1)
+    assert stub_query_fn == (
+        "deadline-wrapped", ("assertion-refreshed", ("health-wrapped", "raw-query-fn")), 1
+    )
 
 
 def test_execute_control_construction_shares_one_domain_across_both_runs(tmp_path, monkeypatch):

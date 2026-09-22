@@ -48,6 +48,7 @@ from scripts._phase5_common import (  # noqa: E402
     Phase5ScriptError,
     assert_expected_source_live,
     assert_expected_source_on_disk,
+    bounded_read_retry,
     build_evidence_client,
     prepare_fresh_work_root,
     write_json_artifact,
@@ -578,10 +579,15 @@ def assert_no_prior_timing_run(client, current_run_id: str) -> int:
     """Any other visible run of the timing workflow stops the rehearsal.
     A previous failed preflight is NOT permission to run again."""
     try:
-        runs = client.list_workflow_runs(
-            WORKFLOW_PATH,
-            created_after=DISCOVERY_AFTER,
-            created_before=datetime.now(timezone.utc) + DISCOVERY_SKEW,
+        # The bounded retry covers ONLY the GitHub read. Everything below it --
+        # including a prior run actually being present -- is deterministic and
+        # refuses on the first attempt (B5-P0 Part 7).
+        runs = bounded_read_retry(
+            lambda: client.list_workflow_runs(
+                WORKFLOW_PATH,
+                created_after=DISCOVERY_AFTER,
+                created_before=datetime.now(timezone.utc) + DISCOVERY_SKEW,
+            )
         )
     except Exception as exc:  # noqa: BLE001 - incomplete discovery is never "no prior run"
         raise TimingRehearsalStop(
@@ -612,7 +618,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         sdk_pin_matches,
     )
     from agents.checker import auth, oidc
-    from agents.checker.fx import resolve_ecb_usd_per_eur
+    from agents.checker.fx import fetch_ecb_daily_xml, resolve_ecb_usd_per_eur
 
     env = os.environ
     ctx = derive_github_context(env)
@@ -629,7 +635,15 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     oidc.write_placeholder_token_file(env)
     auth.assert_wif_config_ready(env)
 
-    fx_rate = resolve_ecb_usd_per_eur(now=datetime.now(timezone.utc))
+    # Retry ONLY the network fetch, through fx.py's existing injectable seam:
+    # parse_ecb_daily_xml still runs exactly once on the result, so a malformed
+    # or undated ECB response stays a deterministic first-attempt refusal.
+    # agents/checker/fx.py itself is deliberately not modified, which keeps the
+    # scheduled lane and the official gate on today's exact behaviour.
+    fx_rate = resolve_ecb_usd_per_eur(
+        now=datetime.now(timezone.utc),
+        fetch=lambda: bounded_read_retry(lambda: fetch_ecb_daily_xml(timeout=10.0)),
+    )
     prepare_fresh_work_root(args.work_root)
     evidence = evidence_dir(args.work_root)
     evidence.mkdir(parents=False, exist_ok=False)
@@ -671,6 +685,16 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             },
             "sdk_pin_matches": sdk_pin_matches(identity),
             "distribution_count": len(identity.distributions),
+            # ADR-0012 A8 requires the fully RESOLVED dependency set, not a
+            # count: once the hosted runner is destroyed the set is otherwise
+            # unrecoverable. RuntimeIdentity.distributions is already sorted,
+            # unique and length-capped, so this is written verbatim.
+            # requirements.txt stays a DIRECT-pin reconciliation surface -- every
+            # direct requirement must match this set and claude-agent-sdk must
+            # equal the pin exactly -- but this complete set is NOT required to
+            # equal the requirements file, because that file is not a transitive
+            # lock.
+            "distributions": [[name, version] for name, version in identity.distributions],
         },
         evidence / RUNTIME_IDENTITY_FILENAME,
     )
@@ -692,6 +716,48 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # execute
 # ---------------------------------------------------------------------------
+
+
+def _usage_tokens(result) -> "tuple[int | None, int | None]":
+    """``(input_tokens, output_tokens)`` from ``ResultMessage.usage`` -- the
+    same source ``agents/checker/harness.py`` already persists to the ledger.
+
+    Returns ``None`` for a count the SDK did not expose. ``None`` means
+    UNKNOWN and is never collapsed to an observed zero: the frozen data
+    contract requires token counts to be RETAINED, and a retention
+    requirement is not a PASS condition, so an absent count is not a timing
+    failure (plan-d R2)."""
+    usage = getattr(result, "usage", None) or {}
+    if not isinstance(usage, dict):
+        return None, None
+    values = []
+    for key in ("input_tokens", "output_tokens"):
+        value = usage.get(key)
+        values.append(value if isinstance(value, int) and not isinstance(value, bool) else None)
+    return values[0], values[1]
+
+
+def _reconcile_tokens(
+    ordinal: int,
+    finished: "tuple[int | None, int | None]",
+    accounted: "tuple[int | None, int | None]",
+) -> None:
+    """Where BOTH sides expose a number they must agree exactly.
+
+    One side being unknown is fine and common. Two exposed numbers that
+    disagree mean the durable event stream and the accounting ledger
+    describe different invocations, so the rehearsal fails closed rather
+    than publishing an unreconciled observation."""
+    for label, lhs, rhs in (
+        ("input_tokens", finished[0], accounted[0]),
+        ("output_tokens", finished[1], accounted[1]),
+    ):
+        if lhs is not None and rhs is not None and lhs != rhs:
+            raise TimingRehearsalStop(
+                "INFRASTRUCTURE_FAULT",
+                f"ordinal {ordinal}: {label} contradiction "
+                f"(INVOCATION_FINISHED {lhs} != OBSERVATION_ACCOUNTED {rhs})",
+            )
 
 
 def _resolved_model_keys(result) -> list:
@@ -794,6 +860,27 @@ def cmd_execute(args: argparse.Namespace) -> int:
         async def timed(check_class, reservation, state, user_prompt, model=None):
             item = pending["item"]
             sampler = None
+            # Every invocation spawns a FRESH Agent-SDK CLI process that performs
+            # its own provider exchange, and the provider rejects re-exchanging
+            # one assertion. So install a never-exchanged assertion first.
+            #
+            # Ordering here is load-bearing and is pinned by test:
+            #   1. acquisition happens BEFORE the INVOCATION_STARTED append, so a
+            #      pre-provider auth failure cannot leave an orphan STARTED record
+            #      that the frozen durability rule would misread as INCOMPLETE_N;
+            #      it is the distinct frozen reason AUTH_OR_OIDC_FAULT instead.
+            #   2. acquisition happens BEFORE started_ns, so this GitHub fetch can
+            #      never enter elapsed_ms. The Anthropic-side exchange performed by
+            #      the CLI is correctly INSIDE the measured window: it is part of
+            #      one complete logical invocation and identical in production.
+            try:
+                session.prepare_fresh_assertion(env)
+            except Exception as exc:  # noqa: BLE001 - pre-provider identity fault
+                raise TimingRehearsalStop(
+                    "AUTH_OR_OIDC_FAULT",
+                    f"ordinal {item['ordinal']}: fresh assertion unavailable: "
+                    f"{type(exc).__name__}",
+                ) from exc
             # Durable BEFORE the provider call: a kill during this
             # invocation must still prove the invocation started.
             events.append(
@@ -818,6 +905,12 @@ def cmd_execute(args: argparse.Namespace) -> int:
                 pending["elapsed_ms"] = elapsed_ms
                 pending["topology"] = topology
             result = getattr(outcome, "result", None)
+            # Token counts are recorded HERE, not only at terminal accounting:
+            # a kill in between would otherwise lose counts that a ResultMessage
+            # already exposed, because the SQLite ledger holding them is
+            # ephemeral and is never uploaded. Unknown stays explicitly null.
+            finished_tokens = _usage_tokens(result)
+            pending["finished_tokens"] = finished_tokens
             events.append(
                 "INVOCATION_FINISHED",
                 ordinal=item["ordinal"],
@@ -828,6 +921,8 @@ def cmd_execute(args: argparse.Namespace) -> int:
                 num_turns=getattr(result, "num_turns", None),
                 duration_ms=getattr(result, "duration_ms", None),
                 duration_api_ms=getattr(result, "duration_api_ms", None),
+                input_tokens=finished_tokens[0],
+                output_tokens=finished_tokens[1],
                 resolved_model_keys=_resolved_model_keys(result) or RESOLVED_MODEL_UNAVAILABLE,
                 topology_samples=topology.get("samples", 0),
                 bundled_cli_observed=topology.get("bundled_cli_observed", False),
@@ -866,12 +961,26 @@ def cmd_execute(args: argparse.Namespace) -> int:
             charged = getattr(latest, "charged_eur_micros", None)
             reserved = getattr(latest, "reserved_eur_micros", None)
             subtype = getattr(latest, "sdk_subtype", None)
+            # Authoritative counts from the persisted AgentCallRow. Unknown stays
+            # explicitly null and is NOT a timing failure; only a contradiction
+            # between two exposed numbers fails closed.
+            accounted_tokens = (
+                getattr(latest, "input_tokens", None),
+                getattr(latest, "output_tokens", None),
+            )
+            _reconcile_tokens(
+                item["ordinal"],
+                pending.get("finished_tokens", (None, None)),
+                accounted_tokens,
+            )
             events.append(
                 "OBSERVATION_ACCOUNTED",
                 ordinal=item["ordinal"],
                 item_id=item["id"],
                 charged_eur_micros=charged,
                 reserved_eur_micros=reserved,
+                input_tokens=accounted_tokens[0],
+                output_tokens=accounted_tokens[1],
                 sdk_subtype=subtype,
                 failure_class=failure_class,
                 finding_count=finding_count,
@@ -931,6 +1040,23 @@ def cmd_execute(args: argparse.Namespace) -> int:
         stop_reason, stop_detail = "TOPOLOGY_ESCAPE", f"{len(escapes)} invocation(s) observed ancestry escape"
     if stop_reason is None and not any(rec.get("bundled_cli_observed") for rec in topology_records):
         stop_reason, stop_detail = "TOPOLOGY_CLI_UNIDENTIFIED", "no sample identified the bundled CLI"
+    # Frozen topology.pass requires the CLI and all observed descendants to stay
+    # inside the controlled closure AND the final survivor scan to be empty.
+    # Without this check a non-empty scan wrote result=PASS alongside
+    # c_dynamic_closed=false. Appended AFTER the two checks above so their
+    # precedence and detail strings are unchanged.
+    #
+    # The reason is TOPOLOGY_ESCAPE by elimination: stop_reasons (twelve) and
+    # topology.stop (exactly TOPOLOGY_ESCAPE and TOPOLOGY_CLI_UNIDENTIFIED) are
+    # frozen preregistration keys, so no new reason may be introduced without
+    # moving both frozen hashes. The detail string keeps the two mechanisms --
+    # mid-run ancestry escape versus post-shutdown survival -- distinguishable.
+    if stop_reason is None and final_scan.get("survivor_count", 0) > 0:
+        stop_reason = "TOPOLOGY_ESCAPE"
+        stop_detail = (
+            f"final survivor scan non-empty: {final_scan['survivor_count']} "
+            "survivor(s) after session shutdown"
+        )
 
     topology_doc = json.loads((evidence / TOPOLOGY_FILENAME).read_text(encoding="utf-8"))
     topology_doc["invocations"] = topology_records
@@ -978,6 +1104,208 @@ def cmd_execute(args: argparse.Namespace) -> int:
     return 3
 
 
+# ---------------------------------------------------------------------------
+# Governed class-B cost handoff (R4; plan-d Part 3)
+# ---------------------------------------------------------------------------
+
+
+def read_timing_events(path: Path) -> list:
+    """Parse the downloaded append-only event stream. A malformed line
+    fails closed: partial evidence is never silently narrowed."""
+    records = []
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            records.append(json.loads(line))
+        except ValueError as exc:
+            raise Phase5ScriptError(f"{path} line {number} is not valid JSON") from exc
+    return records
+
+
+def aggregate_timing_spend(records: list) -> dict:
+    """Classify every ordinal the run actually reached and total its charge.
+
+    The four classes are frozen prospectively so nothing is decided after
+    seeing the result:
+
+    * **A** -- ``OBSERVATION_ACCOUNTED`` present. Authoritative charge and
+      authoritative token counts.
+    * **B** -- ``INVOCATION_FINISHED`` but no accounting. The provider call
+      completed and the runner died before the ledger was read, so charge the
+      FULL reservation and take R2's FINISHED-side counts when present.
+    * **C** -- ``INVOCATION_STARTED`` only. Charge the FULL reservation; the
+      START record proves the call began and consumed its reservation.
+    * **D** -- no ``INVOCATION_STARTED``. No provider contact, contributes
+      nothing.
+
+    Classes B and C are charged through ``failures.terminal_charge`` rather
+    than a local re-derivation, so this stays the one adopted ADR-0008 rule.
+    """
+    from agents.checker.failures import terminal_charge
+
+    started, finished, accounted = {}, {}, {}
+    for record in records:
+        event, ordinal = record.get("event"), record.get("ordinal")
+        if ordinal is None:
+            continue
+        if event == "INVOCATION_STARTED":
+            started[ordinal] = record
+        elif event == "INVOCATION_FINISHED":
+            finished[ordinal] = record
+        elif event == "OBSERVATION_ACCOUNTED":
+            accounted[ordinal] = record
+
+    basis, unresolved, unresolved_tokens, conservative = {}, [], [], []
+    total_charged = total_input = total_output = 0
+    for ordinal in sorted(started):
+        reserved = started[ordinal].get("reserved_eur_micros")
+        if not isinstance(reserved, int):
+            raise Phase5ScriptError(
+                f"ordinal {ordinal} started without a recorded reservation; refusing to guess"
+            )
+        if ordinal in accounted:
+            row = accounted[ordinal]
+            charged = row.get("charged_eur_micros")
+            if not isinstance(charged, int):
+                # Accounted but with no recoverable charge: conservative rule.
+                charged = terminal_charge(
+                    completed=False, reserved_eur_micros=reserved, estimate_eur_micros=None
+                )
+                conservative.append(ordinal)
+            basis[ordinal] = "A"
+            tokens = (row.get("input_tokens"), row.get("output_tokens"))
+        else:
+            charged = terminal_charge(
+                completed=False, reserved_eur_micros=reserved, estimate_eur_micros=None
+            )
+            conservative.append(ordinal)
+            unresolved.append(ordinal)
+            if ordinal in finished:
+                basis[ordinal] = "B"
+                tokens = (
+                    finished[ordinal].get("input_tokens"),
+                    finished[ordinal].get("output_tokens"),
+                )
+            else:
+                basis[ordinal] = "C"
+                tokens = (None, None)
+        total_charged += charged
+        # An unknown count contributes 0 to the frozen non-nullable CostRow
+        # field, exactly as build_agent_cost_row already does, and the ordinal
+        # is named so that 0 is never readable as an observed zero.
+        if tokens[0] is None or tokens[1] is None:
+            unresolved_tokens.append(ordinal)
+        total_input += tokens[0] or 0
+        total_output += tokens[1] or 0
+
+    return {
+        "accounting_basis": basis,
+        "unresolved_ordinals": tuple(sorted(set(unresolved))),
+        "unresolved_token_ordinals": tuple(sorted(set(unresolved_tokens))),
+        "conservative_full_reservation_ordinals": tuple(sorted(set(conservative))),
+        "observations_accounted": len(basis),
+        "cost_eur_micros": total_charged,
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+    }
+
+
+def cmd_cost_evidence(args: argparse.Namespace) -> int:
+    """Build the one governed class-B ``CostRow`` from preserved evidence.
+
+    Runs on PASS and on STOP alike, because real money is spent either way.
+    Refuses rather than guesses, and emits NO record when the evidence
+    establishes no provider-started invocation -- there is no class-B spend
+    to record in that case, and inventing a zero row would misdescribe a run
+    that never reached the provider.
+
+    The resulting record is appended to the committed ledger by
+    ``scripts/record_phase5_cost_evidence.py``, which owns the strict parse,
+    the duplicate-run_id refusal and the exactly-once assertion."""
+    from datetime import datetime as _datetime
+
+    from contracts.schemas import CostRow
+    from sentinel.phase5.evidence_records import TimingCostEvidenceRecord
+
+    evidence = Path(args.evidence_dir)
+    events_path = evidence / EVENTS_FILENAME
+    if not events_path.exists():
+        raise Phase5ScriptError(
+            f"{events_path} is absent: a visible run with no trustworthy timing "
+            "artifact is B5 CONSUMED / STOP / NO VALID TIMING RESULT, never PASS, "
+            "and no CostRow is derivable from it"
+        )
+    records = read_timing_events(events_path)
+
+    run_started = next((r for r in records if r.get("event") == "RUN_STARTED"), None)
+    if run_started is None:
+        raise Phase5ScriptError("event stream carries no RUN_STARTED record; refusing to guess")
+    for key, expected in (
+        ("corpus_sha256", args.corpus_sha256),
+        ("preregistration_sha256", args.preregistration_sha256),
+    ):
+        if expected is not None and run_started.get(key) != expected:
+            raise Phase5ScriptError(f"RUN_STARTED {key} does not match the frozen value")
+
+    has_summary = (evidence / SUMMARY_FILENAME).exists()
+    has_stop = (evidence / STOP_FILENAME).exists()
+    if has_summary and has_stop:
+        raise Phase5ScriptError("both a summary and a stop record are present; ambiguous, failing closed")
+    terminal_class = "PASS" if has_summary else ("STOP" if has_stop else "NO_ARTIFACT")
+
+    spend = aggregate_timing_spend(records)
+    if spend["observations_accounted"] == 0:
+        print(
+            "NO CLASS-B SPEND DUE: the preserved evidence establishes no "
+            "provider-started invocation, so no CostRow is emitted and none is "
+            "appended to the committed ledger."
+        )
+        return 4
+
+    record = TimingCostEvidenceRecord(
+        schema_version=1,
+        lane=LANE,
+        rehearsal_run_id=str(run_started.get("run_id")),
+        rehearsal_run_attempt=int(run_started.get("run_attempt")),
+        rehearsal_source_sha=str(run_started.get("source_sha")),
+        corpus_sha256=str(run_started.get("corpus_sha256")),
+        preregistration_sha256=str(run_started.get("preregistration_sha256")),
+        terminal_class=terminal_class,
+        observations_accounted=spend["observations_accounted"],
+        accounting_basis=spend["accounting_basis"],
+        unresolved_ordinals=spend["unresolved_ordinals"],
+        unresolved_token_ordinals=spend["unresolved_token_ordinals"],
+        conservative_full_reservation_ordinals=spend["conservative_full_reservation_ordinals"],
+        cost_rows=(
+            CostRow(
+                schema_version=1,
+                run_id=f"r-p5d-timing-{run_started.get('run_id')}",
+                recorded_at_utc=_datetime.now(timezone.utc),
+                run_kind="live",
+                model=str(run_started.get("model", MODEL_ALIAS)),
+                input_tokens=spend["input_tokens"],
+                output_tokens=spend["output_tokens"],
+                cost_eur_micros=spend["cost_eur_micros"],
+            ),
+        ),
+    )
+    args.out_path.parent.mkdir(parents=True, exist_ok=True)
+    args.out_path.write_text(record.model_dump_json(), encoding="utf-8")
+    print(
+        "COST EVIDENCE: terminal_class=%s accounted=%d charge_eur_micros=%d "
+        "unresolved=%s unresolved_tokens=%s"
+        % (
+            terminal_class,
+            spend["observations_accounted"],
+            spend["cost_eur_micros"],
+            list(spend["unresolved_ordinals"]),
+            list(spend["unresolved_token_ordinals"]),
+        )
+    )
+    return 0
+
+
 def main(argv: "list[str]") -> int:
     parser = argparse.ArgumentParser(description="P5-D N=24 Sonnet timing rehearsal")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -992,9 +1320,22 @@ def main(argv: "list[str]") -> int:
     exe.add_argument("--work-root", type=Path, required=True)
     exe.add_argument("--fx-state-path", type=Path, required=True)
 
+    # Post-hoc only: reads PRESERVED evidence after the run is terminal and the
+    # artifact has been downloaded. Makes no provider, GitHub or network call.
+    cost = sub.add_parser("cost-evidence")
+    cost.add_argument("--evidence-dir", type=Path, required=True)
+    cost.add_argument("--out-path", type=Path, required=True)
+    cost.add_argument("--corpus-sha256", default=None)
+    cost.add_argument("--preregistration-sha256", default=None)
+
     args = parser.parse_args(argv)
+    handlers = {
+        "preflight": cmd_preflight,
+        "execute": cmd_execute,
+        "cost-evidence": cmd_cost_evidence,
+    }
     try:
-        return cmd_preflight(args) if args.command == "preflight" else cmd_execute(args)
+        return handlers[args.command](args)
     except Phase5ScriptError as exc:
         print(f"REFUSED: {exc}")
         return 2

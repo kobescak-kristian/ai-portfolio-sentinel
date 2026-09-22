@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import time
+import urllib.error
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -60,6 +63,84 @@ from sentinel.phase5.terminal import (  # noqa: E402
 class Phase5ScriptError(RuntimeError):
     """A Phase-5 entrypoint refused before reaching its provider-capable
     or lineage-mutating boundary. Exit code 2 by convention."""
+
+
+# ---------------------------------------------------------------------------
+# Bounded pre-provider retry (Q-77 B5-P0; plan q77-p5d-repair-stage2cb5-plan-d
+# Part 7). Deliberately NOT a general retry framework: it is applied to exactly
+# three idempotent external READS in this repository (GitHub live-main
+# verification here, plus GitHub prior-run discovery and the ECB FX fetch at the
+# timing driver's own call sites) and to GitHub assertion acquisition inside
+# ``agents/checker/oidc.py``. No provider/model exchange, no workflow rerun and
+# no rehearsal rerun is ever retried.
+# ---------------------------------------------------------------------------
+
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = (1.0, 2.0)
+TRANSIENT_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+_HTTP_STATUS_IN_MESSAGE = re.compile(r"(?:returned|failed with) HTTP (\d{3})")
+_TRANSIENT_TEXT_MARKERS = ("transport error", "timed out", "timeout")
+
+
+def is_transient_read_failure(exc: BaseException) -> bool:
+    """True ONLY for transport / service-availability failures.
+
+    Deterministic failures fail closed on the first attempt, because the
+    next identical attempt fails identically and retrying would merely
+    delay the refusal: invalid or malformed parsed evidence, a schema or
+    shape mismatch, an authorization or configuration rejection, a
+    frozen-hash mismatch, a source mismatch, a prior run actually being
+    present, and every other deterministic validation failure.
+
+    ``urllib.error.HTTPError`` is tested BEFORE ``URLError`` because it
+    subclasses it -- a real ``urlopen`` raises ``HTTPError`` for every
+    non-2xx status, so classifying on ``URLError`` alone would wrongly
+    make a 403 look transient.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, urllib.error.HTTPError):
+            return current.code in TRANSIENT_HTTP_STATUSES
+        if isinstance(current, (urllib.error.URLError, TimeoutError)):
+            return True
+        current = current.__cause__
+    match = _HTTP_STATUS_IN_MESSAGE.search(str(exc))
+    if match is not None:
+        return int(match.group(1)) in TRANSIENT_HTTP_STATUSES
+    text = str(exc).lower()
+    if any(marker in text for marker in _TRANSIENT_TEXT_MARKERS):
+        return True
+    return isinstance(exc, OSError)
+
+
+def bounded_read_retry(
+    operation: Callable,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    is_transient: Callable[[BaseException], bool] = is_transient_read_failure,
+):
+    """Call ``operation`` up to ``RETRY_ATTEMPTS`` times, re-raising the
+    last error once the bound is exhausted.
+
+    Backoff is 1s then 2s, and there is deliberately NO sleep after the
+    final failed attempt. ``operation`` must wrap ONLY the external read
+    itself -- never the validation that consumes its result -- so a
+    deterministic refusal derived from a successful read can never be
+    retried.
+    """
+    last: BaseException | None = None
+    for attempt in range(RETRY_ATTEMPTS):
+        try:
+            return operation()
+        except Exception as exc:  # noqa: BLE001 - re-raised unless classified transient
+            last = exc
+            if not is_transient(exc):
+                raise
+            if attempt < len(RETRY_BACKOFF_SECONDS):
+                sleep(RETRY_BACKOFF_SECONDS[attempt])
+    raise last  # noqa: RSE102 - the loop body guarantees a non-None last error
 
 
 def build_evidence_client(
@@ -105,8 +186,12 @@ def assert_expected_source_on_disk(expected_source_sha: str) -> str:
 def assert_expected_source_live(client: GithubEvidenceClient, expected_source_sha: str) -> None:
     """Independent, LIVE re-check against GitHub's own current main
     head (seam 3) — immediately before the irreversible boundary
-    (marker upload / OIDC / GENESIS), not only at process start."""
-    live_head = client.get_main_head_sha()
+    (marker upload / OIDC / GENESIS), not only at process start.
+
+    The bounded retry covers ONLY the GitHub read. The comparison below
+    it is deterministic: a genuine source mismatch refuses on the first
+    attempt and is never retried."""
+    live_head = bounded_read_retry(client.get_main_head_sha)
     if live_head != expected_source_sha:
         raise Phase5ScriptError(
             f"live origin/main head {live_head} != expected_source_sha {expected_source_sha}"

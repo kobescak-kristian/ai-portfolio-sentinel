@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from contracts.schemas import CostRow
 
 _HEX40 = re.compile(r"[0-9a-f]{40}")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 def _require_utc(value: datetime) -> datetime:
@@ -46,6 +47,12 @@ def _require_identifier(value: str) -> str:
 def _require_hex40(value: str) -> str:
     if not _HEX40.fullmatch(value):
         raise ValueError("must be exactly 40 lowercase hexadecimal characters")
+    return value
+
+
+def _require_sha256(value: str) -> str:
+    if not _HEX64.fullmatch(value):
+        raise ValueError("must be exactly 64 lowercase hexadecimal characters")
     return value
 
 
@@ -443,4 +450,85 @@ class FreezeRefusalEvidence(_IdentityFields):
     def _validate(self) -> "FreezeRefusalEvidence":
         _require_hex40(self.expected_source_sha)
         _require_identifier(self.reason)
+        return self
+
+
+class TimingCostEvidenceRecord(BaseModel):
+    """Governed class-B cost handoff for the P5-D N=24 timing rehearsal
+    (Q-77 B5-P0 R4; plan ``q77-p5d-repair-stage2cb5-plan-d`` Part 3).
+
+    Why this record exists at all: the rehearsal's SQLite ledger is
+    ephemeral and deliberately lives OUTSIDE the uploaded ``evidence/``
+    directory, and ``workflow.evidence_files`` is frozen at exactly five
+    names, so the run itself cannot emit a sixth cost artifact. The row
+    is therefore reconstructed mechanically AFTER artifact download, from
+    the durable event stream, and handed to the same committed-ledger
+    recording tool every other Phase-5 cost row goes through.
+
+    Deliberately NOT an ``_IdentityFields`` subclass: those fields
+    describe the workflow run that AUTHORED the record, whereas every
+    identity here describes the rehearsal run being accounted for, which
+    is a different run from the one doing the recording.
+
+    ``cost_rows`` carries exactly one aggregate row, and ``CostRow``
+    itself is unchanged -- its ``input_tokens``/``output_tokens`` stay
+    non-nullable ``int >= 0``. Because of that, an unknown count
+    contributes 0 exactly as ``sentinel.costs.build_agent_cost_row``
+    already does, and ``unresolved_token_ordinals`` names every ordinal
+    where that happened, so a 0 arising from absence is never readable as
+    an observed zero."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1]
+    lane: str
+    rehearsal_run_id: str
+    rehearsal_run_attempt: int = Field(ge=1)
+    rehearsal_source_sha: str
+    corpus_sha256: str
+    preregistration_sha256: str
+    terminal_class: Literal["PASS", "STOP", "NO_ARTIFACT"]
+    observations_accounted: int = Field(ge=0)
+    # ordinal -> "A" | "B" | "C"; class D contributes nothing and is absent.
+    accounting_basis: dict[int, Literal["A", "B", "C"]]
+    unresolved_ordinals: tuple[int, ...]
+    unresolved_token_ordinals: tuple[int, ...]
+    conservative_full_reservation_ordinals: tuple[int, ...]
+    cost_rows: tuple[CostRow, ...]
+
+    @model_validator(mode="after")
+    def _validate(self) -> "TimingCostEvidenceRecord":
+        _require_identifier(self.lane)
+        _require_identifier(self.rehearsal_run_id)
+        _require_hex40(self.rehearsal_source_sha)
+        _require_sha256(self.corpus_sha256)
+        _require_sha256(self.preregistration_sha256)
+        if len(self.cost_rows) != 1:
+            raise ValueError("exactly one aggregate CostRow is required")
+        if self.observations_accounted != len(self.accounting_basis):
+            raise ValueError("observations_accounted must equal the number of accounted ordinals")
+        if self.observations_accounted == 0:
+            raise ValueError(
+                "a timing cost record requires at least one provider-started invocation; "
+                "where the evidence establishes no provider contact, no record is emitted"
+            )
+        accounted = set(self.accounting_basis)
+        for label, ordinals in (
+            ("unresolved_ordinals", self.unresolved_ordinals),
+            ("unresolved_token_ordinals", self.unresolved_token_ordinals),
+            ("conservative_full_reservation_ordinals", self.conservative_full_reservation_ordinals),
+        ):
+            if list(ordinals) != sorted(set(ordinals)):
+                raise ValueError(f"{label} must be sorted and unique")
+            if not accounted.issuperset(ordinals):
+                raise ValueError(f"{label} names an ordinal that was never accounted")
+        # Classes B and C are exactly the ordinals charged at their full
+        # reservation, so the two views of the same fact must agree.
+        conservative = {
+            ordinal for ordinal, basis in self.accounting_basis.items() if basis in ("B", "C")
+        }
+        if conservative != set(self.conservative_full_reservation_ordinals):
+            raise ValueError(
+                "conservative_full_reservation_ordinals must equal the class-B and class-C ordinals"
+            )
         return self

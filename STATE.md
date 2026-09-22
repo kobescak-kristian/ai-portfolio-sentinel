@@ -5048,3 +5048,255 @@ merges every change."
   repository variable, and fresh provider-cap arithmetic covering the
   EUR 2.50 class-B exposure), an explicit owner GO, and then exactly one
   real N=24 Sonnet timing rehearsal; not begun here.
+- 2026-09-22 - ADR-0012 REPAIR STAGE 2C-B5-P0 LANDED: PRE-EXECUTION
+  CONFORMANCE REPAIR OF THE TIMING SURFACE, B5 STILL NOT EXECUTED
+  (dispatch `q77-p5d-repair-stage2cb5-p0-implement-a`, approved plan
+  `q77-p5d-repair-stage2cb5-plan-d`, base
+  `4987735b02f8600009129fcf134f9b9bb83a6d14`). Stage 2C-B4 built the
+  whole N=24 rehearsal and never ran it. Review of that landed surface
+  found five conformance defects, one of them an authentication defect
+  that would have failed the one-shot run at invocation 2. This stage
+  repairs them and stops: **no provider call, no model call, no OIDC or
+  WIF request, no GitHub configuration mutation, no workflow dispatch,
+  and the timing workflow still has ZERO executions.** Execution remains
+  Stage 2C-B5.
+  SINGLE-USE ASSERTION DEFECT (the critical one). The provider allows one
+  exchange per identity-assertion `jti` and the check is on by default;
+  the Agent SDK spawns a FRESH CLI process per logical invocation, and
+  each such process re-reads `ANTHROPIC_IDENTITY_TOKEN_FILE` and performs
+  its OWN exchange. The landed code installed one assertion and rotated
+  it on a fixed 180-second timer, so two invocations inside one interval
+  presented the SAME assertion and the second exchange would be refused
+  as a replay — an opaque 401, classified `INFRASTRUCTURE_FAULT`,
+  consuming the one-shot lane with no timing result. `agents/checker/
+  oidc.py` gains three things: one producer lock shared by the
+  background refresher and the new per-invocation path;
+  `OidcSession.prepare_fresh_assertion(env)`, which fetches and installs
+  a never-exchanged assertion under that lock, raises on failure and
+  installs nothing in that case; and `assertion_refreshed(query_fn,
+  session, env)`, composed OUTSIDE the existing `health_gated` so the
+  refresher-health gate still sits closest to the provider call. The
+  background refresher is retained because a single long invocation can
+  need a mid-flight refresh, which also requires an unexchanged
+  assertion on disk. No token or JWT value is returned, logged or
+  persisted; request credentials are still read only from parent memory
+  and never re-enter the environment; shutdown and scrubbing are
+  unchanged.
+  SCOPE CORRECTION BY OWNER, RECORDED AS OBSERVED. The implementing
+  agent's first design checkpoint asserted that the scheduled lane had
+  "no replay exposure" and left it out of the write set. That was
+  WRONG, and it is the lane that actually runs on a schedule. Verified
+  against live code: the scheduled entrypoint acquires and installs ONE
+  session per run, wrapped its stub with `health_gated` alone, and then
+  hands that stub to `execute_run`, which makes MANY provider
+  invocations across the live task set; the ordinary profile also keeps
+  its bounded second attempt, so even one logical task can reach more
+  than one fresh CLI process. The same defect was therefore live on the
+  scheduled production lane. The owner rejected the checkpoint and
+  required the repair to extend there. `scripts/run_phase5_scheduled.py`
+  now composes `assertion_refreshed(health_gated(...), session, env)`,
+  a two-line change. Preserved unchanged: scheduled-run orchestration
+  and the frozen S01..S18 preflight order, retry and model-attempt
+  semantics, budget semantics, the WIF auth profile, session lifetime
+  and the background refresher, `sentinel-schedule.yml`, and all
+  qualification and cadence behaviour. No new provider or model retry
+  was introduced. The P5-C probe runner is unchanged and is not
+  re-executed; safety is NOT inferred from it, and any future optional
+  WIF validation probe must adopt the corrected semantics explicitly.
+  TIMING-BOUNDARY ORDERING. The timing driver deliberately does NOT use
+  the composed wrapper. It keeps `health_gated` and calls
+  `prepare_fresh_assertion` itself, and the order inside the measured
+  wrapper is pinned by test: acquisition, then the fsynced
+  `INVOCATION_STARTED` append, then `started_ns`, then the awaited seam.
+  Acquisition before the START record means a failed acquisition cannot
+  leave an orphan STARTED record that the frozen durability rule would
+  misread as `INCOMPLETE_N`; it is the distinct frozen reason
+  `AUTH_OR_OIDC_FAULT` instead. Acquisition before `started_ns` means
+  this GitHub fetch can never enter `elapsed_ms`. The Anthropic-side
+  exchange performed by the CLI stays INSIDE the measured window, which
+  is correct: it is part of one complete logical invocation and is
+  identical in production.
+  R1 SURVIVOR-SCAN PASS LEAK CLOSED. The tail set `stop_reason` for
+  ancestry escape and for an unidentified CLI but NOT for a non-empty
+  final survivor scan, so a run could publish `result: PASS` alongside
+  `c_dynamic_closed: false`, which frozen `topology.pass` forbids. A
+  third check is appended AFTER the two existing ones, so their
+  precedence and detail strings are unchanged. The reason is
+  `TOPOLOGY_ESCAPE` by elimination: `stop_reasons` (twelve) and
+  `topology.stop` (exactly two labels) are frozen preregistration keys,
+  so no new reason could be introduced without moving both frozen
+  hashes; the detail string keeps mid-run escape and post-shutdown
+  survival distinguishable. No vocabulary extension, no owner ruling.
+  R2 TOKEN DURABILITY. The frozen `data_contract.retained` list names
+  token counts and the driver recorded none. `INVOCATION_FINISHED` now
+  carries `input_tokens`/`output_tokens` from `ResultMessage.usage` --
+  the same source the harness already persists -- which closes the kill
+  window in which a result existed but its counts would die with the
+  ephemeral SQLite ledger; `OBSERVATION_ACCOUNTED` carries the
+  authoritative counts from the persisted `AgentCallRow`. Both fields
+  are always present; an unexposed count is an explicit `null`, never an
+  omitted key and never described as an observed zero. Where both sides
+  expose numbers they must reconcile exactly and a contradiction fails
+  closed. **Absence alone is NOT a timing-failure predicate** --
+  retention is a retention requirement, not a PASS condition. Declined
+  and recorded: no SDK USD cost estimate and no FX identity were added,
+  because the frozen retained list contains neither and adding one would
+  exceed the frozen contract as surely as dropping token counts falls
+  short of it.
+  R3 RESOLVED DEPENDENCY SET. Only `distribution_count` was written,
+  and a count cannot reconstruct the set once the hosted runner is
+  destroyed. The complete `RuntimeIdentity.distributions` (already
+  sorted, unique and length-capped) is now persisted canonically
+  alongside the count. Corrected contract recorded in code:
+  `requirements.txt` is a DIRECT-pin reconciliation surface, not a
+  transitive lock -- every direct requirement must match the captured
+  set and the SDK must equal its pin exactly, but the complete captured
+  set is not required to equal the requirements file. Residual recorded,
+  not fixed: transitive resolution can move even with pinned direct
+  requirements. No dependency change was made.
+  R4 GOVERNED CLASS-B COST HANDOFF BUILT, NOT EXERCISED. The timing
+  SQLite is ephemeral and sits outside the uploaded evidence directory,
+  and `workflow.evidence_files` is frozen at exactly five names, so the
+  run cannot emit a sixth cost artifact; the row must be built after
+  download, mechanically. Added: `TimingCostEvidenceRecord` in
+  `sentinel/phase5/evidence_records.py`, carrying rehearsal identity,
+  both frozen hashes, `terminal_class`, per-ordinal `accounting_basis`,
+  `unresolved_ordinals`, `unresolved_token_ordinals`,
+  `conservative_full_reservation_ordinals` and exactly one `CostRow`;
+  a `cost-evidence` subcommand on the timing driver that reads preserved
+  evidence and refuses rather than guesses; and a one-line extension of
+  the existing governed recording tool's accepted shapes, which keeps
+  its committed-ledger strict parse, duplicate-`run_id` refusal, append,
+  re-parse and exactly-once assertion. The `CostRow` schema itself is
+  UNCHANGED. Interrupted-call accounting is frozen prospectively so
+  nothing is decided after seeing a result: class A accounted
+  authoritatively; class B finished-but-unaccounted and class C
+  started-only both charged the FULL reservation through the adopted
+  `failures.terminal_charge` rule rather than a re-derivation; class D
+  no provider contact, contributing nothing. An unknown count enters the
+  frozen non-nullable field as 0 exactly as the existing aggregate
+  builder already does, with `unresolved_token_ordinals` naming it so
+  that 0 is never readable as observed. STOP spend is recorded, because
+  real money is spent on a STOP too. Where the evidence establishes no
+  provider-started invocation, NO record and NO row are emitted. **No
+  class-B row was appended by this stage**; `telemetry/cost_ledger.jsonl`
+  is untouched and the handoff is invoked at B5-P6.
+  FOUR BOUNDED PRE-PROVIDER RETRIES, OWNER-SET BOUNDS. Three total
+  attempts, backoff 1s then 2s, no sleep after the final failed attempt,
+  fail closed on exhaustion, no generic retry framework. Applied to
+  exactly four idempotent operations: GitHub prior-run discovery, GitHub
+  live-main verification, ECB FX retrieval, and GitHub assertion
+  acquisition. Classification is the load-bearing part and is pinned by
+  test: only transport and service-availability failures retry (408,
+  429, 5xx, transport, timeout), while malformed or invalid parsed
+  evidence, schema mismatch, authorization or configuration rejection,
+  frozen-hash mismatch, source mismatch and a prior run actually being
+  present all fail closed on the first attempt. Because a real
+  `urlopen` raises `HTTPError` (a `URLError` subclass) for every non-2xx
+  status, the classifier tests `HTTPError` FIRST and reads its code, so
+  a genuine 403 arriving wrapped as a transport error is still treated
+  as deterministic. Each retry wraps ONLY the external read, never the
+  validation consuming its result. `agents/checker/fx.py` was NOT
+  modified: the driver wraps the fetch through that module's existing
+  injectable seam, so the parse still runs exactly once and the
+  scheduled lane and official gate keep today's behaviour. Every
+  assertion retry mints a NEW assertion and never re-presents a prior
+  one. No Anthropic exchange retry (a retry there IS a replay), no
+  workflow retry, no dispatch retry, and no retry inside the measured
+  window.
+  FROZEN GUARD MADE PRECISE, NOT WEAKENED.
+  `test_no_automatic_second_rehearsal_exists` previously asserted the
+  substring "retry" appeared nowhere in the driver -- a proxy that only
+  held while the driver contained no retry at all. It is replaced by
+  checks of the property it stood for: the corpus is walked exactly
+  once, exactly one `judge` call exists, the timing attempt bound is 1,
+  every retry call site is one of the two approved pre-provider reads,
+  no retry construct exists inside the measured region, and the frozen
+  `no_second_rehearsal` and `no_discard` preregistration statements are
+  unchanged.
+  Executing model: Opus 5 (the routing named Opus 5; recorded as
+  observed).
+  ACTUAL WRITE SET (exactly the 12 declared paths):
+  `agents/checker/oidc.py`, `scripts/_phase5_common.py`,
+  `scripts/run_phase5_timing_rehearsal.py`,
+  `scripts/run_phase5_official_gate.py`,
+  `scripts/run_phase5_scheduled.py`,
+  `sentinel/phase5/evidence_records.py`,
+  `scripts/record_phase5_cost_evidence.py`,
+  `tests/test_phase5_oidc.py`, `tests/test_phase5_timing_rehearsal.py`,
+  `tests/test_phase5_gate_runner.py`, `STATE.md` (this entry),
+  `.publicgate-allow` (one entry for this entry's status line). The
+  conditional twelfth path named in plan-d, `tests/test_phase5_preflight.py`,
+  was NOT needed: it imports only from `sentinel.phase5.preflight` and
+  pins step-order semantics, and nothing in it references the live-main
+  check. No `rehearsal/timing/*` change; no workflow change of any kind,
+  including `sentinel-schedule.yml`; no `harness.py`, `prompts.py`,
+  `tools.py`, `config.py`, `auth.py`, `budget.py`, `process_control.py`,
+  `failures.py`, `fx.py`, `runtime_identity.py`, `orchestrator.py`, P5-C
+  probe runner, ADR, fixture, eval, answer-key, scorer, threshold,
+  receipt-registry, `FINDINGS.md` or `telemetry/cost_ledger.jsonl`
+  change. `CostRow`, `MAX_MODEL_ATTEMPTS_PER_TASK` and
+  `MAX_MARKDOWN_FILES_PER_REPO` are unchanged. The two standing
+  scheduler modifications present in the working tree at dispatch were
+  left alone and were not absorbed into this commit.
+  VERIFICATION: focused set (oidc, timing rehearsal, gate runner) 217
+  passed / 8 skipped; full suite 2406 passed / 32 skipped locally, the
+  same 32 skips as the Stage 2C-B4 baseline; `python -m pip check`
+  clean; `python .githooks/validate_artifacts.py .` Tier 0 PASS;
+  `python scripts/check_phase1_frozen.py` PASS with 41/41 blobs
+  identical. Both frozen inputs re-hashed after implementation and
+  BYTE-IDENTICAL: corpus
+  `98cdba8a183b3fab128f413f95bb3647e15961d711bbfd6fedb9ce73c42a471d`,
+  pre-registration
+  `17549d3fd5789a8eeae04d15364d2aec0c94ef5f8ee25a02cf0391d354ff065b`.
+  The timing workflow's `on:` block was re-read and is still
+  `workflow_dispatch`-only, and `gh run list` for it returned an empty
+  list before and after implementation. Every new repair test was
+  additionally mutation-checked: reverting R1 fails three tests,
+  reverting the R2 `INVOCATION_FINISHED` fields fails two, and reverting
+  the scheduled-lane composition fails its own test -- so none of them
+  passes vacuously.
+  NON-EVENTS: no provider or model call; no OIDC or WIF request, real or
+  simulated (every test injects its fetch seam); no federation rule
+  created, mutated or referenced; no provider-capacity change; no
+  secret, variable or environment mutation, and
+  `SENTINEL_P5D_TIMING_FEDERATION_RULE_ID` was not set; no workflow
+  dispatch, rerun or cancel of any workflow; no bundled-CLI execution;
+  no marker created, reset or consumed; no class-B or any other CostRow
+  appended; no `artifacts/phase5_execution_envelope.json` and `ENVELOPE`
+  stays `None`; no readiness binding; no replacement authorized or
+  executed; no optional WIF validation probe; no B5-P1/P2/P3 work; no B6
+  work; no N=24 timing rehearsal executed.
+  RESIDUALS (recorded, not closed here): every residual carried from
+  Stage 2C-B4 stands unchanged, including `REAL_CLI_TOPOLOGY_UNOBSERVED`
+  being closable only by the real B5 run, the `max_observed` transfer
+  risk from a corpus calibrated on live monitored surfaces, exactly-once
+  being practical rather than permanent, and the possibility that
+  `model_usage` is empty and defers the A8 resolved-model binding.
+  Added here: transitive dependency resolution can still move under
+  pinned direct requirements (R3); the Anthropic exchange itself remains
+  deliberately unretryable because a retry there is a replay; and the
+  per-invocation assertion volume (24 pre-invocation fetches plus
+  roughly one background fetch per 180 seconds) is recorded as a
+  residual rather than as a known GitHub limit, since no per-job cap is
+  documented.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  ADR-0012 repair Stage 1, Stage 2A, Stage 2B-1, Stage 2B-2, Stage 2C-1,
+  Stage 2C-2, Stage 2C-3, Stage 2C-B1, Stage 2C-B3, Stage 2C-B4 and
+  Stage 2C-B5-P0 LANDED, Stage 2C-B2 PASS with the model-free GitHub
+  kill rehearsal COMPLETE, Stage 2C-B5 NOT EXECUTED, Sonnet N=24 timing
+  rehearsal NOT EXECUTED, B5 provider preparation NOT DONE,
+  `REAL_CLI_TOPOLOGY_UNOBSERVED` OPEN until B5, execution envelope NOT
+  COMMITTED / BOUND, durable single-attempt consumption latch PENDING,
+  fresh replacement readiness NOT COMPLETE, replacement NOT READY / NOT
+  AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B5-P0 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: the `B5_SOURCE_SHA` freeze and the no-push window
+  (plan-d Part 6), then Stage 2C-B5-P1 read-only verification; the
+  separate human-controlled provider preparation, the owner rulings
+  still outstanding (provider-cap headroom, provider cap after B5, and
+  the optional pre-B5 WIF validation probe), an explicit owner GO, and
+  then exactly one real N=24 Sonnet timing rehearsal; none begun here.

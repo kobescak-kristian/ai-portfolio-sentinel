@@ -22,7 +22,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts._phase5_common import REPO_ROOT  # noqa: E402
-from sentinel.phase5.evidence_records import GateEvidenceRecord, ProbeEvidenceRecord  # noqa: E402
+from sentinel.phase5.evidence_records import (  # noqa: E402
+    GateEvidenceRecord,
+    ProbeEvidenceRecord,
+    TimingCostEvidenceRecord,
+)
 from telemetry.cost_ledger import append_cost_row, read_cost_rows  # noqa: E402
 
 DEFAULT_LEDGER_PATH = REPO_ROOT / "telemetry" / "cost_ledger.jsonl"
@@ -30,13 +34,15 @@ DEFAULT_LEDGER_PATH = REPO_ROOT / "telemetry" / "cost_ledger.jsonl"
 
 def _load_cost_rows(evidence_path: Path) -> tuple:
     body = evidence_path.read_text(encoding="utf-8")
-    for model_cls in (ProbeEvidenceRecord, GateEvidenceRecord):
+    for model_cls in (ProbeEvidenceRecord, GateEvidenceRecord, TimingCostEvidenceRecord):
         try:
             record = model_cls.model_validate_json(body)
         except Exception:  # noqa: BLE001 - try the other evidence shape
             continue
         return record.cost_rows
-    raise SystemExit(f"error: {evidence_path} did not parse as a Phase-5 probe or gate evidence record")
+    raise SystemExit(
+        f"error: {evidence_path} did not parse as a Phase-5 probe, gate or timing-cost evidence record"
+    )
 
 
 def main(argv: list[str]) -> int:

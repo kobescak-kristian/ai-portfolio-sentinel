@@ -308,7 +308,7 @@ def _run_gate_session(
     from agents.checker.config import SONNET_OFFICIAL_GATE
     from agents.checker.envelope_guard import deadline_guarded
     from agents.checker.harness import CagedCheckerStub
-    from agents.checker.oidc import health_gated
+    from agents.checker.oidc import assertion_refreshed, health_gated
     from sentinel import costs, ledger
     from sentinel.config import RunConfig
     from sentinel.ids import RandomIdFactory
@@ -338,8 +338,14 @@ def _run_gate_session(
             run_id=run_id, conn=conn, coordinator=coordinator,
             model=SONNET_OFFICIAL_GATE.model, auth_profile=auth.WIF,
         )
+        # assertion_refreshed OUTSIDE health_gated: every gate invocation spawns a
+        # fresh Agent-SDK CLI process that performs its own provider exchange, and
+        # the provider rejects re-exchanging one assertion (B5-P0 Part 1). This
+        # gate has no wall-clock measurement to protect, so the composed wrapper
+        # is correct here; the timing driver must instead prepare outside its
+        # measured region.
         stub.query_fn = deadline_guarded(
-            health_gated(stub.query_fn, session),
+            assertion_refreshed(health_gated(stub.query_fn, session), session, os.environ),
             run_ordinal=run_ordinal, clock=clock, latch=latch, registry=registry,
             journal=journal, stall_budget_ms=stall_budget_ms, config=config,
             terminate=terminate, on_control_failure=on_control_failure,

@@ -2,14 +2,39 @@
 
 from __future__ import annotations
 
+import importlib.util
+import inspect
 import io
 import json
+import threading
+import time
+import types
+import urllib.error
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 from agents.checker import oidc
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SCHEDULED_RUNNER_PATH = REPO_ROOT / "scripts" / "run_phase5_scheduled.py"
+
+
+def _load_scheduled_runner():
+    """Load the scheduled entrypoint BY PATH, never as ``scripts.<module>``.
+
+    tests/test_dependency_surface.py pins the dev third-party import set for
+    every test module, and a package-style ``scripts`` import would widen it.
+    Loading by path is the established convention here (see
+    tests/test_phase5_gate_runner.py's ``_load_module``). Safe because the
+    scheduled runner never imports claude_agent_sdk at module scope."""
+    spec = importlib.util.spec_from_file_location(
+        "run_phase5_scheduled_probe", SCHEDULED_RUNNER_PATH
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class _FakeResponse:
@@ -248,3 +273,391 @@ def test_no_secret_value_ever_appears_in_source_repr_or_env_after_capture():
     source = oidc.capture_actions_request_source(env)
     assert "top-secret-request-token" not in repr(source)
     assert "top-secret-request-token" not in str(source)
+
+
+# ---------------------------------------------------------------------------
+# Single-use assertions across fresh CLI processes (Q-77 B5-P0 Part 1;
+# plan q77-p5d-repair-stage2cb5-plan-d).
+#
+# The provider allows one exchange per assertion ``jti``, and the Agent SDK
+# spawns a FRESH CLI process per logical invocation, each performing its own
+# exchange. Every test here is model-free and performs NO real OIDC request:
+# the fetch seam is always injected.
+# ---------------------------------------------------------------------------
+
+
+def _session(tmp_path, tokens):
+    """A session whose fetch seam yields ``tokens`` in order, with no network."""
+    env = {"ANTHROPIC_IDENTITY_TOKEN_FILE": str(tmp_path / "identity.jwt")}
+    source = oidc.OidcRequestSource(request_url="https://example/token", request_token="req-tok")
+    session = oidc.OidcSession(source=source, first_jwt="jwt-initial")
+    issued = iter(tokens)
+    session.fetch_token = lambda src: next(issued)
+    oidc.write_placeholder_token_file(env)
+    return env, session
+
+
+def _installed(env):
+    return Path(env["ANTHROPIC_IDENTITY_TOKEN_FILE"]).read_text(encoding="ascii")
+
+
+def test_each_invocation_installs_a_distinct_never_exchanged_assertion(tmp_path):
+    """Property 1: two sequential invocations present two different assertions."""
+    env, session = _session(tmp_path, ["jwt-a", "jwt-b"])
+    seen = []
+
+    def query_fn(check_class, reservation, state, user_prompt, model=None):
+        seen.append(_installed(env))
+        return "outcome"
+
+    wrapped = oidc.assertion_refreshed(query_fn, session, env)
+    wrapped("c", None, None, "p")
+    wrapped("c", None, None, "p")
+
+    assert seen == ["jwt-a", "jwt-b"]
+    assert len(set(seen)) == 2
+
+
+def test_assertion_is_installed_before_the_wrapped_callable_runs(tmp_path):
+    env, session = _session(tmp_path, ["jwt-a"])
+    order = []
+    session.fetch_token = lambda src: (order.append("fetch"), "jwt-a")[1]
+
+    def query_fn(check_class, reservation, state, user_prompt, model=None):
+        order.append("invoke")
+
+    oidc.assertion_refreshed(query_fn, session, env)("c", None, None, "p")
+    assert order == ["fetch", "invoke"]
+
+
+def test_failed_acquisition_prevents_the_invocation_and_installs_nothing(tmp_path):
+    """Property 2: no invocation may start against a possibly-exchanged token."""
+    env, session = _session(tmp_path, [])
+    before = _installed(env)
+    ran = []
+
+    def failing(src):
+        raise oidc.OidcAcquisitionError("GitHub OIDC token request returned HTTP 403")
+
+    session.fetch_token = failing
+
+    def query_fn(check_class, reservation, state, user_prompt, model=None):
+        ran.append(True)
+
+    with pytest.raises(oidc.OidcAcquisitionError):
+        oidc.assertion_refreshed(query_fn, session, env)("c", None, None, "p")
+
+    assert ran == []
+    assert _installed(env) == before
+
+
+def test_prepare_and_background_refresher_share_one_producer_lock(tmp_path):
+    """Property 3: the two producers serialize their fetch-then-install pairs."""
+    env, session = _session(tmp_path, [])
+    session.fetch_token = lambda src: "jwt-prepare"
+    session.install_and_start(env, interval_seconds=3600)
+    try:
+        assert session.refresher.lock is session.install_lock
+    finally:
+        session.refresher.stop()
+
+    # While the refresher holds the lock mid-fetch, a concurrent prepare waits
+    # and cannot install; the two installs never interleave.
+    entered, release, order = threading.Event(), threading.Event(), []
+
+    def slow_refresh_fetch(src):
+        entered.set()
+        release.wait(5)
+        order.append("refresher-fetch")
+        return "jwt-refresher"
+
+    refresher = oidc.TokenFileRefresher(
+        source=session.source, env=env, interval_seconds=3600,
+        fetch_token=slow_refresh_fetch, lock=session.install_lock,
+    )
+    session.fetch_token = lambda src: (order.append("prepare-fetch"), "jwt-prepare")[1]
+
+    thread = threading.Thread(target=refresher.tick)
+    thread.start()
+    assert entered.wait(5)
+    waiter = threading.Thread(target=session.prepare_fresh_assertion, args=(env,))
+    waiter.start()
+    time.sleep(0.05)
+    assert order == [], "prepare entered the critical section while the refresher held it"
+    release.set()
+    thread.join(5)
+    waiter.join(5)
+    assert order == ["refresher-fetch", "prepare-fetch"]
+    assert _installed(env) == "jwt-prepare"
+
+
+def test_request_credentials_never_re_enter_the_environment(tmp_path):
+    """Property 4: parent memory only, even across many acquisitions."""
+    real_env = {
+        "ANTHROPIC_IDENTITY_TOKEN_FILE": str(tmp_path / "identity.jwt"),
+        "ACTIONS_ID_TOKEN_REQUEST_URL": "https://example/token",
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "req-tok",
+    }
+    source = oidc.capture_actions_request_source(real_env)
+    assert "ACTIONS_ID_TOKEN_REQUEST_URL" not in real_env
+    assert "ACTIONS_ID_TOKEN_REQUEST_TOKEN" not in real_env
+
+    session = oidc.OidcSession(source=source, first_jwt="jwt-initial")
+    session.fetch_token = lambda src: "jwt-fresh"
+    oidc.write_placeholder_token_file(real_env)
+    for _ in range(3):
+        session.prepare_fresh_assertion(real_env)
+
+    assert "ACTIONS_ID_TOKEN_REQUEST_URL" not in real_env
+    assert "ACTIONS_ID_TOKEN_REQUEST_TOKEN" not in real_env
+    assert "req-tok" not in repr(session)
+
+
+def test_no_token_value_appears_in_repr_or_error_text(tmp_path):
+    """Property 5: neither the assertion nor the request credential leaks."""
+    env, session = _session(tmp_path, [])
+    secret = "jwt-super-secret-value"
+
+    def failing(src):
+        raise oidc.OidcAcquisitionError("GitHub OIDC token request returned HTTP 500")
+
+    session.fetch_token = lambda src: secret
+    session.prepare_fresh_assertion(env)
+    assert secret not in repr(session)
+    assert secret not in repr(session.source)
+
+    session.fetch_token = failing
+    with pytest.raises(oidc.OidcAcquisitionError) as excinfo:
+        session.prepare_fresh_assertion(env)
+    assert secret not in str(excinfo.value)
+    assert "req-tok" not in str(excinfo.value)
+
+
+def test_shutdown_and_scrubbing_are_unchanged(tmp_path):
+    """Property 6: the repair adds no new persistence to clean up."""
+    env, session = _session(tmp_path, [])
+    session.fetch_token = lambda src: "jwt-fresh"
+    session.prepare_fresh_assertion(env)
+    path = Path(env["ANTHROPIC_IDENTITY_TOKEN_FILE"])
+    assert path.exists()
+    session.shutdown(env)
+    assert not path.exists()
+    # Idempotent, exactly as before.
+    session.shutdown(env)
+    oidc.scrub_identity_token_file(env)
+
+
+def test_local_oauth_path_is_untouched_by_the_repair():
+    """Property 7: only the WIF lanes compose the fresh-assertion wrapper."""
+    cli_source = (REPO_ROOT / "sentinel" / "cli.py").read_text(encoding="utf-8")
+    assert "assertion_refreshed" not in cli_source
+    assert "ANTHROPIC_IDENTITY_TOKEN_FILE" not in cli_source
+
+
+def test_assertion_refreshed_preserves_coroutine_functions(tmp_path):
+    """CagedCheckerStub._invoke dispatches on iscoroutinefunction."""
+    env, session = _session(tmp_path, ["jwt-a"])
+
+    async def async_query_fn(check_class, reservation, state, user_prompt, model=None):
+        return "async-outcome"
+
+    wrapped = oidc.assertion_refreshed(async_query_fn, session, env)
+    assert inspect.iscoroutinefunction(wrapped)
+
+    # Driven by a manual coroutine step rather than asyncio.run() for the same
+    # reason test_health_gated_preserves_async_coroutine_function documents:
+    # the Windows ProactorEventLoop self-pipe trips conftest's network guard.
+    coro = wrapped("c", None, None, "p")
+    try:
+        coro.send(None)
+    except StopIteration as exc:
+        assert exc.value == "async-outcome"
+    else:
+        pytest.fail("coroutine did not complete synchronously")
+    assert _installed(env) == "jwt-a"
+
+
+# ---------------------------------------------------------------------------
+# Bounded acquisition retry (plan-d Part 7 row 9)
+# ---------------------------------------------------------------------------
+
+
+def test_every_retry_attempt_mints_a_new_assertion(tmp_path):
+    """Property 10: a retry is never a replay of an already-returned token."""
+    source = oidc.OidcRequestSource(request_url="https://example/token", request_token="req-tok")
+    issued = []
+
+    def opener(request, timeout=None):
+        issued.append(len(issued))
+        if len(issued) < 3:
+            return _FakeResponse(503, b"unavailable")
+        return _FakeResponse(200, b'{"value":"jwt-attempt-3"}')
+
+    slept = []
+    token = oidc.fetch_github_oidc_token_with_retry(
+        source, opener=opener, sleep=slept.append
+    )
+    assert token == "jwt-attempt-3"
+    assert len(issued) == 3, "each attempt must call GitHub again, not reuse a token"
+    assert slept == [1.0, 2.0]
+
+
+def test_acquisition_retry_is_bounded_at_three_attempts(tmp_path):
+    source = oidc.OidcRequestSource(request_url="https://example/token", request_token="req-tok")
+    attempts, slept = [], []
+
+    def opener(request, timeout=None):
+        attempts.append(1)
+        return _FakeResponse(503, b"unavailable")
+
+    with pytest.raises(oidc.OidcAcquisitionError):
+        oidc.fetch_github_oidc_token_with_retry(source, opener=opener, sleep=slept.append)
+    assert len(attempts) == 3
+    assert slept == [1.0, 2.0], "no sleep after the final failed attempt"
+
+
+@pytest.mark.parametrize(
+    "status, body",
+    [(403, b"forbidden"), (404, b"missing"), (200, b"not-json"), (200, b'{"no":"value"}')],
+)
+def test_deterministic_acquisition_failures_are_not_retried(status, body):
+    """Authorization, configuration and malformed-response failures fail closed."""
+    source = oidc.OidcRequestSource(request_url="https://example/token", request_token="req-tok")
+    attempts, slept = [], []
+
+    def opener(request, timeout=None):
+        attempts.append(1)
+        return _FakeResponse(status, body)
+
+    with pytest.raises(oidc.OidcAcquisitionError):
+        oidc.fetch_github_oidc_token_with_retry(source, opener=opener, sleep=slept.append)
+    assert len(attempts) == 1
+    assert slept == []
+
+
+def test_real_http_403_is_classified_deterministic_not_transient():
+    """urlopen raises HTTPError (a URLError subclass) for every non-2xx, so
+    classifying on URLError alone would wrongly retry a 403."""
+    def opener(request, timeout=None):
+        raise urllib.error.HTTPError("https://example", 403, "Forbidden", None, None)
+
+    source = oidc.OidcRequestSource(request_url="https://example/token", request_token="req-tok")
+    attempts, slept = [], []
+
+    def counting_opener(request, timeout=None):
+        attempts.append(1)
+        return opener(request, timeout)
+
+    with pytest.raises(oidc.OidcAcquisitionError):
+        oidc.fetch_github_oidc_token_with_retry(source, opener=counting_opener, sleep=slept.append)
+    assert len(attempts) == 1 and slept == []
+
+
+def test_real_http_503_is_classified_transient():
+    def opener(request, timeout=None):
+        raise urllib.error.HTTPError("https://example", 503, "Unavailable", None, None)
+
+    source = oidc.OidcRequestSource(request_url="https://example/token", request_token="req-tok")
+    attempts, slept = [], []
+
+    def counting_opener(request, timeout=None):
+        attempts.append(1)
+        return opener(request, timeout)
+
+    with pytest.raises(oidc.OidcAcquisitionError):
+        oidc.fetch_github_oidc_token_with_retry(source, opener=counting_opener, sleep=slept.append)
+    assert len(attempts) == 3 and slept == [1.0, 2.0]
+
+
+# ---------------------------------------------------------------------------
+# Scheduled production lane composition (owner correction to plan-d Part 1b)
+#
+# The scheduled lane acquires ONE OidcSession per run but execute_run makes
+# MANY provider invocations across the live task set, and the ordinary profile
+# keeps its bounded second attempt -- so it carries the same replay exposure
+# the timing lane and official gate do, and must receive the same repair.
+# ---------------------------------------------------------------------------
+
+
+def test_scheduled_runner_composes_assertion_refreshed_over_health_gated(monkeypatch, tmp_path):
+    scheduled = _load_scheduled_runner()
+    from agents.checker import harness as harness_mod
+    from sentinel import pipeline as pipeline_mod
+
+    calls = {}
+
+    class _FakeStub:
+        def __init__(self):
+            self.query_fn = "raw-query-fn"
+
+    def _fake_build_stub(**kwargs):
+        return _FakeStub()
+
+    def _fake_health_gated(query_fn, session):
+        calls["health"] = (query_fn, session)
+        return ("health-wrapped", query_fn)
+
+    def _fake_assertion_refreshed(query_fn, session, env):
+        calls["assertion"] = (query_fn, session, env)
+        return ("assertion-refreshed", query_fn)
+
+    def _fake_execute_run(config, deps):
+        calls["query_fn"] = deps.judgment.query_fn
+        return "outcome"
+
+    monkeypatch.setattr(harness_mod, "build_caged_judgment_stub", _fake_build_stub)
+    monkeypatch.setattr(oidc, "health_gated", _fake_health_gated)
+    monkeypatch.setattr(oidc, "assertion_refreshed", _fake_assertion_refreshed)
+    monkeypatch.setattr(pipeline_mod, "execute_run", _fake_execute_run)
+
+    env = {"ANTHROPIC_IDENTITY_TOKEN_FILE": str(tmp_path / "identity.jwt")}
+    session = object()
+    working_state = types.SimpleNamespace(
+        db_path=tmp_path / "s.sqlite3",
+        findings_path=tmp_path / "FINDINGS.md",
+        cost_ledger_path=tmp_path / "cost.jsonl",
+        root=tmp_path,
+    )
+    run_sentinel = scheduled._build_run_sentinel(
+        env, github_owner="owner", session_holder={"session": session}
+    )
+    assert run_sentinel(working_state, "12345") == "outcome"
+
+    # health_gated stays innermost; assertion_refreshed wraps it and receives
+    # the same session plus the environment naming the token file.
+    assert calls["health"] == ("raw-query-fn", session)
+    assert calls["assertion"] == (("health-wrapped", "raw-query-fn"), session, env)
+    assert calls["query_fn"] == ("assertion-refreshed", ("health-wrapped", "raw-query-fn"))
+
+
+def test_scheduled_runner_still_skips_wrapping_when_no_session_exists(monkeypatch, tmp_path):
+    """A non-provider scheduled path must not acquire an assertion."""
+    scheduled = _load_scheduled_runner()
+    from agents.checker import harness as harness_mod
+    from sentinel import pipeline as pipeline_mod
+
+    captured = {}
+
+    class _FakeStub:
+        def __init__(self):
+            self.query_fn = "raw-query-fn"
+
+    monkeypatch.setattr(harness_mod, "build_caged_judgment_stub", lambda **kw: _FakeStub())
+    monkeypatch.setattr(
+        oidc, "assertion_refreshed",
+        lambda *a, **kw: pytest.fail("assertion_refreshed must not run without a session"),
+    )
+    monkeypatch.setattr(
+        pipeline_mod, "execute_run",
+        lambda config, deps: captured.setdefault("query_fn", deps.judgment.query_fn),
+    )
+
+    working_state = types.SimpleNamespace(
+        db_path=tmp_path / "s.sqlite3",
+        findings_path=tmp_path / "FINDINGS.md",
+        cost_ledger_path=tmp_path / "cost.jsonl",
+        root=tmp_path,
+    )
+    run_sentinel = scheduled._build_run_sentinel({}, github_owner="owner", session_holder={})
+    run_sentinel(working_state, "12345")
+    assert captured["query_fn"] == "raw-query-fn"

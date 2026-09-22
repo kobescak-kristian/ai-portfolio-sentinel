@@ -48,7 +48,7 @@ def _build_run_sentinel(env, *, github_owner: str, session_holder: dict):
         from agents.checker import auth
         from agents.checker.config import HAIKU_ORDINARY
         from agents.checker.harness import build_caged_judgment_stub
-        from agents.checker.oidc import health_gated
+        from agents.checker.oidc import assertion_refreshed, health_gated
         from sentinel.config import RunConfig
         from sentinel.pipeline import Deps, execute_run
 
@@ -61,7 +61,16 @@ def _build_run_sentinel(env, *, github_owner: str, session_holder: dict):
         )
         session = session_holder.get("session")
         if session is not None:
-            stub.query_fn = health_gated(stub.query_fn, session)
+            # One OidcSession is acquired per scheduled run, but execute_run makes
+            # MANY provider invocations across the live task set, and the ordinary
+            # profile keeps its bounded second attempt -- so a fixed-interval
+            # refresher alone would let two fresh CLI processes present the same
+            # assertion, which the provider rejects as a replay. Same corrected
+            # composition as the official gate (B5-P0 Part 1); this lane has no
+            # elapsed-time measurement boundary, so no special ordering is needed.
+            stub.query_fn = assertion_refreshed(
+                health_gated(stub.query_fn, session), session, env
+            )
         config = RunConfig(
             run_kind="live",
             source="live",
