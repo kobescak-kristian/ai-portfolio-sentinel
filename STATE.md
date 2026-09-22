@@ -5366,10 +5366,14 @@ merges every change."
   both regression tests. Neither fix passes vacuously.
   Executing model: Opus 5 (the routing named Opus 5; recorded as
   observed).
-  ACTUAL WRITE SET (exactly the 4 declared paths):
+  ACTUAL WRITE SET (exactly 3 paths):
   `agents/checker/oidc.py`, `tests/test_phase5_oidc.py`, `STATE.md`
-  (this entry), `.publicgate-allow` (one entry for this entry's status
-  line). No other path was mechanically necessary. No
+  (this entry). `.publicgate-allow` was AUTHORIZED by the dispatch but
+  was NOT modified and forms no part of this commit: the allowlist entry
+  landed with Stage 2C-B5-P0 already covers the byte-identical status
+  line this entry ends with, so no new entry was mechanically necessary
+  and none was added for symmetry. No other path was mechanically
+  necessary. No
   `rehearsal/timing/*` change; no workflow change; no driver, gate,
   scheduled-runner, evidence-record or cost-recorder change; no ADR,
   fixture, eval, answer-key, scorer, threshold or receipt-registry
