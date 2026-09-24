@@ -317,7 +317,7 @@ def test_driver_pins_the_real_production_cage(tr):
 def test_driver_reuses_the_real_query_seam_and_applies_no_deadline():
     source = DRIVER_PATH.read_text(encoding="utf-8")
     assert "CagedCheckerStub" in source
-    assert "health_gated" in source
+    assert "inner = stub.query_fn" in source
     # A per-invocation deadline could truncate a slow call and understate
     # max_observed, so the envelope guard must never be imported or called.
     # The module docstring is allowed to explain that it is not used.
@@ -955,43 +955,493 @@ def test_requirements_remains_a_direct_pin_reconciliation_surface():
 # --- Ordering property 9: acquisition outside the measured window -----------
 
 
-def test_fresh_assertion_is_acquired_before_started_record_and_before_the_timer():
-    """Load-bearing ordering (plan-d 1.3).
+def _corpus_loop():
+    """The one ``for item in corpus["items"]`` loop in cmd_execute."""
+    return next(
+        node for node in ast.walk(_function("cmd_execute"))
+        if isinstance(node, ast.For)
+        and isinstance(node.iter, ast.Subscript)
+        and getattr(node.iter.value, "id", None) == "corpus"
+    )
 
-    The GitHub fetch must not enter elapsed_ms, and a failed acquisition must
-    not leave an orphan INVOCATION_STARTED that the frozen durability rule
-    would misread as INCOMPLETE_N.
+
+def test_fresh_assertion_is_acquired_before_started_record_and_before_the_timer():
+    """Load-bearing ordering (plan-d 1.3), at its repaired location.
+
+    Identity admission runs in the corpus loop BEFORE judge(): judge() reserves
+    and writes an audit row before it calls the seam, and _invoke converts
+    anything the seam raises into a charged failed invocation. So acquisition
+    must never move back inside the timed wrapper. Inside the wrapper the START
+    record still precedes the timer, which precedes the awaited seam, so the
+    GitHub fetch can never enter elapsed_ms.
     """
     timed = _function("timed", ast.AsyncFunctionDef)
-    prepare = started = timer = awaited = None
-    for index, node in enumerate(ast.walk(timed)):
-        pass
+    assert "prepare_fresh_assertion" not in ast.dump(timed)
+
+    loop_body = [ast.dump(stmt) for stmt in _corpus_loop().body]
+    prepare = next(i for i, text in enumerate(loop_body) if "prepare_fresh_assertion" in text)
+    judge = next(i for i, text in enumerate(loop_body) if "'judge'" in text)
+    assert prepare < judge
+
     dumped = [ast.dump(stmt) for stmt in timed.body]
 
     def first(predicate):
         return next(i for i, text in enumerate(dumped) if predicate(text))
 
-    prepare = first(lambda t: "prepare_fresh_assertion" in t)
     started = first(lambda t: "INVOCATION_STARTED" in t)
     timer = first(lambda t: "started_ns" in t and "perf_counter_ns" in t)
     awaited = first(lambda t: "Await" in t and "inner" in t)
-    assert prepare < started < timer <= awaited
+    assert started < timer <= awaited
 
 
 def test_failed_assertion_is_a_frozen_auth_stop_not_an_incomplete_n():
-    source = DRIVER_PATH.read_text(encoding="utf-8")
-    timed_start = source.index("async def timed(")
-    timed_block = source[timed_start:source.index("stub.query_fn = timed")]
-    assert "AUTH_OR_OIDC_FAULT" in timed_block
-    assert timed_block.index("AUTH_OR_OIDC_FAULT") < timed_block.index('"INVOCATION_STARTED"')
+    """Structural companion to the behavioral tests below. The timed wrapper
+    raises nothing of its own -- an identity refusal there would be converted
+    by _invoke into a charged INFRASTRUCTURE_FAULT -- and the frozen
+    AUTH_OR_OIDC_FAULT is raised by the corpus loop before judge()."""
+    timed = _function("timed", ast.AsyncFunctionDef)
+    assert not [node for node in ast.walk(timed) if isinstance(node, ast.Raise)]
+
+    loop_body = [ast.dump(stmt) for stmt in _corpus_loop().body]
+    auth_stop = next(i for i, text in enumerate(loop_body) if "AUTH_OR_OIDC_FAULT" in text)
+    judge = next(i for i, text in enumerate(loop_body) if "'judge'" in text)
+    assert auth_stop < judge
 
 
 def test_timing_driver_does_not_use_the_composed_wrapper():
-    """The timing lane must prepare itself, outside the measured region."""
+    """The timing lane prepares itself, outside the measured region, and its
+    query seam is the RAW production seam.
+
+    The loop-level identity admission is this lane's only pre-invocation gate.
+    health_gated must not come back around the seam: its refusal would run
+    after judge() reserved, and _invoke would convert it into a charged
+    INFRASTRUCTURE_FAULT. The official gate and the scheduled lane keep their
+    own composition, unchanged.
+    """
     source = DRIVER_PATH.read_text(encoding="utf-8")
     assert "assertion_refreshed" not in source
-    assert "inner = health_gated(stub.query_fn, session)" in source
     assert "session.prepare_fresh_assertion(env)" in source
+    assert "inner = stub.query_fn" in source
+
+    tree = _driver_ast()
+    imported = {
+        alias.name
+        for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    called = {
+        getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+        for node in ast.walk(tree) if isinstance(node, ast.Call)
+    }
+    assert "health_gated" not in imported
+    assert "health_gated" not in called
+
+    for script, composition in (
+        (
+            "run_phase5_official_gate.py",
+            "assertion_refreshed(health_gated(stub.query_fn, session), session, os.environ)",
+        ),
+        (
+            "run_phase5_scheduled.py",
+            "stub.query_fn = assertion_refreshed( health_gated(stub.query_fn, session), session, env )",
+        ),
+    ):
+        flat = " ".join((REPO_ROOT / "scripts" / script).read_text(encoding="utf-8").split())
+        assert composition in flat, script
+
+
+# --- B5-P1 finding: identity faults stop before any reservation -------------
+#
+# These drive the REAL cmd_execute loop, the REAL CagedCheckerStub.judge() with
+# its ledger and budget coordinator, and the REAL acquire_oidc / OidcSession /
+# bounded acquisition policy. Only the outside world is injected: the GitHub
+# context and client, the single-attempt GitHub assertion fetch BELOW the
+# bounded retry, the query seam (no provider), and anyio.run (no event loop,
+# so conftest's network guard stays fully armed). A tripwire on the SDK's own
+# query() proves no provider path is reached.
+
+_REJECTED_403 = "GitHub OIDC token request returned HTTP 403"
+_TRANSIENT_503 = "GitHub OIDC token request returned HTTP 503"
+
+
+def _event_count(path, name):
+    if not path.exists():
+        return 0
+    return sum(
+        1 for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("event") == name
+    )
+
+
+def _latch_background_refresh_fault(session):
+    """One REAL refresher tick whose GitHub acquisition is rejected, so the
+    session latches OidcRefreshFault exactly as a failed background refresh
+    does. A failed tick installs nothing."""
+    from agents.checker import oidc
+
+    def rejected(_source):
+        raise oidc.OidcAcquisitionError(_REJECTED_403)
+
+    session.refresher.fetch_token = rejected
+    session.refresher.tick()
+    assert session.refresher._fault is not None
+
+
+def _drive_execute(
+    tr, tmp_path, monkeypatch, *, fetch_outcomes, latch_fault_at=None, token_file=None, on_session=None
+):
+    """Run the real ``cmd_execute`` model-free and return what it left behind.
+
+    ``fetch_outcomes`` scripts the single-attempt GitHub fetch in call order
+    (a token string, or an exception to raise); the first call is the run-start
+    acquisition. ``latch_fault_at`` latches one background refresh fault at
+    ``after_install``, ``after_reservation`` (judge() has reserved and written
+    its audit row, the seam has not run) or ``in_flight`` (inside the seam).
+    """
+    from agents.checker import auth, harness, oidc
+    from agents.checker.failures import QueryOutcome
+    from sentinel import ledger
+
+    work_root = tmp_path / "work"
+    evidence = work_root / tr.EVIDENCE_DIRNAME
+    evidence.mkdir(parents=True)
+    (evidence / tr.RUNTIME_IDENTITY_FILENAME).write_text(
+        json.dumps({"runtime_identity_id": "rid-test", "sdk": {"bundled_cli": {"record_path": "claude"}}}),
+        encoding="utf-8",
+    )
+    (evidence / tr.TOPOLOGY_FILENAME).write_text(
+        json.dumps({"schema_version": 1, "lane": tr.LANE, "baseline": {}, "invocations": []}),
+        encoding="utf-8",
+    )
+    fx_path = tmp_path / "fx.json"
+    fx_path.write_text(
+        json.dumps({
+            "source": "ECB", "rate_date": "2026-09-23",
+            "retrieved_at_utc": "2026-09-24T00:00:00+00:00", "usd_per_eur": "1.10",
+        }),
+        encoding="utf-8",
+    )
+    events_path = evidence / tr.EVENTS_FILENAME
+
+    for name in auth.WIF_SHADOW_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ANTHROPIC_IDENTITY_TOKEN_FILE", str(token_file or tmp_path / "identity.jwt"))
+    monkeypatch.setenv("ANTHROPIC_FEDERATION_RULE_ID", "fdrl-test")
+    monkeypatch.setenv("ANTHROPIC_ORGANIZATION_ID", "org-test")
+    monkeypatch.setenv("ANTHROPIC_SERVICE_ACCOUNT_ID", "svac-test")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://example/token")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req-tok")
+
+    monkeypatch.setattr(
+        tr, "derive_github_context",
+        lambda env: types.SimpleNamespace(
+            run_id="4242", run_attempt=1, workflow_path=tr.WORKFLOW_PATH, sha="a" * 40
+        ),
+    )
+    monkeypatch.setattr(tr, "build_evidence_client", lambda env: object())
+    monkeypatch.setattr(tr, "assert_expected_source_live", lambda client, sha: None)
+
+    timeline = []
+    outcomes = list(fetch_outcomes)
+    holder = {}
+
+    def scripted_fetch(source, *, audience=None, opener=None):
+        timeline.append(("fetch", _event_count(events_path, "INVOCATION_STARTED")))
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    def latch_once(point):
+        if latch_fault_at == point and not holder.get("latched"):
+            holder["latched"] = True
+            timeline.append(("refresh_fault", _event_count(events_path, "INVOCATION_STARTED")))
+            _latch_background_refresh_fault(holder["session"])
+
+    real_acquire = oidc.acquire_oidc
+
+    def acquire(env=None, **kwargs):
+        session = real_acquire(env, **kwargs)
+        holder["session"] = session
+        if on_session is not None:
+            on_session(session)
+        real_install = session.install_and_start
+
+        def install_and_start(env, **install_kwargs):
+            real_install(env, **install_kwargs)
+            latch_once("after_install")
+
+        session.install_and_start = install_and_start
+        return session
+
+    async def fake_seam(check_class, reservation, state, user_prompt, model=None):
+        token = Path(os.environ["ANTHROPIC_IDENTITY_TOKEN_FILE"]).read_text(encoding="ascii")
+        timeline.append(("seam", _event_count(events_path, "INVOCATION_STARTED"), token))
+        latch_once("in_flight")
+        result = types.SimpleNamespace(
+            subtype="success", is_error=False, num_turns=1, duration_ms=5, duration_api_ms=4,
+            usage={"input_tokens": 10, "output_tokens": 2}, total_cost_usd=0.001,
+            model_usage={tr.MODEL_ALIAS: {}},
+        )
+        return QueryOutcome(result=result, error=None)
+
+    real_stub = harness.CagedCheckerStub
+
+    def build_stub(**kwargs):
+        return real_stub(query_fn=fake_seam, **kwargs)
+
+    def provider_tripwire(*args, **kwargs):
+        raise AssertionError("the provider SDK query() was reached")
+
+    def drive(fn, *args):
+        """anyio.run without an event loop: nothing here awaits real I/O."""
+        latch_once("after_reservation")
+        coro = fn(*args)
+        try:
+            coro.send(None)
+        except StopIteration as stop:
+            return stop.value
+        coro.close()
+        raise AssertionError("the timing seam suspended; the fake must not await real I/O")
+
+    monkeypatch.setattr(oidc, "fetch_github_oidc_token", scripted_fetch)
+    monkeypatch.setattr(oidc, "acquire_oidc", acquire)
+    monkeypatch.setattr(harness, "CagedCheckerStub", build_stub)
+    monkeypatch.setattr(harness, "query", provider_tripwire)
+    monkeypatch.setattr(harness.anyio, "run", drive)
+
+    rc = tr.cmd_execute(
+        types.SimpleNamespace(expected_source_sha="a" * 40, work_root=work_root, fx_state_path=fx_path)
+    )
+
+    rows = []
+    ledger_path = work_root / "timing.sqlite3"
+    if ledger_path.exists():
+        conn = ledger.open_ledger(ledger_path, create=False)
+        try:
+            rows = ledger.list_agent_calls_for_run(conn, "r-p5d-timing-4242")
+        finally:
+            conn.close()
+    stop_path = evidence / tr.STOP_FILENAME
+    return {
+        "rc": rc,
+        "events": tr.read_timing_events(events_path),
+        "stop": json.loads(stop_path.read_text(encoding="utf-8")) if stop_path.exists() else None,
+        "rows": rows,
+        "timeline": timeline,
+        "unused_fetch_outcomes": outcomes,
+        "session": holder.get("session"),
+        "evidence": evidence,
+        "ledger_path": ledger_path,
+    }
+
+
+def _observed(run):
+    """The whole observable outcome, so a failure prints every fact at once."""
+    events = run["events"]
+    return {
+        "rc": run["rc"],
+        "stop_reason": run["stop"]["reason"] if run["stop"] else None,
+        "stop_records": sum(1 for event in events if event["event"] == "STOP"),
+        "seam_calls": [entry for entry in run["timeline"] if entry[0] == "seam"],
+        "invocation_started": [e["ordinal"] for e in events if e["event"] == "INVOCATION_STARTED"],
+        "observation_accounted": [
+            (e["ordinal"], e["charged_eur_micros"], e["failure_class"])
+            for e in events if e["event"] == "OBSERVATION_ACCOUNTED"
+        ],
+        "agent_calls": [
+            (row.state, row.reserved_eur_micros, row.charged_eur_micros, row.rejection_reason)
+            for row in run["rows"]
+        ],
+    }
+
+
+# Nothing reserved, audited, started, accounted or invoked; one AUTH stop.
+_NOTHING_RESERVED_OR_INVOKED = {
+    "rc": 3,
+    "stop_reason": "AUTH_OR_OIDC_FAULT",
+    "stop_records": 1,
+    "seam_calls": [],
+    "invocation_started": [],
+    "observation_accounted": [],
+    "agent_calls": [],
+}
+
+
+def _no_class_b_spend(tr, run, tmp_path):
+    out_path = tmp_path / "cost.json"
+    returned = tr.cmd_cost_evidence(
+        types.SimpleNamespace(
+            evidence_dir=run["evidence"], out_path=out_path,
+            corpus_sha256=CORPUS_SHA, preregistration_sha256=PREREG_SHA,
+        )
+    )
+    return returned == 4 and not out_path.exists()
+
+
+def test_failed_fresh_assertion_stops_auth_or_oidc_before_any_reservation(tr, tmp_path, monkeypatch):
+    """The B5-P1 finding, reproduced and closed.
+
+    Before the repair the failed acquisition was raised INSIDE the query seam:
+    judge() had already reserved and written its audit row, _invoke converted
+    the exception into a failed invocation charged the full reservation, and
+    the run stopped as INFRASTRUCTURE_FAULT although no provider call and no
+    INVOCATION_STARTED occurred. The production acquisition policy is left
+    uninjected here; only the transport below it is scripted.
+    """
+    from agents.checker import oidc
+
+    run = _drive_execute(
+        tr, tmp_path, monkeypatch,
+        fetch_outcomes=["jwt-initial", oidc.OidcAcquisitionError(_REJECTED_403)],
+    )
+
+    assert _observed(run) == _NOTHING_RESERVED_OR_INVOKED
+    assert run["stop"]["detail"] == "ordinal 1: fresh assertion unavailable: OidcAcquisitionError"
+    assert run["session"].fetch_token is oidc.fetch_github_oidc_token_with_retry
+    # The run-start fetch, then ONE admission attempt: a deterministic
+    # rejection is never retried under the unchanged bounded policy.
+    assert run["timeline"] == [("fetch", 0), ("fetch", 0)]
+    assert tr.aggregate_timing_spend(run["events"])["observations_accounted"] == 0
+    assert _no_class_b_spend(tr, run, tmp_path)
+
+
+def test_transient_assertion_failure_uses_the_frozen_bound_then_stops_auth_or_oidc(
+    tr, tmp_path, monkeypatch
+):
+    from agents.checker import oidc
+
+    slept = []
+
+    def bounded_policy_with_recorded_clock(session):
+        session.fetch_token = lambda source: oidc.fetch_github_oidc_token_with_retry(
+            source, sleep=slept.append
+        )
+
+    run = _drive_execute(
+        tr, tmp_path, monkeypatch,
+        fetch_outcomes=["jwt-initial"] + [oidc.OidcAcquisitionError(_TRANSIENT_503) for _ in range(3)],
+        on_session=bounded_policy_with_recorded_clock,
+    )
+
+    assert _observed(run) == _NOTHING_RESERVED_OR_INVOKED
+    # The run-start fetch, then exactly three admission attempts, 1s then 2s,
+    # no sleep after the last; nothing else is retried.
+    assert run["timeline"] == [("fetch", 0)] * 4
+    assert slept == [1.0, 2.0]
+    assert run["unused_fetch_outcomes"] == []
+
+
+def test_admitted_invocation_runs_once_then_a_later_failed_admission_stops_cleanly(
+    tr, tmp_path, monkeypatch
+):
+    from agents.checker import oidc
+
+    run = _drive_execute(
+        tr, tmp_path, monkeypatch,
+        fetch_outcomes=["jwt-initial", "jwt-fresh-1", oidc.OidcAcquisitionError(_REJECTED_403)],
+    )
+
+    row = run["rows"][0]
+    assert _observed(run) == {
+        **_NOTHING_RESERVED_OR_INVOKED,
+        "seam_calls": [("seam", 1, "jwt-fresh-1")],
+        "invocation_started": [1],
+        "observation_accounted": [(1, row.charged_eur_micros, None)],
+        "agent_calls": [("COMPLETED", row.reserved_eur_micros, row.charged_eur_micros, None)],
+    }
+    assert row.charged_eur_micros < row.reserved_eur_micros
+    assert run["stop"]["detail"] == "ordinal 2: fresh assertion unavailable: OidcAcquisitionError"
+    # Admission precedes the START record and the seam, and the seam saw the
+    # freshly installed assertion, never the run-start one.
+    assert run["timeline"] == [("fetch", 0), ("fetch", 0), ("seam", 1, "jwt-fresh-1"), ("fetch", 1)]
+    assert [e["ordinal"] for e in run["events"] if e["event"] == "INVOCATION_FINISHED"] == [1]
+    spend = tr.aggregate_timing_spend(run["events"])
+    assert spend["accounting_basis"] == {1: "A"}
+    assert spend["conservative_full_reservation_ordinals"] == ()
+
+
+def test_refresh_fault_latched_before_admission_stops_auth_or_oidc(tr, tmp_path, monkeypatch):
+    run = _drive_execute(
+        tr, tmp_path, monkeypatch,
+        fetch_outcomes=["jwt-initial", "jwt-fresh-1"],
+        latch_fault_at="after_install",
+    )
+
+    assert _observed(run) == _NOTHING_RESERVED_OR_INVOKED
+    assert run["stop"]["detail"] == "ordinal 1: fresh assertion unavailable: OidcRefreshFault"
+    # The health check refuses before any per-invocation acquisition runs.
+    assert run["timeline"] == [("fetch", 0), ("refresh_fault", 0)]
+    assert run["unused_fetch_outcomes"] == ["jwt-fresh-1"]
+
+
+@pytest.mark.parametrize("failing_step", ["acquire", "install"])
+def test_run_start_identity_setup_failure_stops_auth_or_oidc(tr, tmp_path, monkeypatch, failing_step):
+    """A run-start identity failure is AUTH_OR_OIDC_FAULT, not the catch-all
+    INFRASTRUCTURE_FAULT. It happens before the ledger, the stub or any
+    reservation exists."""
+    from agents.checker import oidc
+
+    if failing_step == "acquire":
+        # The REAL acquire_oidc, whose bounded policy meets a deterministic rejection.
+        run = _drive_execute(
+            tr, tmp_path, monkeypatch, fetch_outcomes=[oidc.OidcAcquisitionError(_REJECTED_403)]
+        )
+        failure_type = "OidcAcquisitionError"
+    else:
+        # The first assertion arrives, but the token-file target's directory
+        # does not exist, so installing it fails.
+        run = _drive_execute(
+            tr, tmp_path, monkeypatch, fetch_outcomes=["jwt-initial"],
+            token_file=tmp_path / "missing" / "identity.jwt",
+        )
+        failure_type = "FileNotFoundError"
+
+    assert _observed(run) == _NOTHING_RESERVED_OR_INVOKED
+    assert run["stop"]["detail"] == f"run-start identity setup failed: {failure_type}"
+    assert [event["event"] for event in run["events"]] == ["RUN_STARTED", "STOP"]
+    assert run["timeline"] == [("fetch", 0)]
+    assert not run["ledger_path"].exists()
+    assert _no_class_b_spend(tr, run, tmp_path)
+
+
+@pytest.mark.parametrize("latch_point", ["after_reservation", "in_flight"])
+def test_refresh_fault_after_admission_leaves_the_admitted_invocation_in_flight(
+    tr, tmp_path, monkeypatch, latch_point
+):
+    """The loop-level admission is the timing lane's ONLY pre-invocation gate.
+
+    ``after_reservation`` latches the background fault after judge() has
+    reserved and written its audit row but before the seam runs -- exactly the
+    window in which a health gate INSIDE the seam would refuse, be converted by
+    _invoke, charge the full reservation and stop as INFRASTRUCTURE_FAULT.
+    ``in_flight`` latches it while the admitted invocation runs. Either way the
+    admitted invocation completes and is accounted normally, and the NEXT
+    ordinal's admission refuses before anything is reserved.
+    """
+    run = _drive_execute(
+        tr, tmp_path, monkeypatch,
+        fetch_outcomes=["jwt-initial", "jwt-fresh-1", "jwt-fresh-2"],
+        latch_fault_at=latch_point,
+    )
+
+    row = run["rows"][0]
+    assert _observed(run) == {
+        **_NOTHING_RESERVED_OR_INVOKED,
+        "seam_calls": [("seam", 1, "jwt-fresh-1")],
+        "invocation_started": [1],
+        "observation_accounted": [(1, row.charged_eur_micros, None)],
+        "agent_calls": [("COMPLETED", row.reserved_eur_micros, row.charged_eur_micros, None)],
+    }
+    assert row.charged_eur_micros < row.reserved_eur_micros
+    assert run["stop"]["detail"] == "ordinal 2: fresh assertion unavailable: OidcRefreshFault"
+    assert run["unused_fetch_outcomes"] == ["jwt-fresh-2"]
+    seam = ("seam", 1, "jwt-fresh-1")
+    if latch_point == "after_reservation":
+        tail = [("refresh_fault", 0), seam]
+    else:
+        tail = [seam, ("refresh_fault", 1)]
+    assert run["timeline"] == [("fetch", 0), ("fetch", 0), *tail]
 
 
 # --- Part 7: bounded pre-provider retries -----------------------------------

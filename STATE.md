@@ -5494,3 +5494,116 @@ merges every change."
   Next action: re-dispatch the `B5_SOURCE_SHA` freeze and B5-P1
   read-only verification against a tip that includes this entry, with
   `SentinelDailyRun` still disabled.
+- 2026-09-24 - B5 FREEZE ABANDONED BEFORE ANY TIMING RUN; TIMING-LANE
+  OIDC STOP-PATH REPAIR COMMITTED LOCALLY, NOT PUSHED (dispatch
+  `q77-p5d-repair-stage2cb5-p1-oidc-stop-repair-a`, base
+  `4a9f59ed760c3ccfbd13a703158451146814cf6a`). **No B5 execution, no
+  provider or model call, no real OIDC or WIF request, no workflow
+  dispatch; the timing workflow still has ZERO visible runs.**
+  B5-P1 ACCEPTED, FREEZE ABANDONED. `B5_SOURCE_SHA` had been designated
+  as `4a9f59ed760c3ccfbd13a703158451146814cf6a`. Stage 2C-B5-P1
+  read-only verification at that source is accepted by owner ruling as
+  a completed result. Its material finding (below) blocks B5-P2 and B5,
+  so that freeze is ABANDONED before any timing workflow run: no B5
+  dispatch occurred and no provider, model, OIDC or WIF request
+  occurred, so the one-shot timing rehearsal is NOT consumed. The
+  no-push window was closed only to permit this repair.
+  `SentinelDailyRun` stays DISABLED.
+  DEFECT, RE-DERIVED MODEL-FREE. The Stage 2C-B5-P0 driver raised a
+  failed fresh-assertion acquisition INSIDE the timed query-seam
+  wrapper. `CagedCheckerStub.judge()` reserves the full per-call budget
+  and writes a RESERVED `agent_calls` row BEFORE it calls the seam, and
+  `_invoke` converts anything the seam raises into a failed invocation
+  (the ADR-0008 information-loss fix). The failure therefore classified
+  as `TRANSPORT_PROCESS_SDK_EXCEPTION_WITHOUT_CAPTURED_TYPED_RESULT`, was
+  charged the full 1,000,000 micro-EUR reservation, raised
+  `CheckerAgentError` and stopped the run as `INFRASTRUCTURE_FAULT`
+  instead of the frozen `AUTH_OR_OIDC_FAULT`. Reproduced by running the
+  new tests against the unrepaired driver: zero seam calls and no
+  `INVOCATION_STARTED`, yet `OBSERVATION_ACCOUNTED` (ordinal 1,
+  1000000, `CheckerAgentError`), a FAILED ledger row 1000000/1000000
+  and STOP `INFRASTRUCTURE_FAULT`.
+  SAME ROOT CAUSE, TWO MORE PATHS (owner revision). (1) The seam also
+  carried `health_gated`, so a background refresh fault latched after
+  admission was refused inside the seam after reservation, leaving an
+  orphan `INVOCATION_STARTED`, a full-reservation accounted row and a
+  class-A cost row for an invocation that never reached the provider.
+  (2) A failed run-start `acquire_oidc` or `install_and_start` fell
+  through to the outer catch-all as `INFRASTRUCTURE_FAULT`.
+  REPAIR (timing driver only). (a) Run-start identity setup failures
+  stop as `AUTH_OR_OIDC_FAULT` before any ledger, stub, reservation or
+  START exists. (b) Identity admission, `session.assert_healthy()` then
+  `session.prepare_fresh_assertion(env)`, runs in the corpus loop BEFORE
+  `judge()` and is this lane's ONLY pre-invocation gate; a failure stops
+  as `AUTH_OR_OIDC_FAULT` with no reservation, no audit row and no
+  START. (c) The timed wrapper measures the RAW production seam; the
+  timing lane no longer uses `health_gated`. Semantics: a fault latched
+  before admission, or a failed acquisition, stops before reservation; a
+  fault latching after admission leaves the admitted invocation in
+  flight (a failed tick installs nothing, so the admitted
+  never-exchanged assertion stays on disk); the next ordinal's
+  admission observes it and stops before reservation. Preserved:
+  admission before `INVOCATION_STARTED` and before `started_ns`; one
+  newly minted assertion per CLI process (`TIMING_MAX_MODEL_ATTEMPTS`
+  stays 1); the bounded acquisition policy; one-shot semantics; R1-R4.
+  The measured window loses only a constant-time health check. Not
+  changed: `health_gated` itself, the oidc module, the harness, and the
+  official-gate, scheduled and probe lanes, which keep their in-seam
+  composition by owner instruction.
+  TESTS (model-free: the real `cmd_execute`, the real `judge()` with its
+  ledger and coordinator, and the real `acquire_oidc`, `OidcSession` and
+  bounded policy; only GitHub, the single-attempt fetch, the seam and
+  the event loop are injected, with a tripwire on the SDK `query`): 8
+  new behavioral cases (deterministic and transient admission failure,
+  success then failure, fault latched before admission, run-start
+  acquire and install failure, fault latched after reservation and in
+  flight) and 4 re-pointed source-shape pins, including a composition
+  guard that the timing driver neither imports nor calls `health_gated`
+  while the official gate and scheduled lane keep theirs. MUTATION
+  PROOF: the unrepaired driver fails 12; re-adding only the inner
+  `health_gated` fails 3, including the after-reservation case, which
+  then shows ordinal 1 as a FAILED 1000000/1000000 row stopped
+  `INFRASTRUCTURE_FAULT` with no seam call; removing only the run-start
+  classification fails 2.
+  RECORD CORRECTION. The Stage 2C-B5-P0 entry says the timing driver
+  "keeps `health_gated`", and both B5-P0 entries say a failed
+  acquisition becomes `AUTH_OR_OIDC_FAULT`. For the code as landed the
+  second statement was not true (it became `INFRASTRUCTURE_FAULT`
+  through the conversion above); it is true from this repair on, and the
+  first is superseded.
+  Executing model: Opus 5.5.
+  ACTUAL WRITE SET (exactly 3 paths):
+  `scripts/run_phase5_timing_rehearsal.py`,
+  `tests/test_phase5_timing_rehearsal.py`, `STATE.md` (this entry). No
+  `.publicgate-allow`, `agents/`, other `scripts/`, workflow,
+  `rehearsal/timing/*`, ADR, `telemetry/` or `FINDINGS.md` change.
+  VERIFICATION: focused set (timing, oidc, ADR-0008, gate runner,
+  workflow contracts, process control) 464 passed / 15 skipped; full
+  suite 2424 passed / 32 skipped, the 2448-test baseline plus the 8 new
+  cases, with the same 32 skips; `python -m pip check` clean;
+  `python .githooks/validate_artifacts.py .` Tier 0 PASS;
+  `python scripts/check_phase1_frozen.py` PASS. Both frozen inputs
+  BYTE-IDENTICAL: corpus
+  `98cdba8a183b3fab128f413f95bb3647e15961d711bbfd6fedb9ce73c42a471d`,
+  pre-registration
+  `17549d3fd5789a8eeae04d15364d2aec0c94ef5f8ee25a02cf0391d354ff065b`.
+  The timing workflow is still `workflow_dispatch`-only and `gh run list`
+  for it returned an empty list. `SentinelDailyRun` read back Disabled.
+  PUBLIC GATE, NOT PUSHED. The repository publish gate, run with the
+  repaired scanner pinned by commit and blob hash and extracted
+  read-only, was FAIL(1) with exactly one BLOCKING record both on the
+  unmodified tree and with this repair staged: the benign
+  credential-prefix phrase in the commit-message prose of `4a9f59e`, a
+  pathless history hit that the path-bound adjudication mechanism
+  cannot exempt. This repair adds no blocker. `4a9f59e` is not rewritten
+  and nothing is force-pushed; a separate governance decision handles
+  that gate limitation before this commit is pushed.
+  NON-EVENTS: no B5-P2, P3, B5 or B6 work; no federation rule or
+  repository-variable change; no validation probe; no OWNER GO; no
+  workflow dispatch, rerun or cancel; no provider, model, OIDC or WIF
+  request; no CostRow appended; no scheduler re-enable; no push.
+  Next action: the separate public-gate governance repair; then push
+  this commit; then a fresh `B5_SOURCE_SHA` freeze and B5-P1 read-only
+  verification at a tip that includes this repair, with
+  `SentinelDailyRun` still disabled; then the outstanding B5 provider
+  preparation, owner rulings and an explicit owner GO.

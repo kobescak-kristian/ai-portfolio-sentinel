@@ -774,7 +774,6 @@ def cmd_execute(args: argparse.Namespace) -> int:
     from agents.checker.budget import RunBudgetCoordinator
     from agents.checker.fx import FxRate
     from agents.checker.harness import CagedCheckerStub
-    from agents.checker.oidc import health_gated
     from checks.judgment.stubs import JudgmentRequest
     from contracts.schemas import RunRecord
     from sentinel import ledger
@@ -822,8 +821,18 @@ def cmd_execute(args: argparse.Namespace) -> int:
             n=N_OBSERVATIONS,
         )
 
-        session = oidc.acquire_oidc(env)
-        session.install_and_start(env)
+        # Run-start identity setup fails before any ledger, stub, reservation or
+        # INVOCATION_STARTED can exist, so a failure here is the frozen
+        # AUTH_OR_OIDC_FAULT, never the catch-all INFRASTRUCTURE_FAULT below.
+        # acquire_oidc keeps its own bounded acquisition policy unchanged, and
+        # the finally block still shuts down or scrubs whatever was set up.
+        try:
+            session = oidc.acquire_oidc(env)
+            session.install_and_start(env)
+        except Exception as exc:  # noqa: BLE001 - run-start identity fault
+            raise TimingRehearsalStop(
+                "AUTH_OR_OIDC_FAULT", f"run-start identity setup failed: {type(exc).__name__}"
+            ) from exc
 
         run_id = f"r-p5d-timing-{ctx.run_id}"
         conn = ledger.open_ledger(args.work_root / "timing.sqlite3")
@@ -854,33 +863,23 @@ def cmd_execute(args: argparse.Namespace) -> int:
 
         proc_root = Path("/proc")
         pending: dict = {}
-        inner = health_gated(stub.query_fn, session)
+        # The RAW production seam, deliberately not wrapped in health_gated.
+        # judge() reserves the full per-call budget and writes a RESERVED audit
+        # row before it calls the seam, and _invoke converts anything the seam
+        # raises into a failed invocation, charged in full and stopped as
+        # INFRASTRUCTURE_FAULT. An identity refusal must therefore never run
+        # inside the seam. The identity admission in the corpus loop, before
+        # judge(), is this lane's ONLY pre-invocation gate: a refresher fault
+        # that latches after admission leaves the admitted invocation in
+        # flight, and the next ordinal's admission observes it.
+        inner = stub.query_fn
 
         @functools.wraps(inner)
         async def timed(check_class, reservation, state, user_prompt, model=None):
             item = pending["item"]
             sampler = None
-            # Every invocation spawns a FRESH Agent-SDK CLI process that performs
-            # its own provider exchange, and the provider rejects re-exchanging
-            # one assertion. So install a never-exchanged assertion first.
-            #
-            # Ordering here is load-bearing and is pinned by test:
-            #   1. acquisition happens BEFORE the INVOCATION_STARTED append, so a
-            #      pre-provider auth failure cannot leave an orphan STARTED record
-            #      that the frozen durability rule would misread as INCOMPLETE_N;
-            #      it is the distinct frozen reason AUTH_OR_OIDC_FAULT instead.
-            #   2. acquisition happens BEFORE started_ns, so this GitHub fetch can
-            #      never enter elapsed_ms. The Anthropic-side exchange performed by
-            #      the CLI is correctly INSIDE the measured window: it is part of
-            #      one complete logical invocation and identical in production.
-            try:
-                session.prepare_fresh_assertion(env)
-            except Exception as exc:  # noqa: BLE001 - pre-provider identity fault
-                raise TimingRehearsalStop(
-                    "AUTH_OR_OIDC_FAULT",
-                    f"ordinal {item['ordinal']}: fresh assertion unavailable: "
-                    f"{type(exc).__name__}",
-                ) from exc
+            # This invocation's never-exchanged assertion was installed by the
+            # identity admission in the corpus loop, before judge().
             # Durable BEFORE the provider call: a kill during this
             # invocation must still prove the invocation started.
             events.append(
@@ -941,6 +940,31 @@ def cmd_execute(args: argparse.Namespace) -> int:
                 )
             pending.clear()
             pending["item"] = item
+            # Identity admission, the only pre-invocation gate on this lane (see
+            # the comment on ``inner``). Every invocation spawns a FRESH Agent-SDK
+            # CLI process that performs its own provider exchange, and the
+            # provider rejects re-exchanging one assertion, so a never-exchanged
+            # assertion is installed here, after the refresher-health check.
+            # Raised here, before judge(), a failure is the frozen
+            # AUTH_OR_OIDC_FAULT with no reservation, no audit row and no
+            # INVOCATION_STARTED record.
+            #
+            # Ordering stays load-bearing and is pinned by test: admission happens
+            # BEFORE the INVOCATION_STARTED append and BEFORE started_ns, so this
+            # GitHub fetch can never enter elapsed_ms. The Anthropic-side exchange
+            # performed by the CLI stays INSIDE the measured window: it is part of
+            # one complete logical invocation and identical in production. One
+            # admitted assertion per judge() is one per CLI process because
+            # TIMING_MAX_MODEL_ATTEMPTS is 1.
+            try:
+                session.assert_healthy()
+                session.prepare_fresh_assertion(env)
+            except Exception as exc:  # noqa: BLE001 - pre-provider identity fault
+                raise TimingRehearsalStop(
+                    "AUTH_OR_OIDC_FAULT",
+                    f"ordinal {item['ordinal']}: fresh assertion unavailable: "
+                    f"{type(exc).__name__}",
+                ) from exc
             failure_class = None
             try:
                 findings = stub.judge(
