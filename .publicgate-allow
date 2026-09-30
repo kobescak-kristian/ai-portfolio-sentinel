@@ -82,3 +82,5 @@ tests/test_phase5_oidc.py | # Single-use assertions across fresh CLI processes (
 tests/test_auth_wif.py |     canary_value = "sk-ant-oat01-super-secret-canary-value" | tests/test_auth_wif.py:186 | def test_credential_and_token_values_never_appear_in_any_error_message(token_file): | owner ruling 2026-08-24
 tests/test_phase5_kill_rehearsal.py |         "ANTHROPIC_API_KEY", "id-token", "FEDERATION_RULE", "sk-ant", | tests/test_phase5_kill_rehearsal.py:87 | def test_driver_carries_no_credential_federation_or_endpoint_literal(): | owner ruling 2026-09-23
 # 2026-09-23 owner adjudication of the kill-rehearsal entry above: the flagged line holds only the literal Anthropic credential-prefix token, inside a forbidden-token negative security test asserting the timing driver carries no credential literal; it is not a credential or secret value.
+# adjudicated-secret-commit-messages
+4a9f59ed760c3ccfbd13a703158451146814cf6a | literal "sk-ant" credential-prefix token in a forbidden-token negative | benign negative-test / publication-gate occurrence; owner ruling recorded in canonical repo-publish-gate SKILL v1.8 | owner ruling 2026-09-25
