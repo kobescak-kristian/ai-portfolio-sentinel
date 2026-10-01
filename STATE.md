@@ -5607,3 +5607,228 @@ merges every change."
   verification at a tip that includes this repair, with
   `SentinelDailyRun` still disabled; then the outstanding B5 provider
   preparation, owner rulings and an explicit owner GO.
+- 2026-10-01 - ADR-0012 REPAIR STAGE 2C-B5 EXECUTED: N=24 SONNET TIMING
+  REHEARSAL ADJUDICATED **B5 PASS**; TIMING FEDERATION RULE ARCHIVED;
+  CLASS-B COST RECORDED (approved plan `q77-p5d-repair-stage2cb5-plan-d`
+  Part 8 stages B5-P2a, B5-P2b, B5-P3, OWNER GO, B5-P5A, B5-P5B,
+  B5-P5C, B5-P6, B5-P7, executed under dated owner session
+  instructions of 2026-10-01; no separate routing id).
+  **Exactly one real N=24 Sonnet timing rehearsal ran. It is a timing
+  observation only: not a quality evaluation, not replacement
+  authorization, not a readiness or production claim.**
+  SOURCE AND FREEZE. B5-P0 repair landed in `70958d1` (CI 35740484870
+  success), `9655051` (CI 35742401258 success) and `54c6a68` (CI
+  35743259681 success); the OIDC stop-path repair `90fd5c2` and the
+  public-gate entry `28e69e2` landed together (CI 36705343117 push
+  success at `28e69e2`). `B5_SOURCE_SHA` =
+  `28e69e2fc42a33c24fcf530bf26afa4e9251ee20`, B5-P1 read-only PASS
+  2026-09-30. The no-push window held from the freeze to this commit:
+  remote `main` stayed at that SHA, one branch, zero tags, clean tree,
+  and `SentinelDailyRun` stayed DISABLED throughout. This commit closes
+  the window.
+  PROVIDER PREPARATION (B5-P2a read-only, B5-P2b owner-executed,
+  2026-10-01, P2b PASS at 16:29:41Z). (1) The original P5-D rule
+  `fdrl_012rfPPWwnbEyU4fuEkAPM94` (`sentinel-p5d-official-gate`) was
+  ARCHIVED (Archive, not Delete) before any B5 authorization existed;
+  readback Archived "Oct 1, 2026"; `SENTINEL_P5D_FEDERATION_RULE_ID`
+  left unchanged, naming an archived rule. (2) Workspace cap: month-to-
+  date `sentinel` spend S = USD 0.00; required S + B (EUR 2.50) + C
+  (EUR 5.00) + H (EUR 2.50, owner ruling) = USD 11.355 at ECB
+  1 EUR = 1.1355 USD (2026-09-30); observed cap granularity G =
+  USD 1.00, so the smallest supported value is USD 12.00, saved and read
+  back as "$0.00 of $12.00, Resets on Nov 1, 2026 (UTC)"; within the
+  EUR 50 / USD 56.775 program ceiling and the organization limit.
+  Recorded deviation: the owner saved 12 before the agent recompute and
+  re-approval the plan required; the value equals the recompute and no
+  rule was active. "The Anthropic workspace limit is a provider-enforced
+  monthly backstop, not a per-run guarantee. Sentinel's mechanized
+  accounting remains the per-run authority." (3) Prepaid credit above
+  the cap; auto-reload Off. (4) Temporary rule
+  `fdrl_011dDM4E7pzdnuphn9NhQVRe` (`sentinel-p5d-timing-rehearsal`,
+  Static) created on the existing issuer `github-actions` (check_jti
+  Enabled) for the existing service account `sentinel-github` (org role
+  Developer; memberships Default = Workspace User, the unavoidable
+  implicit residual, and `sentinel` = Workspace Developer): subject
+  prefix `repo:kobescak-kristian/ai-portfolio-sentinel:ref:refs/heads/main`
+  (no wildcard), audience `https://api.anthropic.com`, exactly four
+  claims `repository_owner=kobescak-kristian`,
+  `event_name=workflow_dispatch`, `ref=refs/heads/main`,
+  `workflow_ref=kobescak-kristian/ai-portfolio-sentinel/.github/workflows/sentinel-timing-rehearsal.yml@refs/heads/main`,
+  no CEL, all-workspaces OFF, workspace `sentinel` only, scope
+  `workspace:developer`, token lifetime 600 s. The `workflow_ref` binds
+  only the timing workflow, so the rule could not authorize the
+  official-gate, schedule or probe lanes (ADR-0012 section 14). GitHub
+  OIDC subject customization unchanged (`use_default` true). (5)
+  `SENTINEL_P5D_TIMING_FEDERATION_RULE_ID` set last (2026-10-01T16:22:13Z),
+  byte-equal to the rule id.
+  B5-P3 FINAL PRE-GO GATE: PASS at 2026-10-01T17:00:58Z. Fresh readbacks
+  of every rule security field (exact equality from a Console
+  screenshot), issuer, service-account membership, cap, credit and
+  authentication history (no attempts); repository, frozen hashes, all
+  26 material blobs, five variables and zero timing runs re-verified.
+  An earlier visual transcription of the service-account id was a
+  misread; the repository variable was confirmed byte-equal from a
+  machine copy of the Console identifier. Frozen-model check without a
+  model call: `claude-sonnet-5` Active, retirement not sooner than
+  2027-06-30.
+  OWNER GO AND RUN. The owner accepted the first-contact residual (the
+  new `workflow_ref` had never completed a real exchange) and authorized
+  exactly one dispatch. Drift check PASS at 17:56:50Z; one
+  `gh workflow run sentinel-timing-rehearsal.yml --ref main -f
+  expected_source_sha=28e69e2fc42a33c24fcf530bf26afa4e9251ee20` at
+  17:57:11Z, not re-issued. Exactly one run: 36903206215, attempt 1,
+  `workflow_dispatch`, `main`, head `28e69e2`, conclusion success; job
+  110507178046 17:57:18Z to 18:02:47Z; preflight 17:57:31Z to 17:57:33Z;
+  execute 17:57:33Z to 18:02:43Z. No rerun, cancel or second dispatch;
+  the timing workflow now has exactly one run.
+  B5-P5A REVOCATION (owner Console, read back). 24 authentication
+  events in the 7-day window, all Success, zero failures, all issuer
+  `github-actions`, rule `sentinel-p5d-timing-rehearsal`, service
+  account `sentinel-github`, from 17:57:36Z to 18:02:15Z, all inside
+  the execute step; no other event in the window. The newest event's
+  recorded claims show run_id 36903206215, run_attempt 1, the timing
+  `workflow_ref` and sha `28e69e2`. The first-contact residual is
+  CLOSED by evidence. The rule was then ARCHIVED (Archive, not Delete);
+  after reload the Active tab is empty and the Archived tab lists the
+  timing rule "Oct 1, 2026" (time of day not exposed). Token expiry:
+  last exchange 18:02:15Z + 600 s = 18:12:15Z, conservative bound
+  18:02:43Z + 600 s = 18:12:43Z; both passed before close.
+  `SENTINEL_P5D_TIMING_FEDERATION_RULE_ID` stays in place naming an
+  archived rule (P5-C precedent).
+  B5-P5B EVIDENCE PRESERVATION (before any parsing). Artifact
+  `sentinel-p5-timing-r36903206215-a1`, id 11182223404, 5606 bytes;
+  SHA-256 of the downloaded archive
+  `baca64d33bd981a0c75af9b644b5987060455478137a9da6601736c318db2aac`
+  equals the GitHub-reported digest. Extracted files (SHA-256):
+  `phase5_timing_events.jsonl`
+  `d5dbcae1607c22667600b2a861fa291796bc9a5448d9d5a675bdddda68218750`;
+  `phase5_timing_runtime_identity.json`
+  `41701a9cfe40058844bc9c39baaa29539cad68dee8357eede995980b13011b57`;
+  `phase5_timing_summary.json`
+  `7c9118bbb2fc2282724f4740c87350aaccd00b4d23b4eeb4b8ab3a6205f8f367`;
+  `phase5_timing_topology.json`
+  `ba24de989ffcbbd39f684378e9ef848ff1ee8491162aa397b74a1130e8c54280`;
+  `phase5_timing_stop.json` absent. Preserved with the run and job
+  metadata and a manifest in an operator-local directory outside the
+  repository; raw evidence is NOT committed. The GitHub-hosted copy
+  expires 2026-12-30T17:57:14Z.
+  B5-P5C INDEPENDENT ADJUDICATION. Recomputed from the preserved bytes
+  by a separate checker that does not import or run the timing driver
+  and does not take the summary or the green job as the verdict; 81
+  checks, 0 failed. PASS shape (four files, stop absent). Event stream:
+  RUN_STARTED, then 24 strict STARTED / FINISHED / ACCOUNTED triples in
+  ordinal order 1..24, then RUN_FINISHED; no gap, duplicate or hidden
+  retry. Items equal the frozen corpus ids, strata and alternating
+  interleaving (12 `tim-state-*`, 12 `tim-link-*`). Every invocation
+  reserved 1,000,000 micro-EUR; full reservation remained before every
+  start; all `sdk_subtype` success, `is_error` false, no failure class,
+  no SDK_BUDGET_CEILING, no charge above reservation. RUN_STARTED corpus
+  `98cdba8a183b3fab128f413f95bb3647e15961d711bbfd6fedb9ce73c42a471d` and
+  pre-registration
+  `17549d3fd5789a8eeae04d15364d2aec0c94ef5f8ee25a02cf0391d354ff065b`
+  equal the frozen values; run 36903206215, attempt 1, source
+  `28e69e2`. `sdk_pin_matches` true, `claude-agent-sdk==0.2.110`,
+  configured model `claude-sonnet-5` on RUN_STARTED and all 24 starts.
+  Token fields present on both FINISHED and ACCOUNTED for all 24 and
+  equal, no nulls. The summary agrees with the events field by field.
+  No stop record and none of the twelve frozen STOP reasons anywhere.
+  Timing (elapsed_ms by ordinal): 1 tim-state-01 2944; 2 tim-link-01
+  2215; 3 tim-state-02 2609; 4 tim-link-02 20493; 5 tim-state-03 2407;
+  6 tim-link-03 35260; 7 tim-state-04 2440; 8 tim-link-04 28067;
+  9 tim-state-05 2297; 10 tim-link-05 18019; 11 tim-state-06 2516;
+  12 tim-link-06 38021; 13 tim-state-07 2491; 14 tim-link-07 27535;
+  15 tim-state-08 2564; 16 tim-link-08 20328; 17 tim-state-09 2826;
+  18 tim-link-09 18427; 19 tim-state-10 3198; 20 tim-link-10 28456;
+  21 tim-state-11 2528; 22 tim-link-11 5399; 23 tim-state-12 3483;
+  24 tim-link-12 27936. Independently recomputed `max_observed_ms` =
+  **38021** (ordinal 12, `tim-link-06`), equal to the summary and
+  <= the frozen 148000 feasibility bound. Every invocation used one
+  turn. Consistency checks also held: event times monotonic and inside
+  the execute step, each elapsed_ms within its STARTED-to-FINISHED wall
+  interval.
+  Runtime identity: `runtime_identity_id`
+  `5d9e357406c5b9f081de1d94c341ff9f29a24bf7323b623aaafef1c61bc6a2e5`,
+  recomputed independently from the file and equal to RUN_STARTED and
+  every start; CPython 3.12.14 on the GitHub-hosted `ubuntu24` image
+  `20260927.320.1`, X64; bundled CLI declared version 2.1.191,
+  `cli_selection` BUNDLED_FIRST, CLI and transport-module digests
+  actual = declared; 33 resolved distributions preserved in full, every
+  direct `requirements.txt` pin matches (R3 semantics; transitive
+  movement remains the recorded R3 residual). Topology: bundled CLI
+  observed on 24/24, no ancestry escape, final survivor scan empty,
+  `c_dynamic_closed` true, residual null, so
+  `REAL_CLI_TOPOLOGY_UNOBSERVED` is **CLOSED**.
+  RESOLVED-MODEL OBSERVATION (A8). `resolved_model_keys` (the SDK's
+  per-invocation model-usage keys) is NOT unavailable: `claude-sonnet-5`
+  on all 24, and additionally `claude-haiku-4-5-20251001` on ordinals 3
+  to 24. Sentinel passes only `model=claude-sonnet-5` and no fallback
+  model, so the additional key comes from the bundled CLI's own
+  internal model use (inference; its purpose is not established by this
+  evidence). Plan-d keeps resolved-model keys outside the timing PASS
+  predicates; the owner ruled on 2026-10-01: **B5 PASS, with this
+  recorded as a named A8 resolved-model residual** that B6 must bind or
+  stop on. Provider documentation on 2026-10-01 lists
+  `claude-haiku-4-5-20251001` as Active with retirement not sooner than
+  2026-10-15; that date is part of the residual.
+  **B5 BRANCH: B5 PASS.**
+  B5-P6 CLASS-B COST. `cost-evidence` aggregation over the preserved
+  events (terminal class PASS, 24 observations, Part 3 basis A
+  (authoritative OBSERVATION_ACCOUNTED) for every ordinal, no unresolved
+  or conservative-full-reservation ordinals), then
+  `scripts/record_phase5_cost_evidence.py` appended exactly one CostRow
+  to `telemetry/cost_ledger.jsonl`: run_id `r-p5d-timing-36903206215`,
+  run_kind live, model `claude-sonnet-5`, input_tokens 648,
+  output_tokens 25333, cost_eur_micros **1061616** (EUR 1.061616, within
+  the EUR 2.50 rehearsal budget). Charges are the mechanized
+  per-invocation SDK cost estimates converted by the frozen FX path; no
+  provider-console figure was substituted. The tokens are the counts the
+  SDK reported per invocation; a per-model split was not retained.
+  Cost classes (ADR-0012 section 16, A7): class A (original invalid
+  official attempt, run 32880880053) stays the labelled estimate already
+  recorded, with no CostRow; class B is this row; class C (replacement
+  quality gate) has no spend. Class B is not part of the replacement
+  gate's 5,000,000 micro-EUR budget. P5-E consequence: committed
+  trailing-30-day spend becomes 1,061,616 micro-EUR; the window-freeze
+  headroom test (actual + 3,750,000 <= 40,000,000) still holds.
+  Executing model: Opus 5.5.
+  ACTUAL WRITE SET (exactly 4 paths): `telemetry/cost_ledger.jsonl` (one
+  appended CostRow), `STATE.md` (this entry), `.publicgate-allow` (one
+  status-line entry), and `tests/test_phase5_timing_rehearsal.py`. The
+  fourth path is an owner ruling of 2026-10-01 expanding the frozen
+  three-path P7 write set by one: the B5-P0 test
+  `test_no_class_b_row_is_appended_by_the_repair_itself` asserted that no
+  timing CostRow existed, a pre-P6 invariant that B5-P6 falsifies by
+  design, so P6 (exactly one committed class-B row) and P7 (suite green)
+  contradicted each other. Its body now requires exactly one timing row
+  with run_id `r-p5d-timing-36903206215` and keeps the prohibition on the
+  lane string; no other test changed. No code, workflow, corpus,
+  pre-registration, ADR or `FINDINGS.md` change.
+  NON-EVENTS: no second dispatch, rerun or cancel of any workflow; no
+  other workflow dispatched; no WIF validation probe; no provider or
+  model call by the agent; no federation rule edited or deleted; no
+  repository variable changed or removed after P2b; no cap or billing
+  change after P2b, and no post-B5 cap reduction; `SentinelDailyRun`
+  NOT re-enabled; no execution envelope built or committed; no
+  readiness binding; no replacement authorized or executed; no B6 work;
+  raw timing evidence not committed.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  ADR-0012 repair stages through Stage 2C-B5-P0 LANDED, Stage 2C-B2 PASS,
+  **Stage 2C-B5 EXECUTED: Sonnet N=24 timing rehearsal B5 PASS (run
+  36903206215, `max_observed_ms` 38021)**, timing rule ARCHIVED,
+  `REAL_CLI_TOPOLOGY_UNOBSERVED` CLOSED, A8 resolved-model binding OPEN
+  (additional `claude-haiku-4-5-20251001` key observed), execution
+  envelope NOT COMMITTED / BOUND, durable single-attempt consumption
+  latch PENDING, fresh replacement readiness NOT COMPLETE, replacement
+  NOT READY / NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B5 executed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: owner authorization for B6 (plan-d "B5 branch controls
+  B6": build the execution envelope with the timing-rehearsal
+  provenance, envelope binding, the durable single-attempt latch, the A8
+  resolved-model binding including the additional Haiku key and its
+  retirement floor, and the remaining section 22 readiness rows).
+  Separately owner-authorized post-B5 actions, none begun here:
+  re-enabling `SentinelDailyRun`, the post-B5 workspace-cap reduction,
+  and any cleanup of the now-inert timing variable.

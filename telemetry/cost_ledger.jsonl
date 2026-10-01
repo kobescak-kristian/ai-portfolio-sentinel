@@ -39,3 +39,4 @@
 {"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-20T07:15:14+00:00","run_id":"r-9df6a0acb74c4da392f1890c9eb74edf","run_kind":"live","schema_version":1}
 {"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-21T22:16:41+00:00","run_id":"r-48845e8c336f4b049688053518249481","run_kind":"live","schema_version":1}
 {"cost_eur_micros":0,"input_tokens":0,"model":"none-deterministic","output_tokens":0,"recorded_at_utc":"2026-09-22T12:47:56+00:00","run_id":"r-266d94e9ec4d4705861a92021b6000ea","run_kind":"live","schema_version":1}
+{"cost_eur_micros":1061616,"input_tokens":648,"model":"claude-sonnet-5","output_tokens":25333,"recorded_at_utc":"2026-10-01T18:27:33.971185+00:00","run_id":"r-p5d-timing-36903206215","run_kind":"live","schema_version":1}

@@ -1768,7 +1768,11 @@ def test_recording_tool_accepts_the_timing_cost_record_shape():
 
 
 def test_no_class_b_row_is_appended_by_the_repair_itself():
-    """B5-P0 builds the mechanism; B5-P6 invokes it."""
+    """B5-P0 built the mechanism; B5-P6 invoked it exactly once (run
+    36903206215). The committed ledger carries exactly that one class-B
+    timing row and no lane-tagged content."""
     ledger = (REPO_ROOT / "telemetry" / "cost_ledger.jsonl").read_text(encoding="utf-8")
     assert "P5D_TIMING_REHEARSAL" not in ledger
-    assert "r-p5d-timing-" not in ledger
+    timing_rows = [line for line in ledger.splitlines() if "r-p5d-timing-" in line]
+    assert len(timing_rows) == 1
+    assert '"run_id":"r-p5d-timing-36903206215"' in timing_rows[0]
