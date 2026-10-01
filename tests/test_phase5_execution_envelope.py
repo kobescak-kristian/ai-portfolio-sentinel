@@ -9,6 +9,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import typing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -263,11 +264,11 @@ def test_module_never_consults_the_wall_clock():
             assert name not in ("now", "utcnow", "today", "time", "gmtime", "localtime"), ast.dump(node)
 
 
-def test_no_committed_envelope_artifact_exists():
-    for path in REPO_ROOT.rglob("*envelope*.json"):
-        assert ".git" in path.parts, path
-    for path in (REPO_ROOT / "artifacts").glob("*"):
-        assert "envelope" not in path.name.lower(), path
+def test_official_gate_runtime_envelope_identity_stays_none():
+    """Stage 2C-B6-1 commits the envelope ARTIFACT only (the former
+    no-committed-artifact guard expired at that landing). The runner's
+    runtime ENVELOPE identity stays None until the separately governed
+    arming change (STATE.md ARMING CONTRACT)."""
     runner = (REPO_ROOT / "scripts" / "run_phase5_official_gate.py").read_text(encoding="utf-8")
     assert 'ENVELOPE: "EnvelopeIdentity | None" = None' in runner
 
@@ -349,6 +350,235 @@ def test_loader_errors_never_carry_the_path(tmp_path):
     with pytest.raises(ee.CommittedEnvelopeError) as info:
         ee.load_committed_envelope(secret_dir / "envelope.json")
     assert "very-private-location" not in str(info.value)
+
+
+# ======================================================================
+# Stage 2C-B6-1: committed execution envelope (B5 timing provenance)
+# ======================================================================
+
+COMMITTED_ENVELOPE_PATH = REPO_ROOT / "artifacts" / "phase5_execution_envelope.json"
+A8_BINDING_PATH = REPO_ROOT / "artifacts" / "phase5_a8_model_binding.json"
+
+# The B5 N=24 Sonnet timing rehearsal (run 36903206215, attempt 1), as
+# recorded in STATE.md and independently re-extracted from the preserved,
+# hash-verified evidence bytes. elapsed_ms in ordinal order 1..24.
+B5_OBSERVATIONS_MS = (
+    2944, 2215, 2609, 20493, 2407, 35260, 2440, 28067, 2297, 18019, 2516, 38021,
+    2491, 27535, 2564, 20328, 2826, 18427, 3198, 28456, 2528, 5399, 3483, 27936,
+)
+B5_ENVELOPE_ID = "3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598"
+
+
+def _b5_rehearsal() -> ee.TimingRehearsalProvenance:
+    return ee.TimingRehearsalProvenance(
+        rehearsal_workflow_identity=".github/workflows/sentinel-timing-rehearsal.yml",
+        rehearsal_run_id="36903206215",
+        rehearsal_run_attempt=1,
+        rehearsal_source_sha="28e69e2fc42a33c24fcf530bf26afa4e9251ee20",
+        preregistration_sha256="17549d3fd5789a8eeae04d15364d2aec0c94ef5f8ee25a02cf0391d354ff065b",
+        corpus_sha256="98cdba8a183b3fab128f413f95bb3647e15961d711bbfd6fedb9ce73c42a471d",
+        observation_count=24,
+        observations_ms=B5_OBSERVATIONS_MS,
+        model="claude-sonnet-5",
+        sdk_pin="claude-agent-sdk==0.2.110",
+    )
+
+
+def test_committed_envelope_is_exactly_rebuilt_from_the_b5_provenance():
+    envelope = ee.build_execution_envelope(_b5_rehearsal())
+    assert COMMITTED_ENVELOPE_PATH.read_bytes() == ee.committed_envelope_bytes(envelope)
+    assert ee.load_committed_envelope(COMMITTED_ENVELOPE_PATH) == envelope
+
+
+def test_committed_envelope_derived_values_and_identity_are_pinned():
+    envelope = ee.load_committed_envelope(COMMITTED_ENVELOPE_PATH)
+    assert (
+        envelope.max_observed_ms, envelope.outer_seconds, envelope.workflow_timeout_minutes,
+        envelope.session_duration_s, envelope.stall_budget_ms,
+    ) == (38_021, 6_327, 106, 5_847, 600_000)
+    assert ee.is_feasible(envelope.max_observed_ms)
+    assert envelope.envelope_id == B5_ENVELOPE_ID
+    assert hashlib.sha256(COMMITTED_ENVELOPE_PATH.read_bytes()).hexdigest() == B5_ENVELOPE_ID
+    assert envelope.identity() == t.EnvelopeIdentity(envelope_id=B5_ENVELOPE_ID, envelope_version="1")
+
+
+def test_runner_loads_exactly_the_committed_envelope_path():
+    runner = (REPO_ROOT / "scripts" / "run_phase5_official_gate.py").read_text(encoding="utf-8")
+    assert 'ENVELOPE_PATH = Path("artifacts/phase5_execution_envelope.json")' in runner
+
+
+# ======================================================================
+# Stage 2C-B6-1: A8 allowed-set resolved-model binding record
+# ======================================================================
+
+_HAIKU = "claude-haiku-4-5-20251001"
+_SONNET = "claude-sonnet-5"
+
+A8_EXPECTED = {
+    "schema_version": 1,
+    "record_kind": "ADR0012_A8_RESOLVED_MODEL_BINDING",
+    "configured_model": _SONNET,
+    "required_primary_model": _SONNET,
+    "allowed_model_keys": [_HAIKU, _SONNET],
+    "binding_rule": "PER_INVOCATION_KEYS_SUBSET_OF_ALLOWED_AND_CONTAIN_REQUIRED_PRIMARY",
+    "origin_assessment": "INFERENCE_BUNDLED_CLI_AUXILIARY_PURPOSE_NOT_ESTABLISHED",
+    "execution_envelope_id": B5_ENVELOPE_ID,
+    "b5_provenance": {
+        "workflow_identity": ".github/workflows/sentinel-timing-rehearsal.yml",
+        "run_id": "36903206215",
+        "run_attempt": 1,
+        "source_sha": "28e69e2fc42a33c24fcf530bf26afa4e9251ee20",
+        "artifact_name": "sentinel-p5-timing-r36903206215-a1",
+        "artifact_id": 11182223404,
+        "artifact_archive_sha256": "baca64d33bd981a0c75af9b644b5987060455478137a9da6601736c318db2aac",
+        "events_sha256": "d5dbcae1607c22667600b2a861fa291796bc9a5448d9d5a675bdddda68218750",
+        "runtime_identity_id": "5d9e357406c5b9f081de1d94c341ff9f29a24bf7323b623aaafef1c61bc6a2e5",
+        "sdk_pin": "claude-agent-sdk==0.2.110",
+        "bundled_cli_version": "2.1.191",
+    },
+    "observation": {
+        "invocation_count": 24,
+        "unavailable_count": 0,
+        "key_counts": {_HAIKU: 22, _SONNET: 24},
+        "haiku_ordinals": list(range(3, 25)),
+    },
+    "lifecycle_snapshot": {
+        "read_on_utc_date": "2026-10-01",
+        "source_url": "https://platform.claude.com/docs/en/about-claude/model-deprecations",
+        "notice_policy_min_days": 60,
+        "models": [
+            {"model": _HAIKU, "state": "Active", "deprecation_notice": False,
+             "tentative_retirement_not_sooner_than": "2026-10-15"},
+            {"model": _SONNET, "state": "Active", "deprecation_notice": False,
+             "tentative_retirement_not_sooner_than": "2027-06-30"},
+        ],
+    },
+    "go_stop_rule": {
+        "stop_if_any_allowed_model_not_active": True,
+        "stop_if_any_allowed_model_has_deprecation_notice": True,
+        "stop_if_env_override_set": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ],
+        "execution_time_capture": "DEFERRED_TO_READINESS",
+    },
+}
+
+_A8_TYPES = {
+    "schema_version": int, "record_kind": str, "configured_model": str, "required_primary_model": str,
+    "allowed_model_keys": list, "binding_rule": str, "origin_assessment": str, "execution_envelope_id": str,
+    "b5_provenance": dict, "observation": dict, "lifecycle_snapshot": dict, "go_stop_rule": dict,
+}
+_A8_PROVENANCE_TYPES = {
+    "workflow_identity": str, "run_id": str, "run_attempt": int, "source_sha": str, "artifact_name": str,
+    "artifact_id": int, "artifact_archive_sha256": str, "events_sha256": str, "runtime_identity_id": str,
+    "sdk_pin": str, "bundled_cli_version": str,
+}
+_A8_OBSERVATION_TYPES = {"invocation_count": int, "unavailable_count": int, "key_counts": dict, "haiku_ordinals": list}
+_A8_LIFECYCLE_TYPES = {"read_on_utc_date": str, "source_url": str, "notice_policy_min_days": int, "models": list}
+_A8_MODEL_TYPES = {"model": str, "state": str, "deprecation_notice": bool, "tentative_retirement_not_sooner_than": str}
+_A8_GO_STOP_TYPES = {
+    "stop_if_any_allowed_model_not_active": bool, "stop_if_any_allowed_model_has_deprecation_notice": bool,
+    "stop_if_env_override_set": list, "execution_time_capture": str,
+}
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_HEX64_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _canonical_a8(obj: dict) -> bytes:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")
+
+
+def _a8() -> dict:
+    return json.loads(A8_BINDING_PATH.read_bytes().decode("utf-8"))
+
+
+def _assert_exact_types(obj: dict, types: dict) -> None:
+    assert set(obj) == set(types)
+    for key, expected in types.items():
+        assert type(obj[key]) is expected, key  # never isinstance: a bool must not pass as an int
+
+
+def _all_values(obj):
+    yield obj
+    if isinstance(obj, dict):
+        for value in obj.values():
+            yield from _all_values(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from _all_values(value)
+
+
+def test_a8_binding_bytes_are_exactly_the_canonical_expected_record():
+    data = A8_BINDING_PATH.read_bytes()
+    assert data == _canonical_a8(A8_EXPECTED)
+    assert not data.startswith(b"\xef\xbb\xbf") and not data.endswith(b"\n")
+
+
+def test_a8_binding_key_sets_and_types_are_exact_at_every_level():
+    record = _a8()
+    _assert_exact_types(record, _A8_TYPES)
+    _assert_exact_types(record["b5_provenance"], _A8_PROVENANCE_TYPES)
+    _assert_exact_types(record["observation"], _A8_OBSERVATION_TYPES)
+    _assert_exact_types(record["lifecycle_snapshot"], _A8_LIFECYCLE_TYPES)
+    _assert_exact_types(record["go_stop_rule"], _A8_GO_STOP_TYPES)
+    assert len(record["lifecycle_snapshot"]["models"]) == 2
+    for entry in record["lifecycle_snapshot"]["models"]:
+        _assert_exact_types(entry, _A8_MODEL_TYPES)
+    for key in record["allowed_model_keys"] + record["go_stop_rule"]["stop_if_env_override_set"]:
+        assert type(key) is str
+    for ordinal in record["observation"]["haiku_ordinals"]:
+        assert type(ordinal) is int
+    for model, count in record["observation"]["key_counts"].items():
+        assert type(model) is str and type(count) is int
+    for value in _all_values(record):
+        assert value is not None and type(value) is not float
+    assert _HEX64_RE.fullmatch(record["execution_envelope_id"])
+    assert _DATE.fullmatch(record["lifecycle_snapshot"]["read_on_utc_date"])
+    for entry in record["lifecycle_snapshot"]["models"]:
+        assert _DATE.fullmatch(entry["tentative_retirement_not_sooner_than"])
+
+
+def test_a8_binding_arrays_are_sorted_and_unique():
+    record = _a8()
+    for values in (
+        record["allowed_model_keys"], record["observation"]["haiku_ordinals"],
+        record["go_stop_rule"]["stop_if_env_override_set"],
+        [entry["model"] for entry in record["lifecycle_snapshot"]["models"]],
+    ):
+        assert values == sorted(set(values))
+
+
+def test_a8_binding_allowed_set_semantics():
+    record = _a8()
+    allowed = record["allowed_model_keys"]
+    assert allowed == [_HAIKU, _SONNET]
+    assert record["required_primary_model"] == record["configured_model"] == _SONNET
+    assert record["required_primary_model"] in allowed
+    observation = record["observation"]
+    assert sorted(observation["key_counts"]) == allowed
+    assert observation["key_counts"][_SONNET] == observation["invocation_count"] == 24
+    assert observation["key_counts"][_HAIKU] == len(observation["haiku_ordinals"]) == 22
+    assert observation["unavailable_count"] == 0
+    assert [entry["model"] for entry in record["lifecycle_snapshot"]["models"]] == allowed
+    for entry in record["lifecycle_snapshot"]["models"]:
+        assert entry["state"] == "Active" and entry["deprecation_notice"] is False
+    rule = record["go_stop_rule"]
+    assert rule["stop_if_any_allowed_model_not_active"] is True
+    assert rule["stop_if_any_allowed_model_has_deprecation_notice"] is True
+
+
+def test_a8_binding_names_the_committed_envelope_and_its_rehearsal():
+    record = _a8()
+    envelope = ee.load_committed_envelope(COMMITTED_ENVELOPE_PATH)
+    assert record["execution_envelope_id"] == envelope.envelope_id
+    provenance = record["b5_provenance"]
+    assert provenance["workflow_identity"] == envelope.rehearsal.rehearsal_workflow_identity
+    assert provenance["run_id"] == envelope.rehearsal.rehearsal_run_id
+    assert provenance["run_attempt"] == envelope.rehearsal.rehearsal_run_attempt
+    assert provenance["source_sha"] == envelope.rehearsal.rehearsal_source_sha
+    assert provenance["sdk_pin"] == envelope.rehearsal.sdk_pin
+    assert record["configured_model"] == envelope.rehearsal.model
 
 
 # ======================================================================

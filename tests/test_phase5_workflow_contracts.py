@@ -38,7 +38,10 @@ P5_WORKFLOWS = {
     "sentinel-schedule.yml": {"timeout": 20, "concurrency": "sentinel-schedule", "id_token": True},
     "sentinel-rehearsal.yml": {"timeout": 15, "concurrency": "sentinel-rehearsal", "id_token": False},
     "sentinel-wif-probe.yml": {"timeout": 20, "concurrency": "sentinel-oneshot-p5c", "id_token": True},
-    "sentinel-official-gate.yml": {"timeout": 30, "concurrency": "sentinel-oneshot-p5d", "id_token": True},
+    # Stage 2C-B6-1: bound to the committed execution envelope's
+    # workflow_timeout_minutes (ADR-0012 section 7; see the official-gate
+    # timeout test below).
+    "sentinel-official-gate.yml": {"timeout": 106, "concurrency": "sentinel-oneshot-p5d", "id_token": True},
     "sentinel-window-control.yml": {"timeout": 15, "concurrency": "sentinel-window-control", "id_token": False},
     # Stage 2C-B1: the model-free job-level kill rehearsal. A short JOB
     # timeout is the whole point -- it is what must fire.
@@ -417,8 +420,27 @@ def test_official_gate_finalization_timeout_sum_at_most_4():
     confirm = _gate_step("confirm gate evidence publication")["timeout-minutes"]
     assert (finalize, upload, confirm) == (1, 2, 1)
     assert finalize + upload + confirm <= 4
+
+
+def test_official_gate_job_timeout_is_bound_to_the_committed_envelope():
+    """Stage 2C-B6-1 (ADR-0012 section 7): the job timeout is exactly the
+    committed envelope's ceil(outer_seconds / 60), never a separate value."""
+    from sentinel.phase5.execution_envelope import load_committed_envelope
+
+    envelope = load_committed_envelope(Path("artifacts/phase5_execution_envelope.json"))
     data = _load("sentinel-official-gate.yml")
-    assert next(iter(data["jobs"].values()))["timeout-minutes"] == 30
+    timeout = next(iter(data["jobs"].values()))["timeout-minutes"]
+    assert timeout == envelope.workflow_timeout_minutes == 106
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"],
+)
+def test_official_gate_sets_no_model_override_variable(name):
+    """Stage 2C-B6-1 A8 allowed-set binding: the official gate must not
+    redirect the configured or the bundled CLI's auxiliary model."""
+    assert name not in (WORKFLOWS_DIR / "sentinel-official-gate.yml").read_text(encoding="utf-8")
 
 
 def test_official_gate_runs_on_ubuntu_latest():

@@ -5832,3 +5832,143 @@ merges every change."
   Separately owner-authorized post-B5 actions, none begun here:
   re-enabling `SentinelDailyRun`, the post-B5 workspace-cap reduction,
   and any cleanup of the now-inert timing variable.
+- 2026-10-01 - ADR-0012 REPAIR STAGE 2C-B6-1 LANDED: EXECUTION-ENVELOPE
+  ARTIFACT COMMITTED; OFFICIAL WORKFLOW TIMEOUT BOUND TO IT; A8
+  ALLOWED-SET BINDING ARTIFACT COMMITTED; REPLACEMENT UNARMED
+  (owner-approved B6-1 plan and owner GO, both dated 2026-10-01; no
+  separate routing id). **Model-free stage. It commits two artifacts and
+  binds one workflow value. It does not arm, authorize or execute the
+  replacement, and it does not complete the runtime/arming `ENVELOPE`
+  binding: the runner's `ENVELOPE` constant stays `None` by design.**
+  OWNER RULINGS (2026-10-01, recorded here). (R1) B6 scope is B6-1 only.
+  The durable single-attempt latch (B6-2), the section 22 / A9 readiness
+  matrix (B6-3) and the arming change each need their own plan and owner
+  approval; arming stays one atomic change per the ARMING CONTRACT
+  recorded above. (R2) The A8 resolved-model residual from B5 is bound
+  as an allowed-set record with no normalization to Sonnet-only; whether
+  the replacement run itself captures resolved model keys is deferred to
+  readiness.
+  EVIDENCE (read-only). Artifact `sentinel-p5-timing-r36903206215-a1`, id
+  11182223404, re-downloaded from GitHub (not expired; expires
+  2026-12-30T17:57:14Z). Archive SHA-256
+  `baca64d33bd981a0c75af9b644b5987060455478137a9da6601736c318db2aac`
+  equals the GitHub digest and the B5-P5B record; the four extracted
+  files equal their B5-P5B SHA-256 values; `phase5_timing_stop.json`
+  absent. RUN_STARTED: run 36903206215, attempt 1, source `28e69e2`,
+  workflow identity `.github/workflows/sentinel-timing-rehearsal.yml`,
+  model `claude-sonnet-5`, n 24, both frozen hashes equal; the 24
+  `elapsed_ms` values equal the B5 record in ordinal order. The repository
+  corpus and pre-registration re-hash to their frozen values.
+  EXECUTION ENVELOPE ARTIFACT COMMITTED. `artifacts/phase5_execution_envelope.json`
+  is exactly `committed_envelope_bytes(build_execution_envelope(...))` of
+  the B5 `TimingRehearsalProvenance` (1008 bytes, canonical, no trailing
+  newline). Values: `max_observed_ms` 38021; `outer_seconds`
+  ceil(138 x 38021 / 1000) + 1080 = 6327; `workflow_timeout_minutes`
+  ceil(6327 / 60) = 106 (<= 360); `session_duration_s` 5847;
+  `stall_budget_ms` max(600000, 380210) = 600000. `envelope_id`
+  `3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598`,
+  `envelope_version` "1". `load_committed_envelope` accepts the file; a
+  test rebuilds the bytes from the recorded provenance.
+  OFFICIAL WORKFLOW TIMEOUT BOUND. `.github/workflows/sentinel-official-gate.yml`
+  job `timeout-minutes` 30 -> 106, pinned by test to the committed
+  envelope's `workflow_timeout_minutes`. No other workflow line changed.
+  While unarmed this changes no live outcome: preflight still refuses on
+  the durably consumed original purpose before any marker exists.
+  A8 ALLOWED-SET BINDING ARTIFACT COMMITTED. `artifacts/phase5_a8_model_binding.json`
+  (2012 bytes, canonical JSON, schema frozen in the approved plan, every
+  field required, no nulls or floats). Rule: each invocation's resolved
+  model keys must be a subset of {`claude-haiku-4-5-20251001`,
+  `claude-sonnet-5`} and must contain `claude-sonnet-5`. Observation,
+  derived from the events bytes: 24 invocations, 0 unavailable,
+  `claude-sonnet-5` 24/24, `claude-haiku-4-5-20251001` 22/24 on ordinals
+  3..24, no other key. Provenance: run, attempt, source, artifact name and
+  id, archive and events SHA-256, `runtime_identity_id`, SDK pin, bundled
+  CLI 2.1.191; it names this `envelope_id`. Lifecycle readback (provider
+  model-deprecation page, read 2026-10-01): `claude-sonnet-5` Active,
+  Deprecated N/A, not sooner than 2027-06-30; `claude-haiku-4-5-20251001`
+  Active, Deprecated N/A, not sooner than 2026-10-15; neither appears in
+  the deprecation history; stated policy is at least 60 days' notice
+  before retirement. The provider's model overview states that every
+  model ID is a pinned snapshot, so both keys are exact snapshots, not
+  mutable aliases. GO-time STOP rule: stop if either allowed model is not
+  Active or has any deprecation notice, or if the execution environment
+  sets `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_MODEL`,
+  `ANTHROPIC_SMALL_FAST_MODEL` or `CLAUDE_CODE_SUBAGENT_MODEL`; a workflow
+  contract test pins that the official gate sets none of them.
+  Inference, recorded as such: the Haiku key comes from the bundled CLI's
+  own auxiliary model use. A read-only string scan of the locally
+  installed bundled CLI (the Windows build of the same package; the Linux
+  binary differs, so this is indirect) found the Haiku snapshot literal
+  and the two auxiliary-model override variables. Its purpose is not
+  established. Without a deprecation notice the Haiku snapshot cannot
+  retire before about 2026-11-30 (notice plus 60 days).
+  TESTS. `tests/test_phase5_execution_envelope.py`: the guard
+  `test_no_committed_envelope_artifact_exists` is retired, because its
+  invariant expires exactly at this landing (2C-3 precedent); its
+  `ENVELOPE ... = None` assertion is kept as its own test. Added:
+  committed-envelope rebuild, pinned values and identity, the runner's
+  `ENVELOPE_PATH`, and A8 exact bytes, exact key sets and types at every
+  level, sorted unique arrays, allowed-set semantics, and the link to the
+  committed envelope. `tests/test_phase5_workflow_contracts.py`: both
+  official-gate timeout pins move 30 -> 106, one of them now read from
+  the committed envelope, plus four no-override assertions.
+  VERIFICATION: focused set (envelope, workflow contracts, gate runner,
+  finalizer, terminal, timing rehearsal) 609 passed / 11 skipped; full
+  suite 2437 passed / 32 skipped locally (the 2424 baseline plus 13 new
+  tests, the same 32 platform skips); `python -m pip check` clean;
+  `python .githooks/validate_artifacts.py .` Tier 0 PASS;
+  `python scripts/check_phase1_frozen.py` PASS with 41/41 blobs identical
+  (its amber line reports pre-existing freeze-to-HEAD drift on
+  `contracts/` and `SPEC.md`; B6-1 touches neither). Corpus and
+  pre-registration re-hashed byte-identical; receipt registry
+  byte-unchanged at 4 lines. Mutation checks, each reverted and re-hashed:
+  one changed byte in the envelope fails the envelope, A8-link and
+  workflow-timeout tests; timeout 105 fails both workflow timeout tests;
+  an A8 `false` replaced by `0` fails the A8 bytes, types and semantics
+  tests.
+  Executing model: Opus 5.5.
+  ACTUAL WRITE SET (exactly the 7 approved paths):
+  `artifacts/phase5_execution_envelope.json` (new),
+  `artifacts/phase5_a8_model_binding.json` (new),
+  `.github/workflows/sentinel-official-gate.yml`,
+  `tests/test_phase5_execution_envelope.py`,
+  `tests/test_phase5_workflow_contracts.py`, `STATE.md` (this entry),
+  `.publicgate-allow` (one status-line entry). No runner, finalizer,
+  harness, SDK pin, requirements, `rehearsal/timing/*`, fixture, eval,
+  ADR, receipt-registry or `telemetry/cost_ledger.jsonl` change; no
+  builder script committed.
+  NON-EVENTS: `PURPOSE` unchanged (`P5D_OFFICIAL_SONNET_GATE`); `ENVELOPE`
+  stays `None`; no marker created, reset or consumed; no latch designed,
+  created, set or consumed; no B6-2 or B6-3 work; no arming; no workflow
+  dispatch, rerun or cancel; no provider, model, OIDC or WIF call; no
+  federation-rule, repository-variable, secret or provider-cap change;
+  `SentinelDailyRun` not re-enabled; no frozen quality-surface change; no
+  original Sonnet quality content inspected; raw B5 evidence not
+  committed.
+  RESIDUALS (recorded, not closed here): the runner does not yet check
+  that `ENVELOPE.envelope_id` equals the loaded envelope's id, and the
+  arming change must add that check; the runner image cannot be bound
+  exactly in advance (B5 ran on `20260927.320.1`; `ubuntu-latest` moves);
+  absence of a silent CLI auto-update is not yet verified; execution-time
+  resolved-model capture is deferred to readiness; the `max_observed`
+  transfer residual from B4 is unchanged. A deprecation notice for the
+  Haiku snapshot would start a clock on the replacement, and on
+  `SentinelDailyRun`, whose judgment model is the same snapshot.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  Stage 2C-B5 B5 PASS, **execution-envelope artifact COMMITTED**,
+  **official workflow timeout BOUND to the committed envelope**, **A8
+  allowed-set binding artifact COMMITTED**, runtime/arming `ENVELOPE`
+  binding PENDING (`ENVELOPE` is `None`, `PURPOSE` is the original),
+  durable single-attempt latch (B6-2) NOT STARTED, readiness matrix
+  (B6-3) NOT STARTED, fresh replacement readiness NOT COMPLETE,
+  replacement UNARMED / NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B6-1 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: owner authorization of a B6-2 plan (design of the durable
+  single-attempt consumption latch); B6-3 and arming follow, each under
+  its own approved plan. Separately owner-authorized post-B5 actions,
+  still not begun: re-enabling `SentinelDailyRun`, the post-B5
+  workspace-cap reduction, and any cleanup of the now-inert timing
+  variable.
