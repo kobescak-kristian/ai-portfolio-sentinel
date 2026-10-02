@@ -26,6 +26,7 @@ never mixed with, any monitored repository's data.
 | Fetched repo/site content | In-memory only, per check | No | Never persisted verbatim |
 | Frozen Phase-1 eval bed | `fixtures/`, `evals/` | Yes (frozen) | Immutable — guarded by `scripts/check_phase1_frozen.py` |
 | Durable Phase-5 receipt registry (§16) | `artifacts/phase5_receipt_registry.jsonl` | **Yes** | Append-only, hash-chained; never truncated or rewritten |
+| Durable replacement latch (§18) | `artifacts/phase5_replacement_latch.jsonl` | **Yes** | Append-only, hash-chained; at most two records; never truncated or rewritten |
 
 ## 3. Locally persisted data
 
@@ -135,6 +136,7 @@ unaffected because it lives in git.
 | `fixtures/`, `evals/` | committed, **frozen** | Phase-1 boundary; guarded by `scripts/check_phase1_frozen.py` |
 | Actions artifact bundles (GENESIS/slot/refusal/evidence, §15) | GitHub Actions artifact storage, not git | never committed to this repository; retained 90 days (platform maximum for a public repo) |
 | `artifacts/phase5_receipt_registry.jsonl` (§16) | committed, **append-only** | hash-chained receipts of evidence already independently established from artifact bytes; `.githooks/pre-push` blocks any removed or rewritten line, including whole-file deletion |
+| `artifacts/phase5_replacement_latch.jsonl` (§18) | committed, **append-only** | the durable replacement latch: GENESIS, then at most one ATTEMPT_AUTHORIZED; `.githooks/pre-push` blocks any removed or rewritten line, including whole-file deletion |
 
 ## 12. Current limitations (dated, honest)
 
@@ -422,5 +424,38 @@ retained.
 publication verdict is committed to this repository. The durable receipt
 registry (§16) is byte-unchanged by this stage; recording a replacement
 receipt remains later, separately governed work.
+
+No production or production-ready claim follows from this section.
+
+## 18. ADR-0012 Stage 2C-B6-2 addition: durable replacement latch
+
+Stage 2C-B6-2 adds one committed data class,
+`artifacts/phase5_replacement_latch.jsonl` (`sentinel/phase5/latch.py`).
+
+**Why it exists.** A workflow can never write to this repository, so any
+durable record of replacement consumption made after a run is a receipt
+commit (§16), and receipt recording can fail indefinitely while the
+marker artifact later expires (§15). The latch is written before the
+irreversible point instead, and closes admission by itself with no
+post-run write.
+
+**What it is, and is not.**
+
+- At most two records: `GENESIS` (written once, at Stage 2C-B6-2; the
+  latch is UNARMED) and one `ATTEMPT_AUTHORIZED` (written only at a later
+  final owner GO; it opens one admission window of at most 24 hours).
+  No other record kind exists.
+- Each record is canonical JSON, hash-chained to its predecessor (the
+  first points at 64 zeroes), and every timestamp in it is GitHub server
+  time. It contains identifiers, commit SHAs, a run number and
+  timestamps only: no credential, token, secret, local path, model
+  output or third-party content.
+- It is never truncated, rewritten, extended, reset or reopened. There
+  is no update, delete or repair API; `.githooks/pre-push` blocks any
+  push whose diff removes or rewrites a latch line, including deletion
+  of the file. A missing latch is an error for every read, never
+  "unarmed".
+- It governs admission only. Consumption truth stays with the one-shot
+  marker and the durable receipts (§16).
 
 No production or production-ready claim follows from this section.

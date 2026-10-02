@@ -35,4 +35,13 @@ if git diff "$base" HEAD -- "$REGISTRY" | grep -E '^-[^-]' >/dev/null; then
   exit 1
 fi
 
+# Append-only guard for the durable replacement latch (ADR-0012 sections 3
+# and 21; STATE.md HARD PRE-ARMING GATE; Stage 2C-B6-2). Same rule as the
+# registry: any removed content line, including whole-file deletion, blocks.
+LATCH="artifacts/phase5_replacement_latch.jsonl"
+if git diff "$base" HEAD -- "$LATCH" | grep -E '^-[^-]' >/dev/null; then
+  echo "PRE-PUSH BLOCK: $LATCH has removed or rewritten established latch content (append-only)."
+  exit 1
+fi
+
 echo "pre-push: Tier 0 + leak-grep PASS"

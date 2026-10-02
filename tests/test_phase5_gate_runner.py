@@ -250,9 +250,17 @@ def test_durable_history_precedes_replacement_check_precedes_marker_write():
     body = text[preflight_start:preflight_end]
     history_idx = body.index("load_durable_history")
     oneshot_idx = body.index("assert_oneshot_not_consumed_durably")
+    latch_load_idx = body.index("load_replacement_latch")
+    evidence_guard_idx = body.index("assert_no_replacement_gate_evidence_visible")
+    admission_idx = body.index("replacement_latch_admission")
     eligibility_idx = body.index("assert_replacement_history_permits")
     marker_idx = body.index("write_marker_json")
-    assert history_idx < oneshot_idx < eligibility_idx < marker_idx
+    # Stage 2C-B6-2: the durable latch is loaded, its admission decision is
+    # made once, and eligibility consumes that verdict, all before the marker.
+    assert (
+        history_idx < oneshot_idx < latch_load_idx < evidence_guard_idx
+        < admission_idx < eligibility_idx < marker_idx
+    )
 
 
 def test_committed_registry_already_shows_original_p5d_consumed_and_preflight_refuses():
@@ -284,8 +292,11 @@ def test_replacement_not_permitted_for_unarmed_original_purpose():
     module = _load_module()
     committed = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
     receipts = load_registry(committed)
-    with pytest.raises(module.Phase5ScriptError):
-        module.assert_replacement_history_permits(receipts, [], module.PURPOSE)
+    # An admitted latch verdict isolates the refusal to the history/purpose
+    # check: the latch (Stage 2C-B6-2) cannot be what refuses here.
+    admitted = LatchVerdict(admitted=True, state="ADMISSION_OPEN")
+    with pytest.raises(module.Phase5ScriptError, match="not the frozen replacement purpose"):
+        module.assert_replacement_history_permits(receipts, [], module.PURPOSE, latch=admitted)
 
 
 def test_no_generic_model_selector_and_cli_untouched():
@@ -765,6 +776,7 @@ from sentinel.phase5 import replacement as _repl  # noqa: E402
 from sentinel.phase5 import terminal as _t  # noqa: E402
 from sentinel.phase5.execution_envelope import CommittedEnvelopeError, JobStartAnchorError  # noqa: E402
 from sentinel.phase5.journal import read_journal  # noqa: E402
+from sentinel.phase5.latch import LatchVerdict  # noqa: E402
 
 GATE_FINALIZER_PATH = REPO_ROOT / "scripts" / "run_phase5_gate_finalizer.py"
 GATE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "sentinel-official-gate.yml"
@@ -956,7 +968,36 @@ def _journal_shape(path: Path) -> list:
 # --- pre-marker journal fail-closed --------------------------------------
 
 
-def _prepare_preflight(tmp_path, monkeypatch, *, journal_fsync=None, prepare_hook=None):
+_ADMITTED_LATCH = LatchVerdict(admitted=True, state="ADMISSION_OPEN")
+
+
+class _FakePreflightClient:
+    """Evidence-client stand-in for cmd_preflight tests (Stage 2C-B6-2):
+    no gate-evidence artifact is visible, and any GitHub server-time read
+    is counted so a test can prove preflight reads none outside the single
+    (stubbed) admission decision."""
+
+    def __init__(self) -> None:
+        self.server_time_reads = 0
+
+    def list_artifacts(self, prefix):
+        return []
+
+    def server_time_utc(self):
+        self.server_time_reads += 1
+        raise AssertionError("preflight read GitHub server time outside the admission decision")
+
+
+def _prepare_preflight(
+    tmp_path, monkeypatch, *, journal_fsync=None, prepare_hook=None, real_eligibility=False,
+    latch_admission=None,
+):
+    """``real_eligibility=False`` (default) stubs durable history, eligibility
+    and the latch admission, so tests of the journal/marker order exercise
+    only what they assert. ``real_eligibility=True`` keeps durable history,
+    the replacement-eligibility check and the latch load real (the committed
+    registry and the committed latch) and stubs only the GitHub-reading
+    admission when ``latch_admission`` is given."""
     from agents.checker import auth as auth_mod
     from agents.checker import budget as budget_mod
     from agents.checker import fx as fx_mod
@@ -967,15 +1008,31 @@ def _prepare_preflight(tmp_path, monkeypatch, *, journal_fsync=None, prepare_hoo
     for key, value in _GH_ENV.items():
         monkeypatch.setenv(key, value)
     order: list = []
+    client = _FakePreflightClient()
+    admission_calls: list = []
     monkeypatch.setattr(module, "assert_expected_source_on_disk", lambda sha: sha)
-    monkeypatch.setattr(module, "build_evidence_client", lambda env, **kw: object())
+    monkeypatch.setattr(module, "build_evidence_client", lambda env, **kw: client)
     monkeypatch.setattr(module, "assert_expected_source_live", lambda client, sha: None)
     monkeypatch.setattr(module, "_load_eval_config", lambda: {})
     monkeypatch.setattr(module, "_read_jsonl", lambda path: [])
-    monkeypatch.setattr(module, "load_durable_history", lambda: ())
     monkeypatch.setattr(module, "discover_oneshot_markers", lambda client, work_root: [])
-    monkeypatch.setattr(module, "assert_oneshot_not_consumed_durably", lambda purpose, receipts, markers: None)
-    monkeypatch.setattr(module, "assert_replacement_history_permits", lambda receipts, markers, purpose: None)
+
+    def _admission(client_, ctx, records, env, *, expected_api_job_name):
+        admission_calls.append((ctx.run_id, expected_api_job_name))
+        return latch_admission(client_, ctx, records, env, expected_api_job_name=expected_api_job_name)
+
+    if not real_eligibility:
+        monkeypatch.setattr(module, "load_durable_history", lambda: ())
+        monkeypatch.setattr(module, "assert_oneshot_not_consumed_durably", lambda purpose, receipts, markers: None)
+        monkeypatch.setattr(module, "load_replacement_latch", lambda: ())
+        monkeypatch.setattr(
+            module, "assert_replacement_history_permits", lambda receipts, markers, purpose, *, latch: None
+        )
+        if latch_admission is None:
+            def latch_admission(client_, ctx, records, env, *, expected_api_job_name):
+                return _ADMITTED_LATCH
+    if latch_admission is not None:
+        monkeypatch.setattr(module, "replacement_latch_admission", _admission)
     if prepare_hook is not None:
         real_prepare = module.prepare_fresh_work_root
         monkeypatch.setattr(module, "prepare_fresh_work_root", lambda wr: prepare_hook(real_prepare(wr)))
@@ -1007,6 +1064,8 @@ def _prepare_preflight(tmp_path, monkeypatch, *, journal_fsync=None, prepare_hoo
         expected_source_sha=_SHA, gate_root=work / "gate-root", artifacts_dir=work / "artifacts",
         work_root=work, marker_out=work / "marker.json", fx_state_path=work / "fx-state.json",
     )
+    args.test_client = client
+    args.admission_calls = admission_calls
     return module, args, order
 
 
@@ -1082,10 +1141,139 @@ def test_establish_preflight_journal_readback_rejects_unexpected_content(tmp_pat
 def test_preflight_source_order_armable_guard_and_journal_before_marker():
     text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
     body = text[text.index("def cmd_preflight"):text.index("def _derive_auth_mode")]
+    assert body.index("replacement_latch_admission(") < body.index("assert_replacement_history_permits")
     assert body.index("assert_replacement_history_permits") < body.index("assert_purpose_armable(PURPOSE, ENVELOPE)")
     assert body.index("assert_purpose_armable(PURPOSE, ENVELOPE)") < body.index("OneShotMarker(")
     assert body.index("write_json_artifact(") < body.index("establish_preflight_journal(args.artifacts_dir)")
     assert body.index("establish_preflight_journal(args.artifacts_dir)") < body.index("write_marker_json(")
+
+
+# --- Stage 2C-B6-2: durable replacement latch enforcement in preflight -----
+
+_LATCH_NAMES = frozenset({
+    "load_replacement_latch", "replacement_latch_admission", "assert_replacement_history_permits",
+    "assert_no_replacement_gate_evidence_visible", "gather_latch_facts", "latch_verdict",
+    "LatchVerdict", "server_time_utc",
+})
+
+
+def _runner_function(name: str) -> ast.FunctionDef:
+    tree = ast.parse(GATE_RUNNER_PATH.read_text(encoding="utf-8"), filename=str(GATE_RUNNER_PATH))
+    return next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def _names_in(function: ast.FunctionDef) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    return names
+
+
+def _call_count(function: ast.FunctionDef, name: str) -> int:
+    return sum(
+        1 for node in ast.walk(function)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name
+    )
+
+
+def test_latch_admission_is_evaluated_exactly_once_and_only_in_preflight():
+    preflight = _runner_function("cmd_preflight")
+    assert _call_count(preflight, "load_replacement_latch") == 1
+    assert _call_count(preflight, "replacement_latch_admission") == 1
+    assert _call_count(preflight, "assert_replacement_history_permits") == 1
+    for name in ("cmd_execute", "_execute_quietly", "_execute_body", "_run_gate_session"):
+        assert not (_names_in(_runner_function(name)) & _LATCH_NAMES), name
+    # the runner itself never reads GitHub server time; only the admission does
+    assert "server_time_utc" not in _names_in(preflight)
+
+
+def test_preflight_with_the_real_committed_latch_is_unarmed_and_refuses(tmp_path, monkeypatch, capsys):
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch, real_eligibility=True)
+    monkeypatch.setattr(module, "PURPOSE", _repl.REPLACEMENT_PURPOSE)
+    assert module.cmd_preflight(args) == 2
+    err = capsys.readouterr().err
+    assert "replacement not admitted by the durable latch: state=UNARMED reason=LATCH_UNARMED" in err
+    assert order == []
+    assert not args.marker_out.exists()
+    assert not (args.artifacts_dir / _t.JOURNAL_FILENAME).exists()
+    assert args.test_client.server_time_reads == 0  # an UNARMED latch needs no GitHub read
+
+
+@pytest.mark.parametrize(
+    "state, reason",
+    [
+        ("UNARMED", "FACTS_MISSING"),
+        ("ADMISSION_CLOSED", "ADMISSION_WINDOW_CLOSED"),
+        ("ADMISSION_OPEN", "JOB_STARTED_AT_OR_AFTER_CLOSE"),
+        ("ADMISSION_OPEN", "COMMIT_A_PARENT_MISMATCH"),
+        ("ADMISSION_OPEN", "RUN_NUMBER_MISSING"),
+        ("ADMISSION_OPEN", "PRIOR_MARKER_STEP_NOT_PROVEN_SKIPPED"),
+    ],
+)
+def test_every_latch_refusal_stops_preflight_before_any_marker_or_journal(
+    tmp_path, monkeypatch, capsys, state, reason
+):
+    refused = LatchVerdict(admitted=False, state=state, reason=reason)
+    module, args, order = _prepare_preflight(
+        tmp_path, monkeypatch, real_eligibility=True,
+        latch_admission=lambda client, ctx, records, env, *, expected_api_job_name: refused,
+    )
+    monkeypatch.setattr(module, "PURPOSE", _repl.REPLACEMENT_PURPOSE)
+    assert module.cmd_preflight(args) == 2
+    err = capsys.readouterr().err
+    assert f"replacement not admitted by the durable latch: state={state} reason={reason}" in err
+    assert order == []
+    assert not args.marker_out.exists()
+    assert not (args.artifacts_dir / _t.JOURNAL_FILENAME).exists()
+    assert len(args.admission_calls) == 1
+
+
+def test_original_purpose_still_refuses_at_the_durable_one_shot_check_before_the_latch(
+    tmp_path, monkeypatch, capsys
+):
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch, real_eligibility=True)
+
+    def _latch_must_not_be_consulted(*a, **kw):
+        raise AssertionError("the latch was consulted before the durable one-shot check")
+
+    monkeypatch.setattr(module, "load_replacement_latch", _latch_must_not_be_consulted)
+    monkeypatch.setattr(module, "replacement_latch_admission", _latch_must_not_be_consulted)
+    assert module.cmd_preflight(args) == 2
+    assert "one-shot purpose already consumed" in capsys.readouterr().err
+    assert order == []
+    assert not args.marker_out.exists()
+
+
+def test_an_admitted_preflight_evaluates_admission_once_never_re_reads_server_time_and_writes_the_marker(
+    tmp_path, monkeypatch, capsys
+):
+    """R4: an admitted run continues through the rest of preflight to the
+    marker even if the window would close meanwhile; nothing after the one
+    admission decision reads GitHub server time again (the fake client
+    raises on any such read)."""
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch)
+    assert module.cmd_preflight(args) == 0
+    assert order == ["establish_preflight_journal", "write_marker_json"]
+    assert args.marker_out.exists()
+    assert len(args.admission_calls) == 1
+    assert args.test_client.server_time_reads == 0
+
+
+def test_eligibility_requires_the_latch_argument_and_an_admitting_verdict():
+    module = _load_module()
+    from sentinel.phase5.receipts import load_registry
+
+    receipts = load_registry(REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl")
+    with pytest.raises(TypeError):
+        module.assert_replacement_history_permits(receipts, [], _repl.REPLACEMENT_PURPOSE)  # no default
+    unarmed = LatchVerdict(admitted=False, state="UNARMED", reason="LATCH_UNARMED")
+    with pytest.raises(module.Phase5ScriptError, match="not admitted by the durable latch"):
+        module.assert_replacement_history_permits(receipts, [], _repl.REPLACEMENT_PURPOSE, latch=unarmed)
+    # durable history alone permits the replacement; only the latch decides here
+    module.assert_replacement_history_permits(receipts, [], _repl.REPLACEMENT_PURPOSE, latch=_ADMITTED_LATCH)
 
 
 # --- quality-neutral execute ---------------------------------------------

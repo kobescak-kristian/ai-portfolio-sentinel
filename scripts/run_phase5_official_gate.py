@@ -40,6 +40,7 @@ from scripts._phase5_common import (  # noqa: E402
     assert_expected_source_live,
     assert_expected_source_on_disk,
     assert_marker_visible_for_this_run,
+    assert_no_replacement_gate_evidence_visible,
     assert_oneshot_not_consumed_durably,
     assert_purpose_armable,
     assert_replacement_history_permits,
@@ -48,7 +49,9 @@ from scripts._phase5_common import (  # noqa: E402
     discover_oneshot_markers,
     establish_preflight_journal,
     load_durable_history,
+    load_replacement_latch,
     prepare_fresh_work_root,
+    replacement_latch_admission,
     replacement_provenance_fields,
     terminal_identity,
     terminal_layout,
@@ -195,7 +198,15 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         receipts = load_durable_history()
         markers = discover_oneshot_markers(client, args.work_root)
         assert_oneshot_not_consumed_durably(PURPOSE, receipts, markers)
-        assert_replacement_history_permits(receipts, markers, PURPOSE)
+        # Stage 2C-B6-2: the durable replacement latch. Its admission
+        # decision is evaluated exactly once, here, and never re-checked
+        # later in preflight, at the marker step or in execute.
+        latch_records = load_replacement_latch()
+        assert_no_replacement_gate_evidence_visible(client)
+        latch = replacement_latch_admission(
+            client, ctx, latch_records, env, expected_api_job_name=EXPECTED_API_JOB_NAME,
+        )
+        assert_replacement_history_permits(receipts, markers, PURPOSE, latch=latch)
         assert_purpose_armable(PURPOSE, ENVELOPE)
 
         candidate = OneShotMarker(

@@ -5972,3 +5972,202 @@ merges every change."
   still not begun: re-enabling `SentinelDailyRun`, the post-B5
   workspace-cap reduction, and any cleanup of the now-inert timing
   variable.
+- 2026-10-02 - ADR-0012 REPAIR STAGE 2C-B6-2 LANDED: DURABLE REPLACEMENT
+  LATCH COMMITTED (UNARMED); LATCH ENFORCEMENT LIVE IN REPLACEMENT
+  ELIGIBILITY AND OFFICIAL-GATE PREFLIGHT; REPLACEMENT UNARMED
+  (owner-approved B6-2 plan, revision 2, and owner rulings R1 to R5, all
+  dated 2026-10-01; execution was interrupted by a usage limit and
+  continued from the same uncommitted working tree under an explicit pen
+  handoff; no separate routing id). **Model-free stage. It commits one
+  durable data file, its reader and the preflight enforcement. It does
+  not arm, authorize or execute the replacement: `PURPOSE` and
+  `ENVELOPE` are unchanged, and no ATTEMPT_AUTHORIZED record exists.**
+  WHY A LATCH. A workflow can never write git, so any record of
+  replacement consumption made after a run is a receipt commit, and
+  receipt recording can fail indefinitely while the marker artifact
+  later expires. The latch is written before the irreversible point and
+  closes admission by itself, with no post-run write. This discharges
+  the HARD PRE-ARMING GATE and the latch clause of the ARMING CONTRACT
+  recorded above: the latch now exists, and eligibility and preflight
+  consult it.
+  STORE. `artifacts/phase5_replacement_latch.jsonl`: committed,
+  append-only, hash-chained canonical JSONL (`sentinel/phase5/latch.py`).
+  Exactly two record kinds exist. `GENESIS` (written here, once) leaves
+  the latch UNARMED. `ATTEMPT_AUTHORIZED` is defined and tested here and
+  **never written here**; a later final-GO stage appends it once, in an
+  authorization commit A whose only change is that line, opening one
+  admission window of at most 24 hours. No update, delete, truncate,
+  extend, consume, reset or reopen record or API exists; a missing,
+  malformed, partial or chain-broken file is an error for every read,
+  never "unarmed". All timestamps are GitHub server time; the module
+  reads no local clock.
+  GENESIS. One line, `recorded_at_utc` 2026-10-01T21:07:16Z (the HTTP
+  `Date` of a GitHub response), purpose `P5D_REPLACEMENT_SONNET_GATE`,
+  workflow identity `.github/workflows/sentinel-official-gate.yml`,
+  `governance_ref` `q77-p5d-repair-stage2cb6-2-latch-genesis`. File
+  SHA-256
+  `37799c774db5d7b7281d5c9290b76b531d849a6feaa30ea21a75d51996e6ee5a`
+  (LF bytes, 1 line); chain-head record SHA-256
+  `af5446752c3abed4f5b87efcc55027f22eb69d56c7b70b85a371bf9f9f69019b`.
+  Both are pinned by test. State: UNARMED.
+  ADMISSION RULES (owner rulings 2026-10-01). The window governs
+  ADMISSION, not marker-upload completion; the replacement marker upload
+  stays the irreversible consumption point (ADR-0012 sections 3 and 21).
+  (R1) The window is anchored to commit A: A must be the dispatched SHA,
+  a child of exactly the recorded readiness commit, and must append
+  exactly the authorization line and nothing else; its time T_A is
+  GitHub's server-side push record of A onto `main`, never a client
+  chosen git date. (R2) GitHub server time at evaluation governs: the
+  `Date` header of a GitHub response, read last before the decision;
+  admission requires it to be before the close, the job to have started
+  before the close, and no timestamp inversion. (R3) Every earlier
+  official-gate run after the recorded floor must be proven to have
+  stopped before the marker upload: run completed, one `gate` job
+  completed with conclusion failure, step `upload one-shot marker` and
+  step `execute` each completed and skipped, for every attempt. (R4)
+  Admission is evaluated exactly once, at the eligibility decision in
+  preflight; an admitted run may cross the close afterward and nothing
+  after that decision re-checks the window. (R5) Run-number continuity
+  proves the prior-run listing complete: every number from the floor
+  plus one to the current run minus one appears exactly once, the
+  current run is visible exactly once, the floor is never an authorized
+  run, and the listing's entry count must equal its `total_count`.
+  ENFORCEMENT. `scripts/_phase5_common.py` adds the strict latch loader,
+  `gather_latch_facts` (current run, commit A, push activity, job
+  anchor, full run listing, prior-run job steps, GitHub server time
+  last; any fault refuses, none is retried), a gate-evidence guard that
+  refuses on any visible official-gate evidence artifact or discovery
+  error, and a required keyword `latch` on
+  `assert_replacement_history_permits` (no default). In
+  `scripts/run_phase5_official_gate.py` preflight the order is: durable
+  history, marker discovery, durable one-shot check, latch load,
+  gate-evidence guard, the single admission decision, eligibility,
+  `assert_purpose_armable`, marker candidate. An UNARMED latch refuses
+  in the admission decision without any GitHub read of its own. With the
+  committed GENESIS, preflight still refuses on the durably consumed
+  original purpose first.
+  GITHUB CLIENT. `sentinel/phase5/github_evidence.py` adds GitHub server
+  time, commit lookup, push-activity lookup, single-run lookup with
+  `run_number`, status, conclusion and head branch, a complete counted
+  workflow-run listing, and job steps. Adaptation, accepted at
+  continuation: the planned fields on `JobDetail` were not added because
+  an existing test pins its exact field set; a new `JobEvidence` type
+  and `list_run_attempt_job_evidence` carry conclusion and steps, and
+  `JobDetail` is unchanged. All new parsers fail closed.
+  PRE-PUSH GUARD AND POLICY. `.githooks/pre-push` blocks any push whose
+  diff removes or rewrites a latch line, including deletion of the file,
+  after the existing registry guard. `DATA_RETENTION_POLICY.md` gains
+  section 18 and two table rows.
+  TESTS. `tests/test_phase5_latch.py` (new): loader, append, R1 anchor,
+  R2 and R4 admission, R3 prior-run proof, R5 continuity, state and
+  verdict, committed-latch pins, pre-push guard, common-path wiring, and
+  that the step and job names equal the official-gate workflow.
+  `tests/test_phase5_github_evidence.py`: parsers for each new client
+  surface. `tests/test_phase5_gate_runner.py`: the preflight fixture and
+  eligibility call now carry the latch; source-order pins extended;
+  added tests for exactly-once admission, the real committed latch
+  (UNARMED) refusing before any marker or journal, every refusal reason
+  stopping preflight, the original purpose still refusing at the durable
+  one-shot check before the latch is read, and an admitted preflight
+  never re-reading server time and still writing the marker.
+  VERIFICATION. Focused set (latch, GitHub evidence, gate runner,
+  receipts, replacement, window freeze, workflow contracts, envelope)
+  656 passed / 8 skipped; full suite 2595 passed / 33 skipped locally
+  (the previous 2437 baseline plus 158 new tests; the 33 skips are the
+  32 earlier platform skips plus one understood Windows-only symlink
+  skip in the latch tests); `python -m pip check` clean;
+  `python .githooks/validate_artifacts.py .` Tier 0 PASS;
+  `python scripts/check_phase1_frozen.py` PASS with 41/41 blobs
+  identical (its amber line reports the same pre-existing freeze-to-HEAD
+  drift as at B6-1; B6-2 touches none of it). Receipt registry
+  byte-unchanged at 4 lines (SHA-256
+  `f64c83afebf5064a6d4dd12b3f41c5df01edfa2e369f7f53b8cdcef5bc301f39`);
+  both B6-1 artifacts byte-unchanged (envelope
+  `3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598`,
+  A8 binding
+  `891636d2396e1e80f1ee3a9c444b7a0e37700ff2d93f5555d2c166da9c55f1f3`);
+  `PURPOSE` unchanged; `ENVELOPE` is `None`.
+  LIVE SMOKE (read-only, unauthenticated GitHub GETs through the new
+  client methods, no token, no write): the `Date` header parses; commit
+  `ba42616` has the single parent `4fb95ed`; push activity for it is one
+  fast-forward push of `main` from `4fb95ed` at 2026-10-01T20:20:30Z;
+  the original official run reports `run_number` 4; the official-gate
+  listing is exactly run numbers 1 to 4, each once; run 3 reports gate
+  job failure with the marker and execute steps completed and skipped;
+  run 4 reports the marker step completed with success. Every
+  observation equals the parser output. These unauthenticated reads do
+  not prove the workflow token can read the same sources on a real
+  runner; that stays a B6-3 readiness row.
+  MUTATION CHECKS (each applied alone, tests run, file restored and
+  re-hashed byte-identical): close check on job start instead of server
+  time; a second admission evaluation after eligibility; recorded time
+  instead of push time as T_A; marker `failure` accepted as pre-marker;
+  prior-run proof dropped; continuity check dropped; duplicate run
+  numbers allowed; run number equal to the floor admitted; latch removed
+  from eligibility; close boundary `>=` to `>` and `<` to `<=`; second
+  ATTEMPT_AUTHORIZED allowed; pre-push latch guard removed; local-clock
+  fallback added in the latch module and in the admission path. All 15
+  runs turned the named tests red. One mutation, the second
+  ATTEMPT_AUTHORIZED, first stayed green: the existing "third record"
+  loader case repeated an unchained line and was refused for its broken
+  chain, not for the record cap. A correctly chained second record test
+  was added and the mutation then failed it.
+  Executing models: an earlier session of this stage (paths 1 to 9, to
+  the usage limit) and Sonnet 5.5 (continuation: paths 10 to 12, full
+  validation, commit).
+  ACTUAL WRITE SET (exactly the 12 approved paths):
+  `sentinel/phase5/latch.py` (new),
+  `artifacts/phase5_replacement_latch.jsonl` (new),
+  `sentinel/phase5/github_evidence.py`, `scripts/_phase5_common.py`,
+  `scripts/run_phase5_official_gate.py`, `.githooks/pre-push`,
+  `DATA_RETENTION_POLICY.md`, `tests/test_phase5_latch.py` (new),
+  `tests/test_phase5_github_evidence.py`,
+  `tests/test_phase5_gate_runner.py`, `STATE.md` (this entry),
+  `.publicgate-allow` (one status-line entry). The conditional receipts
+  test was not touched: its pre-push pins pass with the latch guard
+  added. No workflow, marker, `receipts.py`, `models.py`, `oneshot.py`,
+  `replacement.py`, finalizer, harness, fixture, eval, rehearsal, ADR,
+  requirements, B6-1 artifact or `telemetry` change.
+  NON-EVENTS: no ATTEMPT_AUTHORIZED written; no replacement arming;
+  `PURPOSE` unchanged (`P5D_OFFICIAL_SONNET_GATE`); `ENVELOPE` stays
+  `None`; no marker created, reset or consumed; no workflow dispatch,
+  rerun or cancel; no provider, model, OIDC or WIF call; no
+  federation-rule, repository-variable, secret, setting or provider-cap
+  change; `SentinelDailyRun` not re-enabled; no write to the private
+  governance repository; no B6-3 work; no frozen quality-surface change;
+  no original Sonnet quality content inspected.
+  RESIDUALS (recorded, not closed here): the workflow token's read
+  access to push activity, commits, jobs with steps and the server
+  `Date` header is unproven on a real runner (B6-3 readiness row); push
+  activity is read as the most recent 100 entries, so a flood of
+  pushes to `main` between commit A and preflight makes A's entry
+  unfindable and refuses (fail closed); an admitted run that fails
+  before the marker after the close stays unconsumed and permanently
+  ineligible, and returns to owner governance, since no reopen or reset
+  exists by design; the runner does not yet check that
+  `ENVELOPE.envelope_id` equals the loaded envelope's id, and the
+  arming change must add that check; the runner image cannot be bound
+  exactly in advance; execution-time resolved-model capture is deferred
+  to readiness; the `max_observed` transfer residual from B4 is
+  unchanged.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  Stage 2C-B5 B5 PASS, execution-envelope artifact COMMITTED, official
+  workflow timeout BOUND to it, A8 allowed-set binding artifact
+  COMMITTED, **durable replacement latch COMMITTED, state UNARMED**,
+  **latch enforcement LIVE in replacement eligibility and official-gate
+  preflight**, **ATTEMPT_AUTHORIZED NOT WRITTEN**, runtime/arming
+  `ENVELOPE` binding PENDING (`ENVELOPE` is `None`, `PURPOSE` is the
+  original), readiness matrix (B6-3) NOT STARTED, fresh replacement
+  readiness NOT COMPLETE, replacement UNARMED / NOT AUTHORIZED FOR
+  DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B6-2 landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: owner authorization of a B6-3 plan (the section 22 / A9
+  readiness matrix, including the row proving the workflow token can
+  read the latch's GitHub sources); arming and the final owner GO follow,
+  each under its own approved plan. Separately owner-authorized post-B5
+  actions, still not begun: re-enabling `SentinelDailyRun`, the post-B5
+  workspace-cap reduction, and any cleanup of the now-inert timing
+  variable.

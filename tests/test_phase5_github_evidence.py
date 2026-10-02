@@ -544,3 +544,194 @@ def test_list_run_attempt_jobs_non_200_and_transport_errors_never_leak_the_token
         _client(opener_err).list_run_attempt_jobs("9", 1)
     assert "test-token" not in str(info2.value) and "test-token" not in repr(info2.value)
     assert "test-token" not in repr(client)
+
+
+# ======================================================================
+# Stage 2C-B6-2: replacement-latch evidence surfaces
+# ======================================================================
+
+from sentinel.phase5.github_evidence import (  # noqa: E402
+    CommitDetail,
+    CommitFile,
+    JobEvidence,
+    JobStep,
+    PushActivity,
+    RunRef,
+    parse_http_date,
+)
+
+
+class _HeaderResponse(_FakeResponse):
+    def __init__(self, status: int, body: bytes, headers: dict):
+        super().__init__(status, body)
+        self.headers = headers
+
+
+def test_parse_http_date_accepts_only_a_strict_imf_fixdate():
+    assert parse_http_date("Thu, 01 Oct 2026 20:43:30 GMT") == datetime(2026, 10, 1, 20, 43, 30, tzinfo=timezone.utc)
+    for bad in (None, "", "Thu, 01 Oct 2026 20:43:30 UTC", "Thu, 1 Oct 2026 20:43:30 GMT",
+                "Fri, 01 Oct 2026 20:43:30 GMT", "Thu, 31 Feb 2026 20:43:30 GMT", "2026-10-01T20:43:30Z"):
+        with pytest.raises(GithubEvidenceError):
+            parse_http_date(bad)
+
+
+def test_server_time_utc_reads_the_date_header_of_rate_limit():
+    seen = {}
+
+    def opener(request, timeout=None):
+        seen["url"] = request.full_url
+        return _HeaderResponse(200, b"{}", {"Date": "Thu, 01 Oct 2026 20:43:30 GMT"})
+
+    assert _client(opener).server_time_utc() == datetime(2026, 10, 1, 20, 43, 30, tzinfo=timezone.utc)
+    assert seen["url"] == "https://api.github.com/rate_limit"
+
+
+@pytest.mark.parametrize("response", [
+    _HeaderResponse(200, b"{}", {}),
+    _HeaderResponse(200, b"{}", {"Date": "garbled"}),
+    _HeaderResponse(503, b"{}", {"Date": "Thu, 01 Oct 2026 20:43:30 GMT"}),
+    _FakeResponse(200, b"{}"),
+])
+def test_server_time_utc_fails_closed_without_a_valid_date(response):
+    with pytest.raises(GithubEvidenceError):
+        _client(lambda request, timeout=None: response).server_time_utc()
+
+
+def _run_body(number: int, **overrides) -> dict:
+    body = {
+        "id": 32880880000 + number, "run_attempt": 1, "run_number": number, "event": "workflow_dispatch",
+        "head_branch": "main", "head_sha": "c" * 40, "path": ".github/workflows/sentinel-official-gate.yml",
+        "status": "completed", "conclusion": "failure", "created_at": f"2026-08-25T1{number % 10}:00:00Z",
+        "run_started_at": None,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_get_run_parses_number_status_conclusion_and_branch():
+    url = "https://api.github.com/repos/acme/repo/actions/runs/32880880004"
+    run = _client(_json_opener({url: _run_body(4, conclusion="cancelled")})).get_run("32880880004")
+    assert run == RunRef(
+        run_id="32880880004", run_attempt=1, event="workflow_dispatch", ref="refs/heads/main", sha="c" * 40,
+        workflow_path=".github/workflows/sentinel-official-gate.yml",
+        created_at=datetime(2026, 8, 25, 14, 0, 0, tzinfo=timezone.utc), run_started_at=None,
+        run_number=4, status="completed", conclusion="cancelled", head_branch="main",
+    )
+
+
+@pytest.mark.parametrize("change", [
+    {"run_number": None}, {"run_number": True}, {"status": None}, {"created_at": "2026-08-25T14:00:00"},
+    {"id": "4"}, {"path": 5},
+])
+def test_get_run_fails_closed_on_unexpected_shape(change):
+    url = "https://api.github.com/repos/acme/repo/actions/runs/1"
+    with pytest.raises(GithubEvidenceError):
+        _client(_json_opener({url: _run_body(4, **change)})).get_run("1")
+
+
+_RUNS_URL = "https://api.github.com/repos/acme/repo/actions/workflows/sentinel-official-gate.yml/runs?per_page=100&page={}"
+_WINDOW = dict(created_after=datetime(2026, 1, 1, tzinfo=timezone.utc),
+               created_before=datetime(2027, 1, 1, tzinfo=timezone.utc))
+_GATE_WF = ".github/workflows/sentinel-official-gate.yml"
+
+
+def test_counted_run_listing_requires_total_count_and_filters_by_window():
+    runs = [_run_body(n) for n in (4, 3, 2, 1)]
+    client = _client(_json_opener({_RUNS_URL.format(1): {"total_count": 4, "workflow_runs": runs}}))
+    assert sorted(r.run_number for r in client.list_workflow_runs_counted(_GATE_WF, **_WINDOW)) == [1, 2, 3, 4]
+
+
+@pytest.mark.parametrize("body", [
+    {"total_count": 5, "workflow_runs": [_run_body(n) for n in (4, 3, 2, 1)]},
+    {"workflow_runs": [_run_body(1)]},
+    {"total_count": True, "workflow_runs": [_run_body(1)]},
+    {"total_count": 1, "workflow_runs": [_run_body(1, run_number=None)]},
+    [],
+], ids=["count-mismatch", "no-count", "bool-count", "malformed-entry", "not-object"])
+def test_counted_run_listing_fails_closed(body):
+    client = _client(_json_opener({_RUNS_URL.format(1): body}))
+    with pytest.raises(GithubEvidenceError):
+        client.list_workflow_runs_counted(_GATE_WF, **_WINDOW)
+
+
+_COMMIT_SHA = "c" * 40
+_COMMIT_URL = f"https://api.github.com/repos/acme/repo/commits/{_COMMIT_SHA}"
+
+
+def _commit_body(**overrides) -> dict:
+    body = {
+        "sha": _COMMIT_SHA.upper(), "parents": [{"sha": "B" * 40, "url": "u"}],
+        "files": [{"filename": "artifacts/phase5_replacement_latch.jsonl", "status": "modified",
+                   "additions": 1, "deletions": 0, "changes": 1, "patch": "@@ -1 +1,2 @@\n x\n+y"}],
+    }
+    body.update(overrides)
+    return body
+
+
+def test_get_commit_parses_parents_files_and_patch():
+    detail = _client(_json_opener({_COMMIT_URL: _commit_body()})).get_commit(_COMMIT_SHA)
+    assert detail == CommitDetail(
+        sha=_COMMIT_SHA, parents=("b" * 40,),
+        files=(CommitFile(filename="artifacts/phase5_replacement_latch.jsonl", status="modified",
+                          additions=1, deletions=0, patch="@@ -1 +1,2 @@\n x\n+y"),),
+    )
+
+
+@pytest.mark.parametrize("body", [
+    _commit_body(parents="x"), _commit_body(files=None), _commit_body(files=[{"filename": "a"}]),
+    _commit_body(files=[{"filename": f"f{i}", "status": "added", "additions": 1, "deletions": 0} for i in range(300)]),
+    {"no": "sha"},
+], ids=["parents", "files-null", "file-shape", "possibly-paginated", "no-sha"])
+def test_get_commit_fails_closed_on_unexpected_shape(body):
+    with pytest.raises(GithubEvidenceError):
+        _client(_json_opener({_COMMIT_URL: body})).get_commit(_COMMIT_SHA)
+
+
+_ACTIVITY_URL = (
+    "https://api.github.com/repos/acme/repo/activity?ref=refs%2Fheads%2Fmain&activity_type=push&per_page=100"
+)
+
+
+def test_list_push_activity_parses_server_side_push_records():
+    body = [{"id": 1, "before": "4" * 40, "after": "B" * 40, "ref": "refs/heads/main",
+             "timestamp": "2026-10-01T20:20:30Z", "activity_type": "push", "actor": None}]
+    assert _client(_json_opener({_ACTIVITY_URL: body})).list_push_activity("refs/heads/main") == [
+        PushActivity(before="4" * 40, after="b" * 40, ref="refs/heads/main", activity_type="push",
+                     timestamp=datetime(2026, 10, 1, 20, 20, 30, tzinfo=timezone.utc)),
+    ]
+
+
+@pytest.mark.parametrize("body", [
+    {"not": "a list"},
+    [{"before": "a", "after": "b", "ref": "r", "activity_type": "push"}],
+    [{"before": "a", "after": "b", "ref": "r", "activity_type": "push", "timestamp": "2026-10-01T20:20:30"}],
+    [7],
+])
+def test_list_push_activity_fails_closed_on_unexpected_shape(body):
+    with pytest.raises(GithubEvidenceError):
+        _client(_json_opener({_ACTIVITY_URL: body})).list_push_activity("refs/heads/main")
+
+
+_JOB_EVIDENCE_URL = "https://api.github.com/repos/acme/repo/actions/runs/9/attempts/1/jobs?per_page=100"
+
+
+def test_job_evidence_parses_conclusion_and_steps_and_job_detail_is_unchanged():
+    job = {**_JOB_A, "status": "completed", "conclusion": "failure", "steps": [
+        {"name": "upload one-shot marker", "status": "completed", "conclusion": "skipped", "number": 7},
+    ]}
+    evidence = _client(_json_opener({_JOB_EVIDENCE_URL: _jobs_body([job, _JOB_B])})).list_run_attempt_job_evidence("9", 1)
+    assert evidence[0] == JobEvidence(
+        id=77, run_id="9", name="Sonnet official gate", status="completed", conclusion="failure",
+        steps=(JobStep(name="upload one-shot marker", status="completed", conclusion="skipped", number=7),),
+    )
+    assert evidence[1].steps == () and evidence[1].conclusion is None
+    assert set(JobDetail.__dataclass_fields__) == {"id", "run_id", "name", "status", "started_at", "runner_name"}
+
+
+@pytest.mark.parametrize("change", [
+    {"steps": "x"}, {"steps": [{"name": "s", "status": "completed", "number": "1"}]}, {"conclusion": 5},
+])
+def test_job_evidence_fails_closed_on_unexpected_shape(change):
+    client = _client(_json_opener({_JOB_EVIDENCE_URL: _jobs_body([{**_JOB_A, **change}])}))
+    with pytest.raises(GithubEvidenceError):
+        client.list_run_attempt_job_evidence("9", 1)

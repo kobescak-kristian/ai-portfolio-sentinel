@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -30,7 +31,20 @@ from agents.checker import oidc  # noqa: E402
 from sentinel.phase5 import artifact_names  # noqa: E402
 from sentinel.phase5.bundle import BundleSafetyError, create_fresh_root  # noqa: E402
 from sentinel.phase5.github_context import GithubContextError, derive_github_context  # noqa: E402
+from sentinel.phase5.execution_envelope import JobStartAnchorError, resolve_job_start_anchor  # noqa: E402
 from sentinel.phase5.github_evidence import GithubEvidenceClient  # noqa: E402
+from sentinel.phase5.latch import (  # noqa: E402
+    LATCH_PATH,
+    MAIN_REF,
+    OFFICIAL_GATE_WORKFLOW,
+    LatchAttemptAuthorized,
+    LatchError,
+    LatchFacts,
+    LatchRecord,
+    LatchVerdict,
+    latch_verdict,
+    load_latch,
+)
 from sentinel.phase5.models import OneShotMarker  # noqa: E402
 from sentinel.phase5.oneshot import (  # noqa: E402
     OneShotAlreadyConsumed,
@@ -285,7 +299,8 @@ def assert_oneshot_not_consumed_durably(
 
 
 def assert_replacement_history_permits(
-    receipts: "tuple[Phase5Receipt, ...]", markers: "list[OneShotMarker]", purpose: str
+    receipts: "tuple[Phase5Receipt, ...]", markers: "list[OneShotMarker]", purpose: str, *,
+    latch: LatchVerdict,
 ) -> None:
     """Structural replacement-eligibility gate (dispatch
     q77-p5d-repair-stage2-implement-a). NOT ARMED by this dispatch: no
@@ -299,10 +314,113 @@ def assert_replacement_history_permits(
     only to switch that constant; this eligibility check requires no
     further change to do its job then. Raises ``Phase5ScriptError``
     unless durable history and live markers currently permit exactly
-    one future replacement for ``purpose``."""
+    one future replacement for ``purpose``.
+
+    Stage 2C-B6-2 (STATE.md HARD PRE-ARMING GATE: "replacement
+    eligibility must consult it"): eligibility now also requires the
+    durable replacement latch's single admission decision. ``latch`` is
+    keyword-only and has no default, so no caller can skip it."""
     verdict = replacement_history_verdict(receipts, markers, purpose)
     if not verdict.permits_one_replacement:
         raise Phase5ScriptError(f"replacement not permitted by durable history: {verdict.reason}")
+    if not latch.admitted:
+        raise Phase5ScriptError(
+            f"replacement not admitted by the durable latch: state={latch.state} reason={latch.reason}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stage 2C-B6-2: durable replacement latch (owner-approved B6-2 plan and
+# rulings R1-R5 of 2026-10-01). Every read below fails closed; none is
+# retried, and none falls back to a local clock.
+# ---------------------------------------------------------------------------
+
+RUN_LISTING_FLOOR_UTC_ISO = "2026-01-01T00:00:00+00:00"
+RUN_LISTING_SPAN_AFTER_CURRENT_HOURS = 24
+
+
+def load_replacement_latch(path: "Path | None" = None) -> "tuple[LatchRecord, ...]":
+    """Strict-load the committed replacement latch. Missing or invalid
+    is ``Phase5ScriptError``, never "unarmed"."""
+    try:
+        return load_latch(path if path is not None else (REPO_ROOT / LATCH_PATH))
+    except LatchError as exc:
+        raise Phase5ScriptError(f"replacement latch failed to load: {exc}") from exc
+
+
+def assert_no_replacement_gate_evidence_visible(client: GithubEvidenceClient) -> None:
+    """Independent guard: any visible official-gate evidence artifact
+    (only a replacement run can produce one now) or any discovery error
+    refuses before a new marker can be created."""
+    try:
+        refs = client.list_artifacts(artifact_names.GATE_EVIDENCE_PREFIX)
+    except Exception as exc:  # noqa: BLE001 - incomplete discovery is never absence
+        raise Phase5ScriptError(f"gate-evidence discovery failed: {type(exc).__name__}") from exc
+    if refs:
+        raise Phase5ScriptError(f"{len(refs)} official-gate evidence artifact(s) already visible")
+
+
+def gather_latch_facts(
+    client: GithubEvidenceClient, ctx, records: "tuple[LatchRecord, ...]", *,
+    expected_workflow_job_id: str, expected_api_job_name: str, expected_runner_name: str,
+) -> LatchFacts:
+    """Every GitHub read the admission decision needs, with GitHub server
+    time read LAST. Any failure is ``Phase5ScriptError``."""
+    authorization = records[-1]
+    if not isinstance(authorization, LatchAttemptAuthorized):
+        raise Phase5ScriptError("replacement latch is UNARMED; no admission facts exist")
+    try:
+        current = client.get_run(ctx.run_id)
+        commit = client.get_commit(ctx.sha)
+        pushes = tuple(client.list_push_activity(MAIN_REF))
+        own_jobs = client.list_run_attempt_jobs(ctx.run_id, ctx.run_attempt)
+        runs = tuple(client.list_workflow_runs_counted(
+            OFFICIAL_GATE_WORKFLOW,
+            created_after=datetime.fromisoformat(RUN_LISTING_FLOOR_UTC_ISO),
+            created_before=current.created_at + timedelta(hours=RUN_LISTING_SPAN_AFTER_CURRENT_HOURS),
+        ))
+        floor = authorization.prior_official_gate_run_number
+        prior_jobs = {}
+        if current.run_number is not None:
+            for run in runs:
+                if run.run_number is not None and floor < run.run_number < current.run_number:
+                    for attempt in range(1, run.run_attempt + 1):
+                        prior_jobs[(run.run_id, attempt)] = tuple(
+                            client.list_run_attempt_job_evidence(run.run_id, attempt)
+                        )
+        server_now = client.server_time_utc()  # LAST GitHub read before the decision
+    except Exception as exc:  # noqa: BLE001 - any read fault refuses; never retried, never inferred
+        raise Phase5ScriptError(f"replacement latch facts unavailable: {type(exc).__name__}") from exc
+    try:
+        anchor = resolve_job_start_anchor(
+            own_jobs, run_id=ctx.run_id, run_attempt=ctx.run_attempt,
+            expected_workflow_job_id=expected_workflow_job_id, expected_api_job_name=expected_api_job_name,
+            expected_runner_name=expected_runner_name, resolved_at_utc=server_now,
+            monotonic_at_resolve=0.0,  # unused by the admission decision
+        )
+    except JobStartAnchorError as exc:
+        raise Phase5ScriptError(f"replacement latch job anchor unavailable: {exc}") from exc
+    return LatchFacts(
+        ctx_run_id=ctx.run_id, ctx_run_attempt=ctx.run_attempt, ctx_sha=ctx.sha,
+        ctx_workflow_identity=ctx.workflow_path, current_run=current, commit=commit,
+        push_activities=pushes, job_started_at_utc=anchor.job_started_at_utc, workflow_runs=runs,
+        prior_attempt_jobs=prior_jobs, server_now_utc=server_now,
+    )
+
+
+def replacement_latch_admission(
+    client: GithubEvidenceClient, ctx, records: "tuple[LatchRecord, ...]", env,
+    *, expected_api_job_name: str,
+) -> LatchVerdict:
+    """The single admission decision, evaluated exactly once per
+    preflight. An UNARMED latch refuses without any GitHub read."""
+    if not isinstance(records[-1], LatchAttemptAuthorized):
+        return latch_verdict(records, None)
+    facts = gather_latch_facts(
+        client, ctx, records, expected_workflow_job_id=env.get("GITHUB_JOB", ""),
+        expected_api_job_name=expected_api_job_name, expected_runner_name=env.get("RUNNER_NAME", ""),
+    )
+    return latch_verdict(records, facts)
 
 
 def assert_marker_visible_for_this_run(client: GithubEvidenceClient, run_id: str, expected_name: str) -> None:
