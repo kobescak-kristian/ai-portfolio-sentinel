@@ -6339,3 +6339,124 @@ merges every change."
   approved plan. Separately owner-authorized actions, still not begun:
   re-enabling `SentinelDailyRun`, the post-B5 workspace-cap reduction and
   any cleanup of the now-inert timing variable.
+- 2026-10-02 - ADR-0012 REPAIR STAGE 2C-B6-3b RECORDED: THE SINGLE
+  REAL-RUNNER PROBE PASSED; READINESS RECORD COMMITTED; ROWS VERDICT
+  ARMING-ELIGIBLE UNDER THE FROZEN SHAPE; CLOSURE PENDING EXACT-SHA CI OF
+  THIS COMMIT; REPLACEMENT UNARMED (owner GO of 2026-10-02 for exactly one
+  probe dispatch at `490780ffaddaf0bd50c5eec9304b9343384885f6`, under the
+  approved B6-3 plan, revision 4). **B6-3 is not closed. Exact-SHA CI of
+  this commit is a post-push closure condition (R9): only when it
+  succeeds is B6-3 closed as PASS / ARMING-ELIGIBLE, and the close report,
+  not this file, makes that declaration. If it fails B6-3 stays OPEN and
+  STOPPED. This record does not arm, authorize or execute the
+  replacement.**
+  PRE-DISPATCH CHECKS (all held). `origin/main` equal to the authorized
+  SHA, clean tree, zero runs of the probe lane, the official gate at its
+  four historical runs (numbers 1 to 4), timing and kill-rehearsal runs
+  unchanged at one each, latch GENESIS-only and UNARMED with no
+  ATTEMPT_AUTHORIZED, `PURPOSE` original, `ENVELOPE` `None`,
+  `SentinelDailyRun` Disabled, no replacement marker, evidence or receipt.
+  THE PROBE. Exactly one dispatch of `sentinel-latch-read-probe.yml` at
+  the authorized SHA with that SHA as `expected_source_sha`: run
+  `37041308260`, attempt 1, `workflow_dispatch`, `main`, conclusion
+  success, job `gate` (id `110951838295`) 17:31:47Z to 17:32:16Z on a
+  GitHub-hosted runner. Watched once; never rerun. Evidence: artifact
+  `sentinel-p5-latchprobe-r37041308260-a1`, id `11241692974`, 2378 bytes,
+  expires 2026-12-31; downloaded by REST, archive SHA-256
+  `6813ce6924e39690fb5b61447a9ea46ebbee337509c7bd6a2325506d70f31e10`
+  equal to GitHub's digest; strict-parsed result PASS. All 15 required
+  checks passed with the workflow's real `GITHUB_TOKEN`
+  (`contents: read` and `actions: read` only): server `Date` monotonic
+  across three reads; the current run; the official-gate listing exactly
+  run numbers 1 to 4; real multi-page pagination (88 CI runs in 5 pages of
+  20, entries equal `total_count`); attempt jobs and jobs with steps (run
+  3 gate job failure with the marker and execute steps skipped, run 4
+  marker step success); **the job-start anchor resolved with the
+  production job name `gate`**; commit metadata (1 parent, 14 files, 13
+  with a patch); push activity (95 entries, exactly one for the
+  dispatched SHA); artifact discovery (zero gate-evidence, zero
+  replacement markers, two one-shot markers); the original marker found;
+  the work-root layout and journal established under `runner.temp`;
+  import-only closure of the official runner and finalizer; no provider
+  or override variable name among 121 environment names; runtime
+  identity captured. This closes the two residuals the B6-2 and 2C-3
+  records left open: the workflow token can read every latch surface, and
+  the job-start anchor resolves on a real runner.
+  RUNTIME IDENTITY (D3, R7). The probe's `runtime_identity_id`
+  `5d9e357406c5b9f081de1d94c341ff9f29a24bf7323b623aaafef1c61bc6a2e5`
+  equals the B5 baseline's exactly: CPython 3.12.14, runner image
+  `ubuntu24` `20260927.320.1`, SDK `0.2.110` with equal RECORD, transport
+  and bundled-CLI digests (CLI `2.1.191`), and the same 33 distributions
+  at the same versions. There is no fatal drift, no recorded residual and
+  no transitive difference, so no owner adjudication was needed and none
+  is recorded.
+  A8 LIFECYCLE (read 17:33:04Z from the provider's model-deprecation
+  page). `claude-sonnet-5` Active, not deprecated, retirement not sooner
+  than 2027-06-30; `claude-haiku-4-5-20251001` Active, not deprecated,
+  retirement not sooner than 2026-10-15; no deprecation entry names
+  either. No model-override variable in the probe environment or the
+  official workflow.
+  THE RECORD. `artifacts/phase5_readiness_b63.json` (14817 bytes,
+  canonical, SHA-256
+  `78aa2f8951295665b4bf2fad69b526e66b85294ff5410b61879ab46591dee7cc`),
+  written by `scripts/run_phase5_readiness.py collect` at GitHub server
+  time 2026-10-02T17:33:15Z with `closure: PENDING_POST_PUSH_CI`. Rows 1
+  to 3, 5 to 15, 17 to 25 PASS; rows 4 and 16 DEFERRED with exactly
+  components 4.2, 16h and 16i DEFERRED under their frozen predicates and
+  every other component PASS; no FAIL. Rows 13, 14, 23 and the WIF
+  mechanism rest on D4 carry-forward: the B2 and B5 artifact digests
+  re-verified by REST, the frozen path sets show an empty diff, and the
+  official-workflow diff since the B2 source is exactly the timeout
+  change from 30 to 106 minutes. Exact-SHA CI is recorded for the B6-3a
+  commit only (run `37038779379`). The collector's rows verdict is
+  ARMING-ELIGIBLE; `verify` reproduces it on the committed bytes.
+  PUBLICATION HYGIENE. Two previously non-public provider identifiers
+  that the collector had captured (in the deferred components 4.2 and
+  16h) were SHA-256 redacted before publication, as an owner-approved
+  representation change. This was a publication-hygiene transformation
+  only: no readiness evidence, predicate or result changed, and the
+  original raw values were not committed.
+  Executing model: Sonnet 5.5.
+  ACTUAL WRITE SET (exactly the 3 approved paths):
+  `artifacts/phase5_readiness_b63.json` (new), `STATE.md` (this entry),
+  `.publicgate-allow` (one status-line entry). No code, workflow, test,
+  ADR or other artifact change.
+  NON-EVENTS: exactly one workflow dispatch and no rerun, cancel or
+  second dispatch; no official-gate, timing or kill-rehearsal run; no
+  arming; `PURPOSE` unchanged and `ENVELOPE` `None`; no
+  ATTEMPT_AUTHORIZED; no marker created or consumed; no provider, model,
+  OIDC or WIF call; no bundled-CLI execution; no federation-rule,
+  repository-variable, secret, setting, provider-cap or scheduler change;
+  `SentinelDailyRun` stays Disabled; no write to the private governance
+  repository; no code change in this stage.
+  RESIDUALS (recorded, not closed here): provider components 4.2, 16h
+  and 16i stay DEFERRED until after arming and provider preparation; the
+  first exchange of the replacement rule on the official-gate workflow
+  reference happens after marker consumption and needs an explicit owner
+  decision at provider preparation; the replacement run resolves its own
+  dependencies at run time and the official runner records no runtime
+  identity at execution (re-captured at the final GO by re-dispatching
+  the probe); the resolved-model instrumentation and the updater-disable
+  controls are arming scope; every time-sensitive fact here is a
+  PREARM_BASELINE and satisfies no final T2 requirement.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  Stage 2C-B5 B5 PASS, execution-envelope artifact COMMITTED, official
+  workflow timeout BOUND, A8 allowed-set binding artifact COMMITTED,
+  durable replacement latch COMMITTED (UNARMED), latch enforcement LIVE,
+  readiness machinery and probe lane LANDED (Stage 2C-B6-3a), **probe
+  DISPATCHED ONCE and PASSED**, **readiness record COMMITTED (Stage
+  2C-B6-3b recorded; closure PENDING exact-SHA CI of this commit; B6-3
+  NOT CLOSED)**, ATTEMPT_AUTHORIZED NOT WRITTEN, runtime/arming `ENVELOPE`
+  binding PENDING (`ENVELOPE` is `None`, `PURPOSE` is the original),
+  provider rows DEFERRED, fresh replacement readiness NOT COMPLETE,
+  replacement UNARMED / NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B6-3b recorded.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: wait for the exact-SHA CI of this commit; on success B6-3
+  closes, and the atomic arming stage needs its own approved plan; on
+  failure B6-3 stays open and returns to the owner. Separately
+  owner-authorized actions, still not begun: re-enabling
+  `SentinelDailyRun`, the post-B5 workspace-cap reduction and any cleanup
+  of the now-inert timing variable.
