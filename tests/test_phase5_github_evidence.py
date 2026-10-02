@@ -654,6 +654,77 @@ def test_counted_run_listing_fails_closed(body):
         client.list_workflow_runs_counted(_GATE_WF, **_WINDOW)
 
 
+def test_counted_run_listing_default_page_size_is_the_api_maximum_for_every_existing_caller():
+    """Stage 2C-B6-3: ``per_page`` is a default-preserving keyword. Without
+    it the request URL is byte-identical to the one the latch always sent."""
+    requested: list[str] = []
+
+    def opener(request, timeout=None):
+        requested.append(request.full_url)
+        return _FakeResponse(200, json.dumps({"total_count": 1, "workflow_runs": [_run_body(1)]}).encode("utf-8"))
+
+    _client(opener).list_workflow_runs_counted(_GATE_WF, **_WINDOW)
+    assert requested == [_RUNS_URL.format(1)]
+
+
+def _paged_listing_opener(total: int, per_page: int, *, lie_on_page: int | None = None, requested=None):
+    all_runs = [_run_body(n) for n in range(total, 0, -1)]
+
+    def opener(request, timeout=None):
+        url = request.full_url
+        if requested is not None:
+            requested.append(url)
+        assert f"per_page={per_page}" in url
+        page = int(url.rsplit("page=", 1)[1])
+        claimed = total + 1 if lie_on_page == page else total
+        chunk = all_runs[(page - 1) * per_page: page * per_page]
+        return _FakeResponse(200, json.dumps({"total_count": claimed, "workflow_runs": chunk}).encode("utf-8"))
+
+    return opener
+
+
+def test_counted_run_listing_walks_real_multiple_pages_and_reports_stats():
+    stats: dict = {}
+    requested: list[str] = []
+    runs = _client(_paged_listing_opener(87, 20, requested=requested)).list_workflow_runs_counted(
+        _GATE_WF, per_page=20, stats=stats, **_WINDOW
+    )
+    assert sorted(r.run_number for r in runs) == list(range(1, 88))
+    assert stats == {"pages": 5, "total_count": 87, "entries": 87}
+    assert [u.rsplit("page=", 1)[1] for u in requested] == ["1", "2", "3", "4", "5"]
+
+
+def test_counted_run_listing_total_count_changing_across_pages_fails_closed():
+    client = _client(_paged_listing_opener(87, 20, lie_on_page=3))
+    with pytest.raises(GithubEvidenceError, match="changed during pagination"):
+        client.list_workflow_runs_counted(_GATE_WF, per_page=20, **_WINDOW)
+
+
+def test_counted_run_listing_entries_not_equal_to_total_count_fails_closed_across_pages():
+    def opener(request, timeout=None):
+        page = int(request.full_url.rsplit("page=", 1)[1])
+        chunk = [_run_body(n) for n in range(40 - (page - 1) * 20, 40 - page * 20, -1)] if page <= 2 else []
+        return _FakeResponse(200, json.dumps({"total_count": 41, "workflow_runs": chunk}).encode("utf-8"))
+
+    with pytest.raises(GithubEvidenceError, match="incomplete"):
+        _client(opener).list_workflow_runs_counted(_GATE_WF, per_page=20, **_WINDOW)
+
+
+def test_counted_run_listing_page_overflow_fails_closed_with_a_small_page_size():
+    with pytest.raises(DiscoveryOverflow):
+        _client(_paged_listing_opener(87, 5), page_limit=3).list_workflow_runs_counted(
+            _GATE_WF, per_page=5, **_WINDOW
+        )
+
+
+@pytest.mark.parametrize("bad", [0, 101, -1, True, "20", None, 2.5])
+def test_counted_run_listing_rejects_an_invalid_page_size(bad):
+    with pytest.raises(GithubEvidenceError, match="per_page"):
+        _client(lambda request, timeout=None: _FakeResponse(200, b"{}")).list_workflow_runs_counted(
+            _GATE_WF, per_page=bad, **_WINDOW
+        )
+
+
 _COMMIT_SHA = "c" * 40
 _COMMIT_URL = f"https://api.github.com/repos/acme/repo/commits/{_COMMIT_SHA}"
 

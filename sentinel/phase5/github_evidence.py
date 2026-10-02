@@ -587,13 +587,22 @@ class GithubEvidenceClient:
         return _run_ref_from(self._get_json(f"/repos/{self._repository}/actions/runs/{run_id}"))
 
     def list_workflow_runs_counted(
-        self, workflow_path: str, *, created_after: datetime, created_before: datetime
+        self, workflow_path: str, *, created_after: datetime, created_before: datetime,
+        per_page: int = 100, stats: "dict | None" = None,
     ) -> list[RunRef]:
         """Every run of one workflow, with completeness proven: across all
         pages, the number of entries returned must equal the API's
         ``total_count`` (constant across pages) BEFORE the created-window
         filter is applied. Overflow, a mismatch or any malformed entry
-        fails closed -- an incomplete listing is never read as absence."""
+        fails closed -- an incomplete listing is never read as absence.
+
+        ``per_page`` (Stage 2C-B6-3) defaults to the API maximum, so every
+        existing caller requests exactly what it always did; the real-runner
+        read probe passes a smaller value to exercise real multi-page
+        pagination. ``stats``, when given, is filled with ``pages``,
+        ``total_count`` and ``entries`` of the unfiltered listing."""
+        if isinstance(per_page, bool) or not isinstance(per_page, int) or not 1 <= per_page <= 100:
+            raise GithubEvidenceError("per_page must be an integer between 1 and 100")
         entries: list[RunRef] = []
         total_count: int | None = None
         page = 1
@@ -602,7 +611,7 @@ class GithubEvidenceClient:
                 raise DiscoveryOverflow(f"more than {self._page_limit} pages of workflow runs")
             data = self._get_json(
                 f"/repos/{self._repository}/actions/workflows/{workflow_path.split('/')[-1]}"
-                f"/runs?per_page=100&page={page}"
+                f"/runs?per_page={per_page}&page={page}"
             )
             if not isinstance(data, dict):
                 raise GithubEvidenceError("workflow run listing is not a JSON object")
@@ -615,11 +624,13 @@ class GithubEvidenceClient:
             elif total != total_count:
                 raise GithubEvidenceError("workflow run listing total_count changed during pagination")
             entries.extend(_run_ref_from(run) for run in runs)
-            if len(runs) < 100:
+            if len(runs) < per_page:
                 break
             page += 1
         if len(entries) != total_count:
             raise GithubEvidenceError("workflow run listing is incomplete (total_count mismatch)")
+        if stats is not None:
+            stats.update({"pages": page, "total_count": total_count, "entries": len(entries)})
         return [run for run in entries if created_after <= run.created_at <= created_before]
 
     def get_commit(self, sha: str) -> CommitDetail:

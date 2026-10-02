@@ -980,3 +980,100 @@ The EUR 2.50 change applies only to the non-quality timing rehearsal.
 Implementation has not begun. Neither rehearsal has run. Fresh
 readiness is not established. The replacement is not ready and is not
 authorized for dispatch.
+
+## Amendment B - 2026-10-02 readiness matrix rows 24 and 25
+
+Status: ADOPTED
+
+Date: 2026-10-02
+
+This amendment is part of ADR-0012. It records two readiness rows made
+necessary by the Stage 2C-B6-2 durable replacement latch, under the
+owner ruling of 2026-10-02 on the Stage 2C-B6-3 readiness plan. It
+authorizes no implementation beyond that plan, no rehearsal, no marker
+action, no latch authorization, no arming, and no provider or platform
+mutation.
+
+Sections affected:
+
+- section 22: extended by B1 (rows 24 and 25).
+
+Rows 1 to 23 of section 22 and Amendment A9 are unchanged, are not
+renumbered and are not reinterpreted.
+
+### B1. Matrix additions
+
+Section 22 is extended with two rows that carry the same required
+fields (evidence, PASS, STOP, model-free or real-provider, local or
+GitHub):
+
+24. durable latch GitHub-read capability
+25. durable replacement latch state / enforcement
+
+### B2. Row 24: durable latch GitHub-read capability
+
+Model-free. Real GitHub runner. Evidence comes from a dedicated
+model-free probe lane that holds the same read permissions as the
+official gate and no token-issuing permission.
+
+Purpose: prove on a real GitHub runner, using the workflow's actual
+GITHUB_TOKEN, that every GitHub surface required by the durable
+replacement latch can be read and resolved. At minimum:
+
+- the current run;
+- the complete workflow-run listing, including pagination and
+  total_count;
+- jobs with steps and attempt jobs;
+- commit metadata;
+- repository push activity;
+- the GitHub server Date source;
+- artifact discovery;
+- the current-job start anchor.
+
+PASS: every required surface is read and parsed with the real runner
+token, real multi-page pagination with total_count equality is
+demonstrated, and the job-start anchor resolves correctly.
+
+STOP: any required surface is unavailable, ambiguous, malformed,
+permission-denied, or cannot be resolved fail-closed.
+
+This row is readiness evidence only. It does not authorize dispatch,
+arming, marker creation, provider access, OIDC or model execution.
+
+### B3. Row 25: durable replacement latch state / enforcement
+
+Model-free. Local, with GitHub run-history and artifact reads.
+
+Purpose: prove the durable replacement latch is present, valid and still
+in the required pre-arming state, and that the replacement path consults
+it.
+
+PASS requires all of:
+
+- the latch file exists and loads strictly;
+- the hash chain is valid;
+- exactly one GENESIS record exists;
+- the state is UNARMED;
+- no ATTEMPT_AUTHORIZED record exists;
+- replacement eligibility consults the latch;
+- official-gate preflight consults the latch;
+- the relevant enforcement tests remain green;
+- durable history and receipt state are consistent;
+- no replacement dispatch, marker or replacement evidence has appeared.
+
+STOP: any malformed latch, state drift, ATTEMPT_AUTHORIZED presence,
+missing consult or enforcement, replacement activity, contradictory
+durable history, or inability to prove the state.
+
+### B4. Unchanged by this amendment
+
+- section 22 rows 1 to 23 and Amendment A9;
+- the quality model contract `claude-sonnet-5`, the frozen quality
+  surface and the GREEN / HONEST_FAIL rule;
+- the replacement count, the owner ruling, and the one-shot semantics;
+- the rule that readiness never authorizes execution: only a later
+  owner GO and the durable latch can.
+
+Implementation of the replacement is not authorized by this amendment.
+Fresh readiness is not established. The replacement is not ready and is
+not authorized for dispatch.

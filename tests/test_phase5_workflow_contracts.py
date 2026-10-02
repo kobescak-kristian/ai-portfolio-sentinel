@@ -32,6 +32,7 @@ EXPECTED_FILES = {
     "sentinel-window-control.yml",
     "sentinel-kill-rehearsal.yml",
     "sentinel-timing-rehearsal.yml",
+    "sentinel-latch-read-probe.yml",
 }
 
 P5_WORKFLOWS = {
@@ -50,6 +51,9 @@ P5_WORKFLOWS = {
     # platform ceiling used as an infrastructure backstop, never a
     # calibration threshold -- no per-invocation deadline is applied.
     "sentinel-timing-rehearsal.yml": {"timeout": 360, "concurrency": "sentinel-timing-rehearsal", "id_token": True},
+    # Stage 2C-B6-3a: the model-free durable-latch GitHub-read probe. Same
+    # read permissions as the official gate, no id-token.
+    "sentinel-latch-read-probe.yml": {"timeout": 10, "concurrency": "sentinel-latch-read-probe", "id_token": False},
 }
 
 
@@ -80,7 +84,8 @@ def test_schedule_workflow_trigger_is_exact_cron_only():
 
 @pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-wif-probe.yml",
                                    "sentinel-official-gate.yml", "sentinel-window-control.yml",
-                                   "sentinel-kill-rehearsal.yml", "sentinel-timing-rehearsal.yml"])
+                                   "sentinel-kill-rehearsal.yml", "sentinel-timing-rehearsal.yml",
+                                   "sentinel-latch-read-probe.yml"])
 def test_manual_workflows_trigger_only_on_workflow_dispatch(name):
     data = _load(name)
     trigger = data[True]
@@ -89,7 +94,7 @@ def test_manual_workflows_trigger_only_on_workflow_dispatch(name):
 
 @pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-wif-probe.yml",
                                    "sentinel-official-gate.yml", "sentinel-kill-rehearsal.yml",
-                                   "sentinel-timing-rehearsal.yml"])
+                                   "sentinel-timing-rehearsal.yml", "sentinel-latch-read-probe.yml"])
 def test_manual_workflows_declare_required_expected_source_sha_input(name):
     data = _load(name)
     inputs = data[True]["workflow_dispatch"]["inputs"]
@@ -182,7 +187,8 @@ def test_per_lane_federation_rule_variable_maps_to_the_provider_env_name(name, r
 
 
 @pytest.mark.parametrize(
-    "name", ["sentinel-rehearsal.yml", "sentinel-window-control.yml", "sentinel-kill-rehearsal.yml"]
+    "name", ["sentinel-rehearsal.yml", "sentinel-window-control.yml", "sentinel-kill-rehearsal.yml",
+             "sentinel-latch-read-probe.yml"]
 )
 def test_model_free_workflows_have_no_anthropic_env(name):
     text = (WORKFLOWS_DIR / name).read_text(encoding="utf-8")
@@ -236,6 +242,7 @@ def test_entrypoint_commands_reference_existing_script_files():
         "run_phase5_scheduled.py", "run_phase5_rehearsal.py", "run_phase5_wif_probe.py",
         "run_phase5_official_gate.py", "run_phase5_window_freeze.py",
         "run_phase5_kill_rehearsal.py", "run_phase5_timing_rehearsal.py",
+        "run_phase5_latch_read_probe.py",
     ]
     all_text = "\n".join((WORKFLOWS_DIR / name).read_text(encoding="utf-8") for name in P5_WORKFLOWS)
     for script in script_names:
@@ -313,6 +320,9 @@ def test_artifact_upload_paths_match_producer_paths():
         ],
         "sentinel-official-gate.yml": [
             ("upload one-shot marker", "preflight", "WORK_ROOT", "/marker.json"),
+        ],
+        "sentinel-latch-read-probe.yml": [
+            ("upload latch probe evidence", "probe", "WORK_ROOT", "/phase5_latch_read_probe.json"),
         ],
         "sentinel-window-control.yml": [
             ("upload genesis bundle", "freeze", "WORK_ROOT", "/genesis-out"),
@@ -701,3 +711,94 @@ def test_timing_preflight_and_execute_share_the_work_root():
 
 def test_timing_driver_exists():
     assert (Path("scripts") / "run_phase5_timing_rehearsal.py").exists()
+
+
+# =====================================================================
+# Stage 2C-B6-3a (owner ruling D1): the durable-latch GitHub-read probe.
+# Model-free by construction; contents/actions read only; no id-token.
+# =====================================================================
+
+PROBE = "sentinel-latch-read-probe.yml"
+OFFICIAL = "sentinel-official-gate.yml"
+OFFICIAL_DISCOVERY_PREFIXES = (
+    "sentinel-p5-oneshot-", "sentinel-p5-gate-evidence-", "sentinel-p5-rehearsal-", "sentinel-p5-timing-",
+    "sentinel-p5-probe-evidence-", "sentinel-p5-attempt-", "sentinel-p5-prewindow-",
+)
+
+
+def _probe_steps() -> list:
+    return next(iter(_load(PROBE)["jobs"].values()))["steps"]
+
+
+def _probe_step(name: str) -> dict:
+    return next(s for s in _probe_steps() if s.get("name") == name)
+
+
+def test_probe_permissions_are_exactly_the_official_permissions_minus_id_token():
+    official = dict(_load(OFFICIAL)["permissions"])
+    assert official.pop("id-token") == "write"
+    assert _load(PROBE)["permissions"] == official == {"contents": "read", "actions": "read"}
+    assert "id-token" not in (WORKFLOWS_DIR / PROBE).read_text(encoding="utf-8")
+
+
+def test_probe_job_key_and_display_name_are_gate_like_the_official_gate():
+    data = _load(PROBE)
+    assert list(data["jobs"]) == ["gate"]
+    assert data["jobs"]["gate"]["name"] == "gate"
+    assert data["jobs"]["gate"]["runs-on"] == "ubuntu-latest"
+    assert _load(OFFICIAL)["jobs"]["gate"]["name"] == "gate"
+
+
+def test_probe_references_no_variable_and_no_secret_except_the_github_token():
+    text = (WORKFLOWS_DIR / PROBE).read_text(encoding="utf-8")
+    assert "vars." not in text and "ANTHROPIC" not in text
+    secrets = text.split("secrets.")[1:]
+    assert secrets and all(part.startswith("GITHUB_TOKEN") for part in secrets)
+    for step in _probe_steps():
+        if "GITHUB_TOKEN" in step.get("env", {}):
+            assert step["name"] == "probe"
+
+
+def test_probe_has_no_marker_step_and_no_other_dispatch_or_provider_entrypoint():
+    names = [s.get("name") or "" for s in _probe_steps()]
+    assert not any("marker" in n.lower() or "execute" in n.lower() or "finalize" in n.lower() for n in names)
+    run = _probe_step("probe")["run"]
+    assert "run_phase5_latch_read_probe.py" in run
+    for forbidden in ("run_phase5_official_gate.py", "run_phase5_gate_finalizer.py", "run_phase5_wif_probe.py",
+                      "run_phase5_timing_rehearsal.py", "gh workflow", "gh api", "curl"):
+        assert forbidden not in run
+    assert '--expected-source-sha "${{ inputs.expected_source_sha }}"' in run
+
+
+def test_probe_step_order_is_install_probe_upload():
+    names = [s.get("name") for s in _probe_steps() if s.get("name")]
+    assert names == ["probe", "upload latch probe evidence"]
+    runs = [s["run"] for s in _probe_steps() if "run" in s and s.get("name") is None]
+    assert runs == ["python -m pip install -r requirements.txt", "python -m pip check"]
+
+
+def test_probe_evidence_artifact_name_cannot_collide_with_any_discovery_prefix():
+    name = _probe_step("upload latch probe evidence")["with"]["name"]
+    assert name == "sentinel-p5-latchprobe-r${{ github.run_id }}-a${{ github.run_attempt }}"
+    assert not name.startswith(OFFICIAL_DISCOVERY_PREFIXES)
+    assert "replacement" not in name
+
+
+def test_probe_uploads_exactly_one_json_file_from_its_work_root_and_never_overwrites():
+    probe, upload = _probe_step("probe"), _probe_step("upload latch probe evidence")
+    assert upload["with"]["path"] == f"{probe['env']['WORK_ROOT']}/phase5_latch_read_probe.json"
+    assert "*" not in upload["with"]["path"] and "\n" not in upload["with"]["path"].strip()
+    assert upload["with"]["retention-days"] == 90
+    assert upload["with"]["overwrite"] is False
+    assert upload["if"] == "always()" and upload["timeout-minutes"] == 2
+
+
+def test_probe_trigger_is_dispatch_only_with_no_schedule_push_or_pr():
+    trigger = _load(PROBE)[True]
+    assert set(trigger) == {"workflow_dispatch"}
+    text = (WORKFLOWS_DIR / PROBE).read_text(encoding="utf-8")
+    assert "\nschedule:" not in text and "cron" not in text
+
+
+def test_probe_driver_exists():
+    assert (Path("scripts") / "run_phase5_latch_read_probe.py").exists()

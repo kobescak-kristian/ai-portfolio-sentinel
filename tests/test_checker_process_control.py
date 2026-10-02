@@ -904,6 +904,16 @@ def test_nothing_outside_tests_imports_the_new_modules():
         # module reference. process_control and envelope_guard remain
         # forbidden there.
         REPO_ROOT / ".github" / "workflows" / "sentinel-timing-rehearsal.yml": {"runtime_identity"},
+        # Stage 2C-B6-3a (owner ruling D3): the model-free durable-latch
+        # GitHub-read probe captures the runner's runtime identity, static
+        # and without executing the bundled CLI, to compare it with the
+        # B5-qualified runtime. process_control and envelope_guard stay
+        # forbidden there. Per-path allowance, never blanket.
+        REPO_ROOT / "scripts" / "run_phase5_latch_read_probe.py": {"runtime_identity"},
+        # The readiness collector imports none of these modules. It only
+        # names the probe's runtime-identity document and the B5
+        # runtime-identity evidence file when comparing the two.
+        REPO_ROOT / "scripts" / "run_phase5_readiness.py": {"runtime_identity"},
     }
     for root in ("scripts", ".github"):
         for path in (REPO_ROOT / root).rglob("*"):

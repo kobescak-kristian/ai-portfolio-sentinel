@@ -1,0 +1,66 @@
+name: sentinel-latch-read-probe
+
+# P5-D durable-latch GitHub-read probe (ADR-0012 Amendment B row 24;
+# Stage 2C-B6-3a; owner ruling D1 of 2026-10-02).
+#
+# Proves with the workflow's REAL GITHUB_TOKEN that a runner can read every
+# GitHub surface the durable replacement latch and the official execute
+# step depend on, and that the job-start anchor resolves. Landing this file
+# dispatches nothing; the single probe dispatch is a separate owner GO.
+#
+# Structurally model-free: the token-issuing permission is absent from this
+# lane, so OIDC is unreachable rather than merely unused; no repository
+# variable, no secret other than GITHUB_TOKEN and no provider environment
+# variable is referenced; no one-shot marker of any purpose is created; the
+# bundled CLI is never executed. The job key and display name are `gate`,
+# exactly as in the official gate, so the job-start anchor call is identical.
+# The evidence artifact name sits outside every official discovery prefix.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: "Exact 40-lowercase-hex commit SHA this probe is running against"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: sentinel-latch-read-probe
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: gate
+    if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - name: probe
+        id: probe
+        run: >
+          python scripts/run_phase5_latch_read_probe.py
+          --expected-source-sha "${{ inputs.expected_source_sha }}"
+          --work-root "$WORK_ROOT"
+          --evidence-out "$WORK_ROOT/phase5_latch_read_probe.json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORK_ROOT: ${{ runner.temp }}/p5-latch-probe
+      - name: upload latch probe evidence
+        id: upload
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: sentinel-p5-latchprobe-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/p5-latch-probe/phase5_latch_read_probe.json
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: false

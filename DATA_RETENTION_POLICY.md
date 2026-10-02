@@ -27,6 +27,7 @@ never mixed with, any monitored repository's data.
 | Frozen Phase-1 eval bed | `fixtures/`, `evals/` | Yes (frozen) | Immutable — guarded by `scripts/check_phase1_frozen.py` |
 | Durable Phase-5 receipt registry (§16) | `artifacts/phase5_receipt_registry.jsonl` | **Yes** | Append-only, hash-chained; never truncated or rewritten |
 | Durable replacement latch (§18) | `artifacts/phase5_replacement_latch.jsonl` | **Yes** | Append-only, hash-chained; at most two records; never truncated or rewritten |
+| Replacement readiness record (§19) | `artifacts/phase5_readiness_b63.json` | **Yes** (written once, by Stage 2C-B6-3b) | Canonical JSON; never rewritten; absent until that stage runs |
 
 ## 3. Locally persisted data
 
@@ -137,6 +138,8 @@ unaffected because it lives in git.
 | Actions artifact bundles (GENESIS/slot/refusal/evidence, §15) | GitHub Actions artifact storage, not git | never committed to this repository; retained 90 days (platform maximum for a public repo) |
 | `artifacts/phase5_receipt_registry.jsonl` (§16) | committed, **append-only** | hash-chained receipts of evidence already independently established from artifact bytes; `.githooks/pre-push` blocks any removed or rewritten line, including whole-file deletion |
 | `artifacts/phase5_replacement_latch.jsonl` (§18) | committed, **append-only** | the durable replacement latch: GENESIS, then at most one ATTEMPT_AUTHORIZED; `.githooks/pre-push` blocks any removed or rewritten line, including whole-file deletion |
+| `artifacts/phase5_readiness_b63.json` (§19) | committed, **write-once** | the Stage 2C-B6-3b readiness record: rows verdict and evidence digests only; carries `closure: PENDING_POST_PUSH_CI`; no credential, token, local path or model content |
+| Actions artifact `sentinel-p5-latchprobe-r<run>-a<attempt>` (§19) | GitHub Actions artifact storage, not git | the read-probe evidence file; never committed; retained 90 days; its digests live in the readiness record |
 
 ## 12. Current limitations (dated, honest)
 
@@ -457,5 +460,36 @@ post-run write.
   "unarmed".
 - It governs admission only. Consumption truth stays with the one-shot
   marker and the durable receipts (§16).
+
+No production or production-ready claim follows from this section.
+
+## 19. ADR-0012 Stage 2C-B6-3 addition: readiness probe evidence and readiness record
+
+Stage 2C-B6-3 adds two data classes. Neither is created by the stage that
+lands the code (Stage 2C-B6-3a); both come from Stage 2C-B6-3b, behind a
+separate owner GO.
+
+**Probe evidence (not committed).** `.github/workflows/sentinel-latch-read-probe.yml`
+(`scripts/run_phase5_latch_read_probe.py`) publishes one canonical JSON
+file as the Actions artifact `sentinel-p5-latchprobe-r<run>-a<attempt>`,
+retained 90 days (§15). It records only identifiers, HTTP-level outcomes,
+counts, the runner's runtime identity and the names (never values) of any
+provider or override variable found in its environment. It contains no
+response body, header, token, secret, local path or model content. Its
+name sits outside every one-shot and gate-evidence discovery prefix.
+
+**Readiness record (committed, write-once).** `artifacts/phase5_readiness_b63.json`
+(`sentinel/phase5/readiness.py`) is a canonical JSON record of the 25-row
+readiness matrix (ADR-0012 section 22, Amendments A9 and B): per-component
+status, evidence state, GitHub server time stamp and bounded evidence, the
+probe artifact's digest, any owner adjudications, and exact-SHA CI for the
+Stage 2C-B6-3a commit only. It carries `closure: PENDING_POST_PUSH_CI` and
+has no field for a result about its own commit. It is written once and
+never rewritten.
+
+**What these are not.** Neither authorizes dispatch, arming, a marker, a
+latch record, provider access or OIDC. Neither carries a credential. The
+readiness record is a rows verdict, not replacement readiness: provider
+rows stay DEFERRED until later, separately governed stages.
 
 No production or production-ready claim follows from this section.

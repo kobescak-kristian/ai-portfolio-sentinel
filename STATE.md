@@ -6171,3 +6171,171 @@ merges every change."
   actions, still not begun: re-enabling `SentinelDailyRun`, the post-B5
   workspace-cap reduction, and any cleanup of the now-inert timing
   variable.
+- 2026-10-02 - ADR-0012 REPAIR STAGE 2C-B6-3a LANDED: READINESS MATRIX
+  CODE, REAL-RUNNER READ-PROBE LANE AND ADR-0012 AMENDMENT B; THE PROBE IS
+  NOT DISPATCHED; REPLACEMENT UNARMED (owner-approved B6-3 plan, revision
+  4, and owner rulings D1 to D5, D7 and R6 to R10, all dated 2026-10-02;
+  no separate routing id). **Model-free stage. It lands the readiness
+  matrix machinery and a dispatch-only probe workflow. It dispatches
+  nothing, evaluates no row against live state, and does not arm,
+  authorize or execute the replacement. Stage 2C-B6-3b (the single probe
+  dispatch, evidence collection and the readiness record) is NOT begun
+  and needs a separate explicit owner GO.**
+  WHAT LANDED. `sentinel/phase5/readiness.py`: the 25-row matrix (ADR-0012
+  section 22 rows 1 to 20, Amendment A9 rows 21 to 23, Amendment B rows
+  24 and 25), a strict canonical record schema and pure evaluators; it
+  reads no clock, file, network or environment. `scripts/run_phase5_readiness.py`:
+  the read-only collector and verifier (`collect`, `verify`, `write-set`,
+  `time`). `.github/workflows/sentinel-latch-read-probe.yml` and
+  `scripts/run_phase5_latch_read_probe.py`: the model-free probe lane.
+  `sentinel/phase5/github_evidence.py`: a default-preserving `per_page`
+  keyword and a `stats` out-parameter on `list_workflow_runs_counted`, so
+  the probe can prove real multi-page pagination; existing callers send
+  byte-identical requests. ADR-0012 Amendment B adds rows 24 (durable
+  latch GitHub-read capability) and 25 (durable replacement latch state /
+  enforcement) and leaves rows 1 to 23 unchanged. `DATA_RETENTION_POLICY.md`
+  section 19 documents the probe artifact and the future readiness record.
+  FROZEN SEMANTICS. Component status is PASS, FAIL or DEFERRED;
+  DEFERRED is legal only for 4.2, 16h and 16i, and aggregation is
+  FAIL over DEFERRED over PASS, so an aggregate can never hide a FAIL.
+  The rows verdict ARMING-ELIGIBLE mechanically requires the exact
+  shape: no FAIL, rows 4 and 16 DEFERRED with exactly those three
+  components DEFERRED, every other row PASS. Evidence states are T0,
+  PREARM_BASELINE (never satisfies a final requirement) and FINAL_T2
+  (only after the readiness source commit R, at most two hours old at
+  commit A); a B6-3 record can carry only the first two. The B6-3b record
+  will carry `closure: PENDING_POST_PUSH_CI` and has no field for a result
+  about its own commit: exact-SHA CI of the B6-3b commit is a post-push
+  closure condition, and B6-3 is not closed or PASS until it succeeds.
+  Carry-forward of the B2 kill rehearsal, the B5 timing rehearsal and the
+  WIF mechanism requires re-verified digests, an empty diff over the
+  frozen path set and an enumerated workflow diff equal to the one
+  allowed official-workflow timeout change (30 to 106 minutes).
+  RUNTIME DRIFT. Fatal (a STOP): SDK version, SDK RECORD, transport or
+  bundled-CLI digest, bundled-CLI version, any direct pin, Python minor,
+  capture failure. Recorded residuals: runner image string, Python patch.
+  Every other distribution version change, addition or removal needs owner
+  adjudication; there is no carve-out, because no mechanical classifier
+  can prove that a package cannot influence the path (Requires-Dist
+  reachability over-approximates, an import-only audit sees only eager
+  imports, and B5 recorded no module-import evidence).
+  RESOLVED MODEL KEYS (decided here, arming scope surfaced). Keys exist
+  today only in the timing driver (`ResultMessage.model_usage`, observed
+  on 24 of 24 B5 invocations); the official execution and evidence path
+  captures none. Frozen: the replacement execution must capture them,
+  passively, as an additive optional field of the terminal evidence
+  record, judged after publication by a pure contract (`claude-sonnet-5`
+  present, subset of the allowed pair, no other key, capture covering
+  every invocation, unavailable is a STOP). This stage implements only
+  the evaluator. The instrumentation is NOT implemented: it adds
+  `sentinel/phase5/evidence_records.py` and its tests to the later arming
+  write set (the runner is already in it); harness, finalizer, terminal,
+  journal and workflow stay unchanged.
+  PROBE LANE. `workflow_dispatch` only; permissions `contents: read` and
+  `actions: read` (the official gate's minus `id-token`); job key and name
+  `gate`; no variable, no secret but `GITHUB_TOKEN`, no marker step; one
+  evidence artifact `sentinel-p5-latchprobe-r<run>-a<attempt>` outside
+  every discovery prefix. The driver issues GET requests only, reads no
+  local clock, never executes the bundled CLI and writes one file. Its 15
+  checks cover server time, the current run, the official-gate listing,
+  real pagination (87-run CI listing at 20 per page), attempt jobs, job
+  steps, the job-start anchor, commit, push activity, artifact discovery,
+  the original marker, work-root layout, import closure, an environment
+  name scan and the runtime identity.
+  TESTS. `tests/test_phase5_readiness.py` (matrix equals the ADR text,
+  schema, aggregation, eligibility shape, freshness, A8, drift,
+  carry-forward, quality surface, envelope, latch row, deferred provider
+  predicates, probe schema, write-set proofs, and the collector over a
+  fake source), `tests/test_phase5_latch_read_probe.py` (driver end to end
+  over a fake client, plus static read-only, model-free and clockless
+  pins), probe pins in `tests/test_phase5_workflow_contracts.py`, `per_page`
+  tests in `tests/test_phase5_github_evidence.py`, and per-path
+  allowances in `tests/test_checker_process_control.py`.
+  VERIFICATION: focused set 1001 passed / 15 skipped; full suite 2897
+  passed / 33 skipped locally (the previous 2595 plus 302 new tests, the
+  same 33 platform skips); `python -m pip check` clean;
+  `python .githooks/validate_artifacts.py .` Tier 0 PASS;
+  `python scripts/check_phase1_frozen.py` PASS with 41/41 blobs
+  identical. Receipt registry byte-unchanged at 4 lines (SHA-256
+  `f64c83afebf5064a6d4dd12b3f41c5df01edfa2e369f7f53b8cdcef5bc301f39`);
+  the latch byte-unchanged (`37799c774db5d7b7281d5c9290b76b531d849a6feaa30ea21a75d51996e6ee5a`);
+  both B6-1 artifacts byte-unchanged; the official workflow, the official
+  runner, the shared script helpers, the latch module, the finalizer,
+  terminal, journal and evidence-record modules and every quality and
+  invocation path show an empty diff; `PURPOSE` is unchanged and
+  `ENVELOPE` is `None`.
+  MUTATION CHECKS (31 runs, each applied alone, tests run, file restored
+  and re-hashed byte-identical): dropping the two-hour age check; letting
+  a baseline satisfy a final requirement; accepting a failed probe check;
+  dropping the monotonic server-time, real-pagination, PURPOSE and
+  run-count requirements; allowing ATTEMPT_AUTHORIZED; treating
+  Deprecated as Active; dropping a model-override name; accepting an
+  envelope id mismatch; widening or adding to the deferred set; letting
+  DEFERRED dominate FAIL; treating row 4 as PASS; dropping the
+  row-aggregate cross-check; auto-accepting transitive drift; accepting a
+  bundled-CLI digest change; accepting a non-empty carry-forward diff; a
+  non-subset or missing resolved model key; `id-token` in the probe
+  workflow; an official-prefix probe artifact name; changing the
+  `per_page` default; letting the record claim closure or CI for another
+  SHA; dropping the pre-commit write-set proof; accepting two B6-3b
+  commits; dropping the extended pre-dispatch facts; a local clock in the
+  probe; ignoring an attempt-count override. All 31 turned a named test
+  red.
+  Executing model: Sonnet 5.5.
+  ACTUAL WRITE SET (exactly the 14 approved paths):
+  `sentinel/phase5/readiness.py` (new), `scripts/run_phase5_readiness.py`
+  (new), `tests/test_phase5_readiness.py` (new),
+  `.github/workflows/sentinel-latch-read-probe.yml` (new),
+  `scripts/run_phase5_latch_read_probe.py` (new),
+  `tests/test_phase5_latch_read_probe.py` (new),
+  `sentinel/phase5/github_evidence.py`,
+  `tests/test_phase5_github_evidence.py`,
+  `tests/test_phase5_workflow_contracts.py`,
+  `tests/test_checker_process_control.py`,
+  `adr/0012-p5d-replacement-execution-envelope.md` (Amendment B only),
+  `DATA_RETENTION_POLICY.md`, `STATE.md` (this entry),
+  `.publicgate-allow` (one status-line entry). No official workflow,
+  runner, finalizer, terminal, journal, latch, evidence-record, harness,
+  fixture, eval, rehearsal, telemetry or requirements change.
+  NON-EVENTS: no probe dispatch and no workflow dispatch, rerun or cancel
+  of any kind; no readiness record written; no arming; `PURPOSE` and
+  `ENVELOPE` unchanged; no ATTEMPT_AUTHORIZED; no marker created or
+  consumed; no provider, model, OIDC or WIF call; no bundled-CLI
+  execution; no instrumentation of the official path; no federation-rule,
+  repository-variable, secret, setting, provider-cap or scheduler change;
+  `SentinelDailyRun` stays Disabled; no write to the private governance
+  repository.
+  RESIDUALS (recorded, not closed here): the probe has never run, so the
+  workflow token's reads of the latch surfaces and the real-runner
+  job-start anchor stay unproven until Stage 2C-B6-3b; Stage 2C-B6-3b is
+  likely to pause for owner adjudication of transitive dependency
+  differences, because B5 ran on an older resolution; the resolved-model
+  instrumentation and the updater-disable controls are later arming
+  scope; provider components 4.2, 16h and 16i stay DEFERRED; the
+  first exchange of the replacement rule on the official-gate workflow
+  reference happens after marker consumption and needs an explicit owner
+  decision at provider preparation; the official runner records no
+  runtime identity at execution time; pagination beyond 100 entries is
+  proven by unit test only, because no real listing is that large.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED,
+  Stage 2C-B5 B5 PASS, execution-envelope artifact COMMITTED, official
+  workflow timeout BOUND to it, A8 allowed-set binding artifact
+  COMMITTED, durable replacement latch COMMITTED (UNARMED), latch
+  enforcement LIVE, **readiness matrix machinery, probe lane and ADR
+  Amendment B LANDED (Stage 2C-B6-3a)**, **probe NOT DISPATCHED**,
+  **Stage 2C-B6-3b NOT STARTED**, readiness record NOT WRITTEN,
+  ATTEMPT_AUTHORIZED NOT WRITTEN, runtime/arming `ENVELOPE` binding
+  PENDING (`ENVELOPE` is `None`, `PURPOSE` is the original), fresh
+  replacement readiness NOT COMPLETE, replacement UNARMED / NOT
+  AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B6-3a landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: a separate explicit owner GO for the single probe dispatch
+  at this stage's commit (Stage 2C-B6-3b), then evidence collection and
+  the readiness record; atomic arming, provider preparation, fresh
+  readiness at R, the final GO and commit A follow, each under its own
+  approved plan. Separately owner-authorized actions, still not begun:
+  re-enabling `SentinelDailyRun`, the post-B5 workspace-cap reduction and
+  any cleanup of the now-inert timing variable.
