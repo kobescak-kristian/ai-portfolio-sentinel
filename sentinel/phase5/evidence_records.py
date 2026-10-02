@@ -198,6 +198,33 @@ _REPLACEMENT_OF_RUN_ID = "32880880053"
 _REPLACEMENT_OWNER_RULING_ID = "q77-p5d-replacement-owner-ruling-a"
 _REPLACEMENT_MARKER_PURPOSE = "P5D_REPLACEMENT_SONNET_GATE"
 
+# Resolved-model-key capture (Stage 2C-B6-4; B6-3 decision R6). Shape bounds
+# only: the contract that judges the keys (non-empty, contains the primary
+# model, subset of the allowed pair, one entry per invocation) lives in
+# ``readiness.check_resolved_model_keys`` and is applied AFTER publication.
+# The bounds below are shared with the runner's observer, which normalizes to
+# them, so a runner-produced value can never fail validation here -- a schema
+# failure would make a completed quality record untrusted and relabel it.
+RESOLVED_MODEL_UNAVAILABLE = "UNAVAILABLE"
+RESOLVED_MODEL_KEYS_MAX_PER_INVOCATION = 16
+RESOLVED_MODEL_KEY_MAX_LENGTH = 128
+RESOLVED_MODEL_ENTRIES_MAX = 256
+
+
+def _check_resolved_model_keys_shape(entries: "tuple | None") -> None:
+    if entries is None:
+        return
+    if len(entries) > RESOLVED_MODEL_ENTRIES_MAX:
+        raise ValueError("resolved_model_keys carries more entries than the shape bound allows")
+    for entry in entries:
+        if entry == RESOLVED_MODEL_UNAVAILABLE:
+            continue
+        if not entry or len(entry) > RESOLVED_MODEL_KEYS_MAX_PER_INVOCATION:
+            raise ValueError("a resolved_model_keys entry must hold 1 to 16 keys or the UNAVAILABLE marker")
+        for key in entry:
+            if not key or len(key) > RESOLVED_MODEL_KEY_MAX_LENGTH:
+                raise ValueError("a resolved model key must be 1 to 128 characters")
+
 
 class GateEvidenceRecord(_IdentityFields):
     """Seam 3 (revision c): the full reproducible gate result, never a
@@ -276,12 +303,20 @@ class GateEvidenceRecord(_IdentityFields):
     # requirements live in ``validate_replacement_provenance``.
     unclassified_basis: UnclassifiedBasis | None = None
     terminal_writer: TerminalWriter | None = None
+    # Stage 2C-B6-4 (R6): per-invocation resolved model keys, record-only and
+    # additive-optional (``auth_mode`` / ``failed_checks`` precedent). One entry
+    # per invocation: the sorted keys of the SDK's ``model_usage``, or the
+    # marker UNAVAILABLE. Set only on runner-authored quality records; never a
+    # trust gate -- ``validate_replacement_provenance`` and
+    # ``terminal.verify_terminal_bytes`` ignore it by design.
+    resolved_model_keys: tuple[tuple[str, ...] | Literal["UNAVAILABLE"], ...] | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "GateEvidenceRecord":
         _require_hex40(self.expected_source_sha)
         _require_identifier(self.model)
         _require_identifier(self.profile_name)
+        _check_resolved_model_keys_shape(self.resolved_model_keys)
         if self.disposition in ("GREEN", "HONEST_FAIL"):
             if not (self.run_ids and self.scoring and self.execution_validity and self.cost_rows):
                 raise ValueError(

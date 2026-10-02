@@ -546,3 +546,83 @@ def test_34_backward_compatible_record_with_no_new_fields_still_constructs():
     assert record.replacement_of_run_id is None
     assert record.termination_source is None
     assert record.observed_signals == ()
+
+
+# ======================================================================
+# Stage 2C-B6-4 (R6): additive resolved_model_keys field. Shape only; it is
+# never a trust gate, so it can never relabel a completed quality record.
+# ======================================================================
+
+SONNET = "claude-sonnet-5"
+HAIKU = "claude-haiku-4-5-20251001"
+
+
+def test_35_resolved_model_keys_defaults_to_none_and_is_additive():
+    assert GateEvidenceRecord(**_replacement_gate_kwargs()).resolved_model_keys is None
+
+
+def test_36_resolved_model_keys_valid_shapes_round_trip():
+    entries = ((HAIKU, SONNET), (SONNET,), "UNAVAILABLE")
+    record = GateEvidenceRecord(**_replacement_gate_kwargs(resolved_model_keys=entries))
+    assert record.resolved_model_keys == entries
+    again = GateEvidenceRecord.model_validate_json(record.model_dump_json(indent=2))
+    assert again == record and again.resolved_model_keys == entries
+
+
+@pytest.mark.parametrize("bad", [
+    ((SONNET, ""),),                      # empty key
+    ((),),                                # empty entry
+    (("x" * 129,),),                      # over-long key
+    (tuple(f"model-{i}" for i in range(17)),),  # too many keys in one entry
+    ("UNAVAIL",),                         # wrong marker string
+    ("unavailable",),                     # marker is exact
+    (7,),                                 # not a string or a tuple of strings
+    ((SONNET, 7),),                       # a non-string key
+    ("UNAVAILABLE",) * 257,               # too many entries
+])
+def test_37_resolved_model_keys_malformed_shapes_are_rejected(bad):
+    with pytest.raises(ValidationError):
+        GateEvidenceRecord(**_replacement_gate_kwargs(resolved_model_keys=bad))
+
+
+def test_38_shape_bounds_are_the_ones_the_runner_observer_normalizes_to():
+    from sentinel.phase5 import evidence_records as er
+
+    assert (er.RESOLVED_MODEL_KEYS_MAX_PER_INVOCATION, er.RESOLVED_MODEL_KEY_MAX_LENGTH,
+            er.RESOLVED_MODEL_ENTRIES_MAX) == (16, 128, 256)
+    assert er.RESOLVED_MODEL_UNAVAILABLE == "UNAVAILABLE"
+    boundary = (tuple("k" * 127 + str(i % 10) for i in range(16)),)  # 16 keys of exactly 128 characters
+    GateEvidenceRecord(**_replacement_gate_kwargs(resolved_model_keys=boundary))  # exactly at the bounds
+    GateEvidenceRecord(**_replacement_gate_kwargs(resolved_model_keys=("UNAVAILABLE",) * 256))
+
+
+@pytest.mark.parametrize("keys", [
+    None, (), ((SONNET,),), ((HAIKU, SONNET),), ((SONNET, "unauthorized-model"),), ("UNAVAILABLE",),
+    ((HAIKU,),),
+])
+def test_39_provenance_validation_and_the_trust_verdict_never_depend_on_the_captured_keys(keys):
+    from sentinel.phase5 import terminal as t
+
+    identity = t.TerminalIdentity(
+        workflow_identity=".github/workflows/sentinel-official-gate.yml", run_id="200", run_attempt=1,
+        event="workflow_dispatch", ref="refs/heads/main", source_sha=SHA_A, expected_source_sha=SHA_A,
+        purpose=repl.REPLACEMENT_PURPOSE,
+    )
+    kwargs = _replacement_gate_kwargs(envelope_id="3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598",
+                                      envelope_version="1")
+    baseline = GateEvidenceRecord(**kwargs)
+    record = GateEvidenceRecord(**{**kwargs, "resolved_model_keys": keys})
+    validate_replacement_provenance(record, expected_source_sha=SHA_A)  # never raises because of the field
+    verdict = t.verify_terminal_bytes(record.model_dump_json(indent=2).encode("utf-8"), identity)
+    assert verdict.kind == "TRUSTED_QUALITY"
+    assert verdict.kind == t.verify_terminal_bytes(baseline.model_dump_json(indent=2).encode("utf-8"), identity).kind
+
+
+def test_40_the_field_is_not_a_replacement_provenance_field_and_is_not_required_by_the_validator():
+    import inspect
+
+    from sentinel.phase5 import evidence_records as er
+    from sentinel.phase5 import terminal as t
+
+    assert "resolved_model_keys" not in t._PROVENANCE_FIELDS
+    assert "resolved_model_keys" not in inspect.getsource(er.validate_replacement_provenance)

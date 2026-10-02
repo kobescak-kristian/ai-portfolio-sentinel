@@ -31,9 +31,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 106
     env:
-      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.SENTINEL_P5D_FEDERATION_RULE_ID }}
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.SENTINEL_P5D_REPLACEMENT_FEDERATION_RULE_ID }}
       ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
       ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      DISABLE_AUTOUPDATER: "1"
+      DISABLE_UPDATES: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -61,7 +63,7 @@ jobs:
         id: marker
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: sentinel-p5-oneshot-p5d-official-sonnet-gate-r${{ github.run_id }}
+          name: sentinel-p5-oneshot-p5d-replacement-sonnet-gate-r${{ github.run_id }}
           path: ${{ runner.temp }}/p5-gate/marker.json
           retention-days: 90
           if-no-files-found: error

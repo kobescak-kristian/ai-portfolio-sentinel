@@ -71,6 +71,24 @@ def runner():
     return _load(RUNNER_PATH, "run_phase5_official_gate_for_finalizer_tests")
 
 
+ARMED_PURPOSE = "P5D_REPLACEMENT_SONNET_GATE"
+ARMED_ENVELOPE_ID = "3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598"
+
+
+@pytest.fixture(autouse=True)
+def _original_purpose_configuration(request, fin, monkeypatch):
+    """Stage 2C-B6-4 armed the runner, and the finalizer (unchanged) imports
+    ``PURPOSE`` and ``ENVELOPE`` from it. The finalizer mechanics tests in this
+    file were written for the original-purpose configuration, so they run in it
+    explicitly. The armed configuration is covered by the ``test_armed_*``
+    tests at the end of this file, which run against the real imported
+    constants."""
+    if request.node.name.startswith("test_armed_"):
+        return
+    monkeypatch.setattr(fin, "PURPOSE", ORIGINAL_PURPOSE)
+    monkeypatch.setattr(fin, "ENVELOPE", None)
+
+
 def _identity(**overrides) -> t.TerminalIdentity:
     fields = dict(
         workflow_identity=WORKFLOW, run_id=RUN_ID, run_attempt=1, event="workflow_dispatch",
@@ -762,9 +780,65 @@ def test_finalizer_never_constructs_gate_evidence_record_directly():
     assert "P5D_REPLACEMENT_SONNET_GATE" not in text
 
 
-def test_finalizer_purpose_and_envelope_come_from_the_runner(fin):
-    assert fin.PURPOSE == ORIGINAL_PURPOSE
-    assert fin.ENVELOPE is None
+def test_armed_finalizer_purpose_and_envelope_come_from_the_runner(fin, runner):
+    """The finalizer file is unchanged by arming; it arms by import."""
+    assert fin.PURPOSE == runner.PURPOSE == ARMED_PURPOSE
+    assert fin.ENVELOPE is not None and fin.ENVELOPE == runner.ENVELOPE
+    assert fin.ENVELOPE == t.EnvelopeIdentity(envelope_id=ARMED_ENVELOPE_ID, envelope_version="1")
+
+
+def _armed_identity(**overrides) -> t.TerminalIdentity:
+    return _identity(purpose=ARMED_PURPOSE, **overrides)
+
+
+def _armed_quality_record(disposition: str) -> GateEvidenceRecord:
+    return _quality_record(
+        disposition, replacement_of_run_id="32880880053", owner_ruling_id="q77-p5d-replacement-owner-ruling-a",
+        marker_purpose=ARMED_PURPOSE, envelope_id=ARMED_ENVELOPE_ID, envelope_version="1",
+        terminal_writer="RUNNER", resolved_model_keys=(("claude-haiku-4-5-20251001", "claude-sonnet-5"),),
+    )
+
+
+@pytest.mark.parametrize("disposition", ["GREEN", "HONEST_FAIL"])
+def test_armed_finalize_preserves_a_trusted_replacement_quality_record_byte_identical(
+    fin, runner, tmp_path, monkeypatch, disposition,
+):
+    args, artifacts, _work, output = _finalize_world(runner, tmp_path, monkeypatch)
+    _no_rest(monkeypatch, fin)
+    data = _bytes(_armed_quality_record(disposition))
+    assert t.verify_terminal_bytes(data, _armed_identity()).kind == "TRUSTED_QUALITY"
+    (artifacts / t.TERMINAL_FILENAME).write_bytes(data)
+    assert fin.cmd_finalize(args) == 0
+    assert (artifacts / t.TERMINAL_FILENAME).read_bytes() == data
+    assert _outputs(output) == {"terminal_required": "true", "decision": "PRESERVE_RUNNER_EVIDENCE"}
+
+
+def test_armed_finalize_absent_with_runner_exception_writes_replacement_infrastructure_invalid(
+    fin, runner, tmp_path, monkeypatch,
+):
+    args, artifacts, _work, output = _finalize_world(runner, tmp_path, monkeypatch, execute="failure")
+    _no_rest(monkeypatch, fin)
+    _runner_journal(artifacts, ("RUNNER_EXCEPTION", {"cause": "RUNNER_EXCEPTION", "exception_type": "RuntimeError"}))
+    assert fin.cmd_finalize(args) == 0
+    verdict = t.verify_terminal_bytes((artifacts / t.TERMINAL_FILENAME).read_bytes(), _armed_identity())
+    assert verdict.kind == "TRUSTED_INFRASTRUCTURE_INVALID"
+    record = verdict.record
+    assert record.terminal_writer == "FINALIZER" and record.termination_source == "RUNNER_EXCEPTION"
+    assert (record.marker_purpose, record.envelope_id, record.envelope_version) == (ARMED_PURPOSE, ARMED_ENVELOPE_ID, "1")
+    assert record.resolved_model_keys is None
+    assert _outputs(output) == {"terminal_required": "true", "decision": "WRITE_INFRASTRUCTURE_INVALID"}
+
+
+def test_armed_finalize_absent_with_observed_signal_writes_replacement_unclassified(
+    fin, runner, tmp_path, monkeypatch,
+):
+    args, artifacts, _work, _output = _finalize_world(runner, tmp_path, monkeypatch, execute="cancelled")
+    _no_rest(monkeypatch, fin)
+    _runner_journal(artifacts, ("SIGNAL_OBSERVED", {"signal": "SIGTERM"}))
+    assert fin.cmd_finalize(args) == 0
+    verdict = t.verify_terminal_bytes((artifacts / t.TERMINAL_FILENAME).read_bytes(), _armed_identity())
+    assert verdict.kind == "TRUSTED_UNCLASSIFIED"
+    assert verdict.record.terminal_writer == "FINALIZER" and verdict.record.resolved_model_keys is None
 
 
 def test_finalizer_journal_events_are_finalizer_scoped_and_content_free(fin, runner, tmp_path, monkeypatch):

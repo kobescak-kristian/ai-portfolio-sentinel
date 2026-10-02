@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import json
 import os
 import re
@@ -74,7 +75,13 @@ from sentinel.phase5 import artifact_names  # noqa: E402
 from sentinel.phase5.github_context import derive_github_context  # noqa: E402
 from sentinel.phase5.models import OneShotMarker  # noqa: E402
 from sentinel.phase5.oneshot import is_eligible_marker_creation  # noqa: E402
-from sentinel.phase5.evidence_records import GateEvidenceRecord  # noqa: E402
+from sentinel.phase5.evidence_records import (  # noqa: E402
+    RESOLVED_MODEL_ENTRIES_MAX,
+    RESOLVED_MODEL_KEY_MAX_LENGTH,
+    RESOLVED_MODEL_KEYS_MAX_PER_INVOCATION,
+    RESOLVED_MODEL_UNAVAILABLE,
+    GateEvidenceRecord,
+)
 from sentinel.phase5.execution_control import (  # noqa: E402
     ExecutionSafetyDomain,
     InvalidRefused,
@@ -84,6 +91,7 @@ from sentinel.phase5.execution_control import (  # noqa: E402
     TerminalArbiter,
 )
 from sentinel.phase5.execution_envelope import (  # noqa: E402
+    CommittedEnvelopeError,
     SessionClock,
     load_committed_envelope,
     resolve_job_start_anchor,
@@ -93,6 +101,11 @@ from sentinel.phase5.journal import (  # noqa: E402
     install_observing_signal_handlers,
     read_journal,
     summarize_journal,
+)
+from sentinel.phase5.replacement import (  # noqa: E402
+    OWNER_RULING_ID,
+    REPLACEMENT_OF_RUN_ID,
+    REPLACEMENT_PURPOSE,
 )
 from sentinel.phase5.terminal import (  # noqa: E402
     CHECKS_FILENAME,
@@ -106,12 +119,24 @@ from sentinel.phase5.terminal import (  # noqa: E402
     write_terminal_atomically,
 )
 
-PURPOSE = "P5D_OFFICIAL_SONNET_GATE"
+# Stage 2C-B6-4 (atomic arming): the runner is bound to the replacement
+# purpose. Restated literal, cross-pinned by tests against
+# ``sentinel.phase5.replacement.REPLACEMENT_PURPOSE`` (the same
+# anti-tautology convention as the cost literals below). Arming binds the
+# code only: the durable replacement latch stays GENESIS-only, so preflight
+# still refuses at LATCH_UNARMED until a separately governed authorization
+# commit exists. The workflow marker artifact name and the finalizer follow
+# this constant (both derive the name through ``artifact_names``).
+PURPOSE = "P5D_REPLACEMENT_SONNET_GATE"
 
-# Stage-2C execution-envelope identity. None until Stage 2C produces it;
-# while None, ``assert_purpose_armable`` refuses the replacement purpose
-# in both subcommands (dispatch q77-p5d-repair-stage2b2-implement-a).
-ENVELOPE: "EnvelopeIdentity | None" = None
+# Stage-2C execution-envelope identity, equal to the committed artifact
+# ``artifacts/phase5_execution_envelope.json`` (its envelope_id is the SHA-256
+# of that artifact). ``assert_envelope_identity_matches_committed`` proves the
+# equality in preflight, before the marker, and again in execute.
+ENVELOPE: "EnvelopeIdentity | None" = EnvelopeIdentity(
+    envelope_id="3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598",
+    envelope_version="1",
+)
 
 # Independently restated (anti-tautology precedent, matching
 # run_phase3_dev_gate.py's own PER_RUN_COST_CAP_EUR_MICROS comment):
@@ -122,8 +147,8 @@ GATE_TOTAL_EUR_MICROS = 5_000_000
 GATE_RESERVE_EUR_MICROS = 1_000_000
 
 # Stage 2C-3 (ADR-0012 repair; dispatch q77-p5d-repair-stage2c3-implement-a).
-# The committed execution envelope this runner would load, once Stage 2C-B
-# commits one. No such artifact is ever written in this stage.
+# The committed execution envelope this runner loads (committed by Stage
+# 2C-B6-1); its identity must equal ``ENVELOPE`` above.
 ENVELOPE_PATH = Path("artifacts/phase5_execution_envelope.json")
 RUNNER_EXIT_LOCK_WAIT_S = 5.0
 EXPECTED_API_JOB_NAME = "gate"
@@ -165,6 +190,92 @@ def gate_profile_identity() -> "tuple[str, str]":
     return SONNET_OFFICIAL_GATE.model, SONNET_OFFICIAL_GATE.name
 
 
+def assert_envelope_identity_matches_committed(envelope: "EnvelopeIdentity | None"):
+    """Stage 2C-B6-4: the runtime ``ENVELOPE`` identity must equal the identity
+    of the strictly loaded committed execution envelope. Called in preflight
+    after ``assert_purpose_armable`` and before the marker candidate exists
+    (a mismatch can therefore never consume the one-shot), and again in
+    execute, where it also supplies the loaded envelope. A missing binding or
+    an identity mismatch is a ``Phase5ScriptError``. A load fault propagates
+    as the strict loader's own ``CommittedEnvelopeError`` (so execute's
+    existing failure record names the same exception type as before);
+    preflight converts it. Nothing is read from the environment or the
+    network. Returns the loaded envelope."""
+    if envelope is None:
+        raise Phase5ScriptError("no runtime envelope identity is bound; refusing")
+    committed = load_committed_envelope(ENVELOPE_PATH)
+    if committed.identity() != envelope:
+        raise Phase5ScriptError(
+            "the runtime ENVELOPE identity does not equal the committed execution envelope identity"
+        )
+    return committed
+
+
+def _replacement_marker_fields(purpose: str) -> dict:
+    """The frozen replacement-marker fields (ADR-0012 section 3; Amendment A1).
+    The marker model requires both under the replacement purpose and refuses
+    both under any other."""
+    if purpose != REPLACEMENT_PURPOSE:
+        return {}
+    return dict(replacement_of_run_id=REPLACEMENT_OF_RUN_ID, owner_ruling_id=OWNER_RULING_ID)
+
+
+class ResolvedModelCapture:
+    """Stage 2C-B6-4 (B6-3 decision R6): passive, record-only capture of the
+    provider-resolved model keys, one entry per invocation. An entry is the
+    sorted keys of the SDK terminal message's ``model_usage`` (normalized to
+    the evidence schema's bounds, so a recorded value can never fail
+    validation), or the explicit marker UNAVAILABLE.
+
+    ``observe`` wraps a ``query_fn``-shaped coroutine function. It returns the
+    callee's outcome object unchanged; observation faults (ordinary
+    ``Exception`` only) record UNAVAILABLE and never reach the run; when the
+    callee does not return (an exception, or cancellation, which is a
+    ``BaseException``) a ``finally`` records UNAVAILABLE and the original
+    exception propagates unchanged: this module has no ``BaseException``
+    handler, by contract. It never touches the latch, journal, registry,
+    arbiter or the standard streams."""
+
+    def __init__(self) -> None:
+        self._entries: list = []
+
+    def entries(self) -> tuple:
+        return tuple(self._entries)
+
+    def _record(self, entry) -> None:
+        if len(self._entries) < RESOLVED_MODEL_ENTRIES_MAX:
+            self._entries.append(entry)
+
+    def _record_from(self, outcome) -> None:
+        try:
+            from agents.checker.failures import QueryOutcome
+
+            result = outcome.result if isinstance(outcome, QueryOutcome) else outcome
+            usage = getattr(result, "model_usage", None)
+            keys = sorted({str(key)[:RESOLVED_MODEL_KEY_MAX_LENGTH] for key in usage}) if isinstance(usage, dict) else []
+            entry = tuple(keys[:RESOLVED_MODEL_KEYS_MAX_PER_INVOCATION]) if keys else RESOLVED_MODEL_UNAVAILABLE
+        except Exception:  # noqa: BLE001 - observation must never reach the run
+            entry = RESOLVED_MODEL_UNAVAILABLE
+        self._record(entry)
+
+    def observe(self, query_fn):
+        capture = self
+
+        @functools.wraps(query_fn)
+        async def observed(check_class, reservation, state, user_prompt, model=None):
+            returned = False
+            try:
+                outcome = await query_fn(check_class, reservation, state, user_prompt, model)
+                returned = True
+            finally:
+                if not returned:
+                    capture._record(RESOLVED_MODEL_UNAVAILABLE)
+            capture._record_from(outcome)
+            return outcome
+
+        return observed
+
+
 def cmd_preflight(args: argparse.Namespace) -> int:
     from agents.checker import auth, oidc
     from agents.checker.budget import RunBudgetCoordinator
@@ -189,12 +300,12 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         # Durable-history-first one-shot discovery and replacement
         # eligibility (ADR-0012 Amendment A1; dispatch
         # q77-p5d-repair-stage2-implement-a). The original P5-D purpose
-        # is durably consumed in the committed receipt registry, so
-        # this refuses today exactly as it must -- the replacement
-        # purpose is NOT armed by this dispatch; PURPOSE stays
-        # P5D_OFFICIAL_SONNET_GATE. This wiring exists so a later,
-        # separately governed arming dispatch needs only to switch
-        # PURPOSE, not add new eligibility logic.
+        # is durably consumed in the committed receipt registry. Since
+        # Stage 2C-B6-4 PURPOSE is the replacement purpose, so a run is
+        # admitted only if the durable history permits exactly one
+        # replacement and the durable latch (below) is authorized; with
+        # the committed GENESIS-only latch preflight refuses at
+        # LATCH_UNARMED before any marker, journal or provider activity.
         receipts = load_durable_history()
         markers = discover_oneshot_markers(client, args.work_root)
         assert_oneshot_not_consumed_durably(PURPOSE, receipts, markers)
@@ -208,11 +319,18 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         )
         assert_replacement_history_permits(receipts, markers, PURPOSE, latch=latch)
         assert_purpose_armable(PURPOSE, ENVELOPE)
+        try:
+            assert_envelope_identity_matches_committed(ENVELOPE)
+        except (CommittedEnvelopeError, OSError) as exc:
+            raise Phase5ScriptError(
+                f"committed execution envelope failed to load: {type(exc).__name__}"
+            ) from exc
 
         candidate = OneShotMarker(
             schema_version=1, purpose=PURPOSE, created_at_utc=datetime.now(timezone.utc),
             workflow_identity=ctx.workflow_path, github_run_id=ctx.run_id,
             run_attempt=ctx.run_attempt, event=ctx.event, source_sha=ctx.sha,
+            **_replacement_marker_fields(PURPOSE),
         )
         if not is_eligible_marker_creation(candidate):
             raise Phase5ScriptError("run_attempt > 1 is never eligible to create a gate marker")
@@ -338,6 +456,7 @@ def _run_gate_session(
 
     ids = RandomIdFactory()
     run1_id, run2_id = ids.new_run_id(), ids.new_run_id()
+    capture = ResolvedModelCapture()  # one sink for the whole gate session (both runs)
 
     def _abort_if_latched(task) -> None:  # noqa: ARG001 - RunHooks.before_task_execute shape
         if latch.is_set:
@@ -355,8 +474,15 @@ def _run_gate_session(
         # gate has no wall-clock measurement to protect, so the composed wrapper
         # is correct here; the timing driver must instead prepare outside its
         # measured region.
+        #
+        # The passive resolved-model observer (B6-3 decision R6) sits just
+        # inside the deadline guard and outside the refresh and health
+        # wrappers: the guard journals INVOCATION_STARTED before it calls its
+        # callee, so only this position yields exactly one capture entry per
+        # started invocation, including one refused by a refresh or health
+        # fault before any provider call.
         stub.query_fn = deadline_guarded(
-            assertion_refreshed(health_gated(stub.query_fn, session), session, os.environ),
+            capture.observe(assertion_refreshed(health_gated(stub.query_fn, session), session, os.environ)),
             run_ordinal=run_ordinal, clock=clock, latch=latch, registry=registry,
             journal=journal, stall_budget_ms=stall_budget_ms, config=config,
             terminate=terminate, on_control_failure=on_control_failure,
@@ -468,6 +594,7 @@ def _run_gate_session(
             "cost_rows": tuple(cost_rows),
             "accounted_total_eur_micros": accounted_total,
             "auth_mode": auth_mode,
+            "resolved_model_keys": capture.entries(),
             "green": overall_pass,
             "check_lines": [msg for _, msg in checks],
         }
@@ -568,6 +695,7 @@ def _quality_record(identity, result: dict) -> GateEvidenceRecord:
         cost_rows=result["cost_rows"], accounted_total_eur_micros=result["accounted_total_eur_micros"],
         disposition="GREEN" if result["green"] else "HONEST_FAIL",
         auth_mode=result["auth_mode"],
+        resolved_model_keys=result["resolved_model_keys"],
         terminal_writer=terminal_writer_for(PURPOSE, "RUNNER"),
         **replacement_provenance_fields(PURPOSE, ENVELOPE),
     )
@@ -710,10 +838,10 @@ def _execute_body(args, journal: OperationalJournal, tracker: _JournalStateTrack
         # --- Stage 2C-3: anchor / envelope / control construction. Both
         # must succeed before any of the six control objects are built;
         # a failure here is still PRE_PROVIDER_FAILURE (arbiter is None,
-        # falls to the existing outer failure handling). No committed
-        # envelope is ever written in this stage, so this always refuses
-        # today -- see STATE.md for why that does not change today's live
-        # workflow outcome. ---
+        # falls to the existing outer failure handling). Stage 2C-B6-4: the
+        # committed envelope is loaded through the identity check, so it is
+        # also proven equal to ENVELOPE here (preflight proved it before the
+        # marker). ---
         resolved_at_utc = datetime.now(timezone.utc)
         resolved_at_mono = time.monotonic()
         jobs = client.list_run_attempt_jobs(ctx.run_id, ctx.run_attempt)
@@ -724,7 +852,7 @@ def _execute_body(args, journal: OperationalJournal, tracker: _JournalStateTrack
             expected_runner_name=env.get("RUNNER_NAME", ""),
             resolved_at_utc=resolved_at_utc, monotonic_at_resolve=resolved_at_mono,
         )
-        stage2c_envelope = load_committed_envelope(ENVELOPE_PATH)
+        stage2c_envelope = assert_envelope_identity_matches_committed(ENVELOPE)
 
         domain = ExecutionSafetyDomain()
         latch = SessionLatch(domain)

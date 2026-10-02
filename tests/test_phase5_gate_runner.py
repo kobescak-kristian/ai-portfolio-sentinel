@@ -5,8 +5,11 @@ ADR-0011 Section 7 pins this exact path; Part 3 never executes it.
 from __future__ import annotations
 
 import ast
+import asyncio
+import hashlib
 import importlib.metadata
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -186,7 +189,7 @@ def test_gate_cost_literals_cross_pinned_against_sonnet_official_gate():
 
 def test_purpose_string_is_exact():
     module = _load_module()
-    assert module.PURPOSE == "P5D_OFFICIAL_SONNET_GATE"
+    assert module.PURPOSE == "P5D_REPLACEMENT_SONNET_GATE" == _repl.REPLACEMENT_PURPOSE
 
 
 def test_uses_one_shared_coordinator_not_two_independent_ones():
@@ -269,24 +272,27 @@ def test_committed_registry_already_shows_original_p5d_consumed_and_preflight_re
     P5D_OFFICIAL_SONNET_GATE marker receipt for the original run, so a
     full preflight run against a zero-live-marker world must still
     refuse via the durable check -- artifact expiry can never silently
-    re-open a consumed one-shot, and PURPOSE stays the unarmed original
-    value. Model-free: no network, no GitHub call, no OIDC/provider
-    activity, no marker written."""
+    re-open a consumed one-shot. Model-free: no network, no GitHub call, no
+    OIDC/provider activity, no marker written. (Stage 2C-B6-4 armed PURPOSE,
+    so the original purpose is named explicitly here.)"""
     from sentinel.phase5.receipts import load_registry
 
     module = _load_module()
     committed = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
     receipts = load_registry(committed)
     with pytest.raises(module.Phase5ScriptError):
-        module.assert_oneshot_not_consumed_durably(module.PURPOSE, receipts, [])
+        module.assert_oneshot_not_consumed_durably(_ORIGINAL_PURPOSE, receipts, [])
+    # The armed purpose is not durably consumed: the registry shows only the
+    # original run, so the one-shot check itself passes for the replacement.
+    module.assert_oneshot_not_consumed_durably(module.PURPOSE, receipts, [])
 
 
-def test_replacement_not_permitted_for_unarmed_original_purpose():
+def test_replacement_not_permitted_for_the_original_purpose():
     """The structural replacement-eligibility check also independently
-    refuses for the unarmed original purpose (defense in depth beyond
-    the durable one-shot check above): PURPOSE is not the frozen
-    replacement purpose, so ``assert_replacement_history_permits``
-    refuses regardless of what the registry shows."""
+    refuses for the original purpose (defense in depth beyond the durable
+    one-shot check above): it is not the frozen replacement purpose, so
+    ``assert_replacement_history_permits`` refuses regardless of what the
+    registry shows."""
     from sentinel.phase5.receipts import load_registry
 
     module = _load_module()
@@ -296,7 +302,10 @@ def test_replacement_not_permitted_for_unarmed_original_purpose():
     # check: the latch (Stage 2C-B6-2) cannot be what refuses here.
     admitted = LatchVerdict(admitted=True, state="ADMISSION_OPEN")
     with pytest.raises(module.Phase5ScriptError, match="not the frozen replacement purpose"):
-        module.assert_replacement_history_permits(receipts, [], module.PURPOSE, latch=admitted)
+        module.assert_replacement_history_permits(receipts, [], _ORIGINAL_PURPOSE, latch=admitted)
+    # The armed purpose with an admitted latch is permitted by the committed
+    # history (exactly one replacement is still available).
+    module.assert_replacement_history_permits(receipts, [], module.PURPOSE, latch=admitted)
 
 
 def test_no_generic_model_selector_and_cli_untouched():
@@ -798,7 +807,14 @@ _GH_ENV = {
 _POSIX_ONLY = pytest.mark.skipif(os.name != "posix", reason="POSIX fd inheritance semantics")
 
 
-def _identity(purpose: str = "P5D_OFFICIAL_SONNET_GATE") -> _t.TerminalIdentity:
+_ORIGINAL_PURPOSE = "P5D_OFFICIAL_SONNET_GATE"
+_ARMED_ENVELOPE_ID = "3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598"
+
+
+def _identity(purpose: str = "P5D_REPLACEMENT_SONNET_GATE") -> _t.TerminalIdentity:
+    """Stage 2C-B6-4 armed the runner: the default identity is the replacement
+    purpose. Tests of the unarmed original-purpose trust rules pass
+    ``_ORIGINAL_PURPOSE`` explicitly."""
     return _t.TerminalIdentity(
         workflow_identity=_WORKFLOW, run_id=_RUN_ID, run_attempt=1, event="workflow_dispatch",
         ref="refs/heads/main", source_sha=_SHA, expected_source_sha=_SHA, purpose=purpose,
@@ -817,6 +833,7 @@ def _session_result(green: bool) -> dict:
         "cost_rows": (_cost_row("r-1"),),
         "accounted_total_eur_micros": 2_000,
         "auth_mode": _WIF,
+        "resolved_model_keys": (("claude-haiku-4-5-20251001", "claude-sonnet-5"),),
         "green": green,
         "check_lines": ["pooled_recall: 3/3 -> PASS"] if green else ["pooled_recall: 1/3 -> FAIL"],
     }
@@ -855,6 +872,11 @@ class _FakeEnvelope:
     def __init__(self, *, session_duration_s: int = 3600, stall_budget_ms: int = 600_000) -> None:
         self.session_duration_s = session_duration_s
         self.stall_budget_ms = stall_budget_ms
+
+    def identity(self) -> _t.EnvelopeIdentity:
+        """Stage 2C-B6-4: execute proves the loaded envelope's identity equals the
+        runner's ENVELOPE, so the stand-in carries the committed identity."""
+        return _t.EnvelopeIdentity(envelope_id=_ARMED_ENVELOPE_ID, envelope_version="1")
 
 
 class _FakeAnchorClient:
@@ -1235,6 +1257,8 @@ def test_original_purpose_still_refuses_at_the_durable_one_shot_check_before_the
     tmp_path, monkeypatch, capsys
 ):
     module, args, order = _prepare_preflight(tmp_path, monkeypatch, real_eligibility=True)
+    monkeypatch.setattr(module, "PURPOSE", _ORIGINAL_PURPOSE)  # armed since B6-4; the original is named explicitly
+    monkeypatch.setattr(module, "ENVELOPE", None)
 
     def _latch_must_not_be_consulted(*a, **kw):
         raise AssertionError("the latch was consulted before the durable one-shot check")
@@ -1316,7 +1340,7 @@ def test_execute_green_and_honest_fail_are_operator_indistinguishable(tmp_path, 
     assert green["out"] == module.EXECUTE_QUALITY_LINE + "\n"
     assert green["err"] == ""
     assert green["github_output"] == "" and green["summary"] == ""
-    assert green["verdict"] == "TRUSTED_QUALITY" and green["writer"] is None
+    assert green["verdict"] == "TRUSTED_QUALITY" and green["writer"] == "RUNNER"
     for forbidden in (b"GREEN", b"HONEST_FAIL", b"pooled", b"true_positives", b"FAIL", b"r-1", b"emitted"):
         assert forbidden not in green["journal_bytes"] and forbidden not in honest["journal_bytes"]
     assert [row[1] for row in green["journal"]] == [
@@ -1376,7 +1400,8 @@ def test_pre_provider_failure_record_when_marker_not_visible(tmp_path, monkeypat
     verdict = _t.verify_terminal_bytes((artifacts / _t.TERMINAL_FILENAME).read_bytes(), _identity())
     assert verdict.kind == "TRUSTED_INFRASTRUCTURE_INVALID"
     assert verdict.record.termination_source == "PRE_PROVIDER_FAILURE"
-    assert verdict.record.terminal_writer is None
+    assert verdict.record.terminal_writer == "RUNNER"
+    assert verdict.record.envelope_id == _ARMED_ENVELOPE_ID
     shape = _journal_shape(artifacts / _t.JOURNAL_FILENAME)
     assert ("RUNNER", "RUNNER_EXCEPTION", None, None, None, "PRE_PROVIDER_FAILURE", None) in shape
     assert not (artifacts / _t.CHECKS_FILENAME).exists()
@@ -1647,10 +1672,14 @@ def test_run_gate_session_wraps_query_fn_with_health_gated_then_deadline_guarded
     assert probe.guard_calls[0]["latch"] is probe.latch
     assert probe.guard_calls[0]["registry"] is probe.registry
     assert probe.guard_calls[0]["stall_budget_ms"] == 600_000
-    stub_query_fn = probe.deps_captured[0].judgment.query_fn
-    assert stub_query_fn == (
-        "deadline-wrapped", ("assertion-refreshed", ("health-wrapped", "raw-query-fn")), 1
-    )
+    # Stage 2C-B6-4 (owner ruling A2): the passive resolved-model observer sits just
+    # INSIDE deadline_guarded and OUTSIDE assertion_refreshed, because the guard
+    # journals INVOCATION_STARTED before it calls its callee, so only this
+    # position yields one capture entry per started invocation.
+    tag, observed, ordinal = probe.deps_captured[0].judgment.query_fn
+    assert (tag, ordinal) == ("deadline-wrapped", 1)
+    assert inspect.iscoroutinefunction(observed)
+    assert observed.__wrapped__ == ("assertion-refreshed", ("health-wrapped", "raw-query-fn"))
 
 
 def test_execute_control_construction_shares_one_domain_across_both_runs(tmp_path, monkeypatch):
@@ -2105,41 +2134,43 @@ def test_os_exit_present_only_in_official_gate_runner():
 # --- purpose-gated writer attribution --------------------------------------
 
 
-def test_quality_writer_none_under_original_purpose_is_trusted():
+def test_quality_writer_none_under_original_purpose_is_trusted(monkeypatch):
     module = _load_module()
-    record = module._quality_record(_identity(), _session_result(False))
+    monkeypatch.setattr(module, "PURPOSE", _ORIGINAL_PURPOSE)  # armed since B6-4; the original is named explicitly
+    monkeypatch.setattr(module, "ENVELOPE", None)
+    record = module._quality_record(_identity(_ORIGINAL_PURPOSE), _session_result(False))
     assert record.terminal_writer is None and record.replacement_of_run_id is None
     data = record.model_dump_json(indent=2).encode("utf-8")
-    assert _t.verify_terminal_bytes(data, _identity()).kind == "TRUSTED_QUALITY"
+    assert _t.verify_terminal_bytes(data, _identity(_ORIGINAL_PURPOSE)).kind == "TRUSTED_QUALITY"
 
 
-def test_quality_writer_runner_under_armed_purpose_with_envelope_is_trusted(monkeypatch):
+def test_quality_writer_runner_under_the_armed_purpose_with_the_committed_envelope_is_trusted():
     module = _load_module()
-    monkeypatch.setattr(module, "PURPOSE", _repl.REPLACEMENT_PURPOSE)
-    monkeypatch.setattr(module, "ENVELOPE", _t.EnvelopeIdentity(envelope_id="env-test", envelope_version="v-test"))
-    identity = _identity(_repl.REPLACEMENT_PURPOSE)
+    identity = _identity()
     record = module._quality_record(identity, _session_result(True))
     assert record.terminal_writer == "RUNNER"
     assert record.replacement_of_run_id == _repl.REPLACEMENT_OF_RUN_ID
+    assert (record.envelope_id, record.envelope_version) == (_ARMED_ENVELOPE_ID, "1")
     data = record.model_dump_json(indent=2).encode("utf-8")
     assert _t.verify_terminal_bytes(data, identity).kind == "TRUSTED_QUALITY"
     # The Stage-2B-1 non-replacement trust rule is unchanged: the same
     # writer-attributed bytes are never trusted under the original purpose.
-    assert _t.verify_terminal_bytes(data, _identity()).kind == "PROVENANCE_INVALID"
+    assert _t.verify_terminal_bytes(data, _identity(_ORIGINAL_PURPOSE)).kind == "PROVENANCE_INVALID"
 
 
 def test_writer_attributed_invalid_record_under_original_purpose_stays_provenance_invalid():
     module = _load_module()
     raw = _t.build_invalid_record(
-        identity=_identity(), envelope=None, created_at_utc=datetime.now(timezone.utc),
+        identity=_identity(_ORIGINAL_PURPOSE), envelope=None, created_at_utc=datetime.now(timezone.utc),
         model="claude-sonnet-5", profile_name="sonnet-official-gate",
         infrastructure_cause="RUNNER_EXCEPTION", writer="RUNNER",
     )
-    assert _t.verify_terminal_bytes(raw.model_dump_json().encode("utf-8"), _identity()).kind == "PROVENANCE_INVALID"
-    attributed = module.attribute_invalid_record(raw, purpose=module.PURPOSE)
+    original = _identity(_ORIGINAL_PURPOSE)
+    assert _t.verify_terminal_bytes(raw.model_dump_json().encode("utf-8"), original).kind == "PROVENANCE_INVALID"
+    attributed = module.attribute_invalid_record(raw, purpose=_ORIGINAL_PURPOSE)
     assert attributed.terminal_writer is None
     assert _t.verify_terminal_bytes(
-        attributed.model_dump_json().encode("utf-8"), _identity()
+        attributed.model_dump_json().encode("utf-8"), original
     ).kind == "TRUSTED_INFRASTRUCTURE_INVALID"
 
 
@@ -2147,25 +2178,404 @@ def test_replacement_purpose_without_envelope_refuses_in_preflight_and_execute(t
     module = _load_module()
     with pytest.raises(module.Phase5ScriptError, match="Stage-2C"):
         module.assert_purpose_armable(_repl.REPLACEMENT_PURPOSE, None)
-    module.assert_purpose_armable(module.PURPOSE, None)  # the unarmed original is not refused by this guard
+    module.assert_purpose_armable(_ORIGINAL_PURPOSE, None)  # the original purpose is not refused by this guard
 
     module, args, artifacts, calls = _prepare_execute(tmp_path, monkeypatch, session_fn=lambda: _session_result(True))
-    monkeypatch.setattr(module, "PURPOSE", _repl.REPLACEMENT_PURPOSE)
+    monkeypatch.setattr(module, "ENVELOPE", None)  # the committed binding removed: the armed purpose must refuse
     capfd.readouterr()
     assert module.cmd_execute(args) == 1
     assert "cause=PRE_PROVIDER_FAILURE" in capfd.readouterr().out
     assert "acquire_oidc" not in calls
 
 
-def test_purpose_original_and_envelope_none():
+def test_purpose_replacement_and_envelope_bound_to_the_committed_artifact():
     module = _load_module()
-    assert module.PURPOSE == "P5D_OFFICIAL_SONNET_GATE"
-    assert module.ENVELOPE is None
+    assert module.PURPOSE == _repl.REPLACEMENT_PURPOSE
+    assert module.ENVELOPE == _t.EnvelopeIdentity(envelope_id=_ARMED_ENVELOPE_ID, envelope_version="1")
+    assert hashlib.sha256((REPO_ROOT / module.ENVELOPE_PATH).read_bytes()).hexdigest() == _ARMED_ENVELOPE_ID
 
 
-@pytest.mark.parametrize("path", [GATE_RUNNER_PATH, GATE_FINALIZER_PATH, GATE_WORKFLOW_PATH])
-def test_gate_scripts_and_workflow_carry_no_replacement_literal(path):
+# --- Stage 2C-B6-4: runtime envelope-id check -------------------------------
+
+
+def test_envelope_identity_check_accepts_exactly_the_committed_identity():
+    module = _load_module()
+    committed = module.assert_envelope_identity_matches_committed(module.ENVELOPE)
+    assert committed.identity() == module.ENVELOPE
+
+
+@pytest.mark.parametrize("envelope", [
+    None,
+    _t.EnvelopeIdentity(envelope_id="0" + _ARMED_ENVELOPE_ID[1:], envelope_version="1"),
+    _t.EnvelopeIdentity(envelope_id=_ARMED_ENVELOPE_ID, envelope_version="2"),
+])
+def test_envelope_identity_check_refuses_a_missing_or_different_identity(envelope):
+    module = _load_module()
+    with pytest.raises(module.Phase5ScriptError):
+        module.assert_envelope_identity_matches_committed(envelope)
+
+
+def test_envelope_identity_check_lets_the_strict_loader_fault_propagate(monkeypatch):
+    module = _load_module()
+
+    def _absent(path):
+        raise CommittedEnvelopeError("committed envelope is absent")
+
+    monkeypatch.setattr(module, "load_committed_envelope", _absent)
+    with pytest.raises(CommittedEnvelopeError):
+        module.assert_envelope_identity_matches_committed(module.ENVELOPE)
+
+
+def test_the_envelope_identity_check_runs_after_the_armable_guard_and_before_the_marker_candidate():
+    preflight = _runner_function("cmd_preflight")
+    assert _call_count(preflight, "assert_envelope_identity_matches_committed") == 1
+    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
+    body = text[text.index("def cmd_preflight"):text.index("def _derive_auth_mode")]
+    assert body.index("assert_purpose_armable(PURPOSE, ENVELOPE)") < body.index(
+        "assert_envelope_identity_matches_committed(ENVELOPE)"
+    ) < body.index("OneShotMarker(")
+    execute = _runner_function("_execute_body")
+    assert _call_count(execute, "assert_envelope_identity_matches_committed") == 1
+    assert _call_count(execute, "load_committed_envelope") == 0  # execute loads only through the identity check
+
+
+@pytest.mark.parametrize("which", ["wrong_id", "missing_artifact"])
+def test_preflight_envelope_faults_refuse_before_the_marker_and_the_journal(tmp_path, monkeypatch, capsys, which):
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch)
+    if which == "wrong_id":
+        monkeypatch.setattr(module, "ENVELOPE", _t.EnvelopeIdentity(envelope_id="f" * 64, envelope_version="1"))
+    else:
+        monkeypatch.setattr(module, "ENVELOPE_PATH", tmp_path / "absent-envelope.json")
+    assert module.cmd_preflight(args) == 2
+    assert "PREFLIGHT FAIL" in capsys.readouterr().err
+    assert "write_marker_json" not in order and "establish_preflight_journal" not in order
+    assert not args.marker_out.exists()
+
+
+# --- Stage 2C-B6-4: replacement marker candidate ----------------------------
+
+
+def test_replacement_marker_fields_are_frozen_for_the_replacement_purpose_only():
+    module = _load_module()
+    assert module._replacement_marker_fields(_repl.REPLACEMENT_PURPOSE) == {
+        "replacement_of_run_id": "32880880053", "owner_ruling_id": "q77-p5d-replacement-owner-ruling-a",
+    }
+    assert module._replacement_marker_fields(_ORIGINAL_PURPOSE) == {}
+    assert module._replacement_marker_fields("P5C_WIF_PROBE") == {}
+
+
+def test_an_admitted_armed_preflight_writes_the_replacement_marker_with_the_frozen_fields(tmp_path, monkeypatch):
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch)
+    assert module.cmd_preflight(args) == 0
+    marker = json.loads(args.marker_out.read_text(encoding="utf-8"))
+    assert marker["purpose"] == "P5D_REPLACEMENT_SONNET_GATE"
+    assert marker["replacement_of_run_id"] == "32880880053"
+    assert marker["owner_ruling_id"] == "q77-p5d-replacement-owner-ruling-a"
+    assert marker["workflow_identity"] == _WORKFLOW and marker["run_attempt"] == 1
+    from sentinel.phase5 import artifact_names
+    assert artifact_names.oneshot_marker_name(marker["purpose"], "1") == "sentinel-p5-oneshot-p5d-replacement-sonnet-gate-r1"
+    assert order == ["establish_preflight_journal", "write_marker_json"]
+
+
+# --- Stage 2C-B6-4 (owner correction R11): armed but not authorized ---------
+
+
+class _RecordingPreflightClient(_FakePreflightClient):
+    """Records every evidence-client method called, so the test can pin that
+    only the existing bounded read-only pre-admission reads happen."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list = []
+
+    def list_artifacts(self, prefix):
+        self.calls.append(("list_artifacts", prefix))
+        return []
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        def _record(*args, **kwargs):
+            self.calls.append((name, args))
+            raise AssertionError(f"unexpected evidence-client call before the latch refusal: {name}")
+
+        return _record
+
+
+def test_armed_preflight_with_the_real_committed_genesis_only_latch_refuses_at_latch_unarmed(
+    tmp_path, monkeypatch, capsys,
+):
+    """R11. The refusal precedes marker creation, journal establishment,
+    OIDC/WIF/provider/model activity, the FX and coordinator path, and any
+    execution. The existing bounded read-only evidence reads that come before
+    the latch admission are permitted and are NOT required to be zero."""
+    from agents.checker import auth as auth_mod
+    from agents.checker import budget as budget_mod
+    from agents.checker import fx as fx_mod
+    from agents.checker import oidc as oidc_mod
+
+    module, args, order = _prepare_preflight(tmp_path, monkeypatch, real_eligibility=True)
+    client = _RecordingPreflightClient()
+    monkeypatch.setattr(module, "build_evidence_client", lambda env, **kw: client)
+
+    def _forbidden(name):
+        def _raise(*a, **kw):
+            raise AssertionError(f"{name} must not run before the LATCH_UNARMED refusal")
+        return _raise
+
+    monkeypatch.setattr(oidc_mod, "write_placeholder_token_file", _forbidden("write_placeholder_token_file"))
+    monkeypatch.setattr(oidc_mod, "acquire_oidc", _forbidden("acquire_oidc"))
+    monkeypatch.setattr(auth_mod, "assert_wif_config_ready", _forbidden("assert_wif_config_ready"))
+    monkeypatch.setattr(fx_mod, "resolve_ecb_usd_per_eur", _forbidden("resolve_ecb_usd_per_eur"))
+    monkeypatch.setattr(budget_mod, "RunBudgetCoordinator", _forbidden("RunBudgetCoordinator"))
+    for name in ("cmd_execute", "_execute_body", "_run_gate_session", "assert_envelope_identity_matches_committed"):
+        monkeypatch.setattr(module, name, _forbidden(name))
+
+    assert module.PURPOSE == _repl.REPLACEMENT_PURPOSE  # the real armed binding, not patched
+    assert module.cmd_preflight(args) == 2
+    err = capsys.readouterr().err
+    assert "replacement not admitted by the durable latch: state=UNARMED reason=LATCH_UNARMED" in err
+    assert order == []  # no journal establishment, no marker write
+    assert not args.marker_out.exists()
+    assert not (args.artifacts_dir / _t.JOURNAL_FILENAME).exists()
+    assert not args.fx_state_path.exists()
+    # Only the existing read-only pre-admission evidence reads happened.
+    assert client.calls == [("list_artifacts", "sentinel-p5-gate-evidence-")]
+    # The admission itself issued none of the reads `gather_latch_facts` owns.
+    assert client.server_time_reads == 0
+
+
+def test_the_preflight_order_is_unchanged_by_arming():
+    """No reordering: the exact sequence of the existing preflight calls."""
+    text = GATE_RUNNER_PATH.read_text(encoding="utf-8")
+    body = text[text.index("def cmd_preflight"):text.index("def _derive_auth_mode")]
+    sequence = [
+        "assert_expected_source_on_disk(", "build_evidence_client(", "assert_expected_source_live(",
+        "derive_github_context(", "_load_eval_config()", "_assert_fresh_evidence_dir(args.gate_root",
+        "prepare_fresh_work_root(", "load_durable_history()", "discover_oneshot_markers(",
+        "assert_oneshot_not_consumed_durably(", "load_replacement_latch()",
+        "assert_no_replacement_gate_evidence_visible(", "replacement_latch_admission(",
+        "assert_replacement_history_permits(", "assert_purpose_armable(", "assert_envelope_identity_matches_committed(",
+        "OneShotMarker(", "write_placeholder_token_file(", "assert_wif_config_ready(", "resolve_ecb_usd_per_eur(",
+        "RunBudgetCoordinator(", "write_json_artifact(", "establish_preflight_journal(", "write_marker_json(",
+    ]
+    positions = [body.index(token) for token in sequence]
+    assert positions == sorted(positions)
+
+
+# --- Stage 2C-B6-4 (R6): passive resolved-model observer --------------------
+
+
+def _observer_world():
+    module = _load_module()
+    return module, module.ResolvedModelCapture()
+
+
+def _loop_factory():
+    """A real asyncio loop whose local self-pipe is created with the socket guard
+    lifted for that one call (the Windows proactor loop connects a local
+    socketpair), restored immediately -- the same helper the envelope-guard
+    tests use. Nothing here touches the network."""
+    import _socket
+    import socket as socket_module
+
+    guarded_connect = socket_module.socket.connect
+    socket_module.socket.connect = _socket.socket.connect
+    try:
+        return asyncio.new_event_loop()
+    finally:
+        socket_module.socket.connect = guarded_connect
+
+
+def _run_async(fn):
+    with asyncio.Runner(loop_factory=_loop_factory) as runner:
+        return runner.run(fn())
+
+
+def _drive(observed, *args):
+    async def _go():
+        return await observed("check", object(), object(), "prompt", "claude-sonnet-5")
+
+    return _run_async(_go)
+
+
+def _usage_outcome(usage, *, wrapped=True):
+    from agents.checker.failures import QueryOutcome
+
+    result = types.SimpleNamespace(model_usage=usage)
+    return QueryOutcome(result=result, error=None) if wrapped else result
+
+
+def test_the_observer_is_a_coroutine_function_that_returns_the_same_outcome_object():
+    module, capture = _observer_world()
+    outcome = _usage_outcome({"claude-sonnet-5": {}, "claude-haiku-4-5-20251001": {}})
+
+    async def _inner(check_class, reservation, state, user_prompt, model=None):
+        return outcome
+
+    observed = capture.observe(_inner)
+    assert inspect.iscoroutinefunction(observed) and observed.__wrapped__ is _inner
+    assert _drive(observed) is outcome
+    assert capture.entries() == (("claude-haiku-4-5-20251001", "claude-sonnet-5"),)
+
+
+@pytest.mark.parametrize("wrapped", [True, False])
+def test_the_observer_reads_a_query_outcome_or_a_raw_result(wrapped):
+    module, capture = _observer_world()
+    outcome = _usage_outcome({"claude-sonnet-5": {}}, wrapped=wrapped)
+
+    async def _inner(*a, **kw):
+        return outcome
+
+    assert _drive(capture.observe(_inner)) is outcome
+    assert capture.entries() == (("claude-sonnet-5",),)
+
+
+@pytest.mark.parametrize("usage", [None, {}, [], "claude-sonnet-5"])
+def test_the_observer_records_unavailable_when_the_sdk_returns_no_usable_keys(usage):
+    module, capture = _observer_world()
+    outcome = _usage_outcome(usage)
+
+    async def _inner(*a, **kw):
+        return outcome
+
+    assert _drive(capture.observe(_inner)) is outcome
+    assert capture.entries() == ("UNAVAILABLE",)
+
+
+def test_the_observer_records_unavailable_and_reraises_the_same_exception_from_the_callee():
+    module, capture = _observer_world()
+    boom = RuntimeError("provider fault")
+
+    async def _inner(*a, **kw):
+        raise boom
+
+    with pytest.raises(RuntimeError) as caught:
+        _drive(capture.observe(_inner))
+    assert caught.value is boom
+    assert capture.entries() == ("UNAVAILABLE",)
+
+
+def test_the_observer_records_unavailable_and_propagates_cancellation_unchanged():
+    module, capture = _observer_world()
+    saw_cancellation = []
+
+    async def _inner(*a, **kw):
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            saw_cancellation.append(True)
+            raise
+
+    async def _go():
+        observed = capture.observe(_inner)
+        with pytest.raises(TimeoutError):  # wait_for cancels the observer, then reports the timeout
+            await asyncio.wait_for(observed("check", object(), object(), "prompt", "m"), timeout=0.05)
+
+    _run_async(_go)
+    assert saw_cancellation == [True]  # the cancellation reached the callee through the observer unchanged
+    assert capture.entries() == ("UNAVAILABLE",)
+
+
+def test_an_observation_fault_never_reaches_the_run(monkeypatch):
+    module, capture = _observer_world()
+
+    class _Hostile:
+        @property
+        def model_usage(self):
+            raise ValueError("hostile property")
+
+    from agents.checker.failures import QueryOutcome
+
+    hostile = QueryOutcome(result=_Hostile(), error=None)  # the observer reads `.result.model_usage`, which raises
+
+    async def _inner(*a, **kw):
+        return hostile
+
+    outcome = _drive(capture.observe(_inner))
+    assert outcome is hostile  # the run receives its own outcome object, untouched by the fault
+    assert capture.entries() == ("UNAVAILABLE",)
+
+
+def test_the_observer_normalizes_to_the_evidence_schema_bounds():
+    from sentinel.phase5 import evidence_records as er
+
+    module, capture = _observer_world()
+    many = {f"model-{i:03d}" + "x" * 200: {} for i in range(40)}
+
+    async def _inner(*a, **kw):
+        return _usage_outcome(many)
+
+    _drive(capture.observe(_inner))
+    (entry,) = capture.entries()
+    assert len(entry) == er.RESOLVED_MODEL_KEYS_MAX_PER_INVOCATION
+    assert all(0 < len(key) <= er.RESOLVED_MODEL_KEY_MAX_LENGTH for key in entry)
+    er._check_resolved_model_keys_shape(capture.entries())  # a recorded value can never fail the schema
+    assert module.RESOLVED_MODEL_ENTRIES_MAX == er.RESOLVED_MODEL_ENTRIES_MAX
+
+
+def test_the_observer_sink_is_bounded_by_the_schema_entry_bound():
+    module, capture = _observer_world()
+    for _ in range(module.RESOLVED_MODEL_ENTRIES_MAX + 5):
+        capture._record("UNAVAILABLE")
+    assert len(capture.entries()) == module.RESOLVED_MODEL_ENTRIES_MAX
+
+
+def test_the_observer_module_has_no_base_exception_handler_and_touches_no_control_surface():
+    tree = ast.parse(GATE_RUNNER_PATH.read_text(encoding="utf-8"))
+    cls = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "ResolvedModelCapture")
+    for node in ast.walk(cls):
+        if isinstance(node, ast.ExceptHandler):
+            assert isinstance(node.type, ast.Name) and node.type.id == "Exception"
+    used = {n.id for n in ast.walk(cls) if isinstance(n, ast.Name)} | {n.attr for n in ast.walk(cls) if isinstance(n, ast.Attribute)}
+    assert not used & {"latch", "journal", "registry", "arbiter", "print", "stdout", "stderr", "domain"}
+
+
+def test_a_session_result_carries_the_capture_and_the_quality_record_records_it():
+    module = _load_module()
+    record = module._quality_record(_identity(), _session_result(True))
+    assert record.resolved_model_keys == (("claude-haiku-4-5-20251001", "claude-sonnet-5"),)
+    data = record.model_dump_json(indent=2).encode("utf-8")
+    assert _t.verify_terminal_bytes(data, _identity()).kind == "TRUSTED_QUALITY"
+
+
+@pytest.mark.parametrize("keys", [
+    None, (), (("claude-sonnet-5", "unauthorized-model"),), ("UNAVAILABLE",), (("claude-haiku-4-5-20251001",),),
+])
+def test_the_published_verdict_never_depends_on_the_captured_keys(keys):
+    """R6: a capture violation is judged after publication; it never relabels
+    or untrusts a completed quality record."""
+    module = _load_module()
+    result = dict(_session_result(True), resolved_model_keys=keys)
+    record = module._quality_record(_identity(), result)
+    data = record.model_dump_json(indent=2).encode("utf-8")
+    verdict = _t.verify_terminal_bytes(data, _identity())
+    assert verdict.kind == "TRUSTED_QUALITY" and verdict.record.disposition == "GREEN"
+
+
+def test_the_post_publication_contract_composes_with_the_recorded_field():
+    from sentinel.phase5 import readiness as rd
+
+    module = _load_module()
+    good = module._quality_record(_identity(), _session_result(True))
+    assert rd.check_resolved_model_keys(good.resolved_model_keys, invocation_count=1).status == "PASS"
+    for keys, count in ((None, 1), (("UNAVAILABLE",), 1), ((("claude-sonnet-5", "other"),), 1),
+                        ((("claude-haiku-4-5-20251001",),), 1), ((("claude-sonnet-5",),), 2)):
+        record = module._quality_record(_identity(), dict(_session_result(True), resolved_model_keys=keys))
+        entries = record.resolved_model_keys if record.resolved_model_keys is not None else ()
+        assert rd.check_resolved_model_keys(entries, invocation_count=count).status == "FAIL"
+
+
+@pytest.mark.parametrize("path", [GATE_FINALIZER_PATH, GATE_WORKFLOW_PATH])
+def test_finalizer_and_workflow_carry_no_replacement_literal(path):
+    """The runner holds the one binding; the finalizer imports it and the
+    workflow names the marker by its slug."""
     assert "P5D_REPLACEMENT_SONNET_GATE" not in path.read_text(encoding="utf-8")
+
+
+def test_runner_carries_the_replacement_literal_exactly_once_as_the_purpose_binding():
+    assert GATE_RUNNER_PATH.read_text(encoding="utf-8").count("P5D_REPLACEMENT_SONNET_GATE") == 1
 
 
 def test_workflow_marker_name_matches_runner_purpose_canonical_name():

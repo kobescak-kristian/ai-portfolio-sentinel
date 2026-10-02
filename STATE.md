@@ -6460,3 +6460,205 @@ merges every change."
   owner-authorized actions, still not begun: re-enabling
   `SentinelDailyRun`, the post-B5 workspace-cap reduction and any cleanup
   of the now-inert timing variable.
+- 2026-10-02 - ADR-0012 REPAIR STAGE 2C-B6-4 RECORDED: ATOMIC ARMING OF
+  THE REPLACEMENT (CODE AND WORKFLOW BINDING); REPLACEMENT ARMED, NOT
+  AUTHORIZED; DURABLE LATCH STILL GENESIS-ONLY; CLOSURE PENDING EXACT-SHA
+  CI OF THIS COMMIT (owner-approved arming plan, revision 2, and owner
+  rulings A1 to A6 and R11, all dated 2026-10-02; the stage name is
+  working, no separate routing id). **Model-free stage. It binds the
+  official-gate runner, its workflow and one evidence-record field to the
+  replacement purpose. It dispatches nothing, writes no ATTEMPT_AUTHORIZED
+  record, creates no marker and calls no provider. B6-4 is not closed:
+  exact-SHA CI of this commit is a post-push closure condition, and only
+  when it succeeds does the close report declare "Atomic arming complete:
+  ARMED / UNAUTHORIZED". If it fails the stage stays OPEN and STOPPED.**
+  WHAT CHANGED (the whole arming change is one commit). (1) `PURPOSE` in
+  `scripts/run_phase5_official_gate.py` is `P5D_REPLACEMENT_SONNET_GATE`
+  (a restated literal, cross-pinned to `replacement.REPLACEMENT_PURPOSE`).
+  The finalizer file is unchanged: it imports `PURPOSE` and `ENVELOPE` from
+  the runner and derives the marker name from `PURPOSE`, so it arms by
+  import. (2) `ENVELOPE` is the committed envelope identity, id
+  `3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598`,
+  version `1`, pinned equal to the committed artifact, to its SHA-256 and to
+  the strictly loaded envelope. New `assert_envelope_identity_matches_committed`
+  runs in preflight after `assert_purpose_armable` and before the marker
+  candidate (a mismatch can never consume the one-shot), and in execute in
+  place of the bare envelope load; this closes the residual B6-2 recorded.
+  (3) The marker candidate carries `replacement_of_run_id` `32880880053` and
+  `owner_ruling_id` `q77-p5d-replacement-owner-ruling-a` under the
+  replacement purpose and neither under any other. (4) The official
+  workflow uploads the marker as
+  `sentinel-p5-oneshot-p5d-replacement-sonnet-gate-r<run id>`, reads the
+  federation rule from the NEW variable
+  `SENTINEL_P5D_REPLACEMENT_FEDERATION_RULE_ID` (owner ruling A1; the old
+  variable still names the archived original rule and no workflow
+  references it; the new variable does not exist yet, so a dispatch that
+  somehow passed the latch would still refuse at the WIF configuration
+  check, before any marker), and sets `DISABLE_AUTOUPDATER` and
+  `DISABLE_UPDATES` to `"1"` at job level. The enumerated workflow diff
+  against the B6-3b commit is exactly six changed lines (two removed, four
+  added, counting the two controls) and nothing else: no comment, step,
+  condition, permission, timeout or concurrency line. (5) R6 capture:
+  `GateEvidenceRecord.resolved_model_keys` is an additive optional field,
+  one entry per invocation (the sorted keys of the SDK `model_usage`, or
+  `UNAVAILABLE`), shape-bounded to 16 keys of 1 to 128 characters per entry
+  and 256 entries. It is never a trust gate: `validate_replacement_provenance`
+  and the terminal verdict ignore it by design, so a violation can never
+  relabel a completed quality record. A passive observer in the runner
+  records it. Per owner ruling A2 it sits just inside `deadline_guarded` and
+  outside `assertion_refreshed`, because the guard journals INVOCATION_STARTED
+  before calling its callee, so only that position yields one entry per
+  started invocation. It returns the callee outcome unchanged, swallows only
+  its own observation faults, records `UNAVAILABLE` when the callee does not
+  return and lets the original exception propagate (it has no BaseException
+  handler), and touches no latch, journal, registry or standard stream. Per
+  owner ruling A4 only runner-authored quality records carry the field. The
+  contract that judges it, `readiness.check_resolved_model_keys`, applies
+  after publication and is unchanged.
+  ARMED BUT NOT AUTHORIZED (owner correction R11). With the real committed
+  GENESIS-only latch the armed preflight stops at `replacement not admitted
+  by the durable latch: state=UNARMED reason=LATCH_UNARMED` before marker
+  creation, preflight journal establishment, any OIDC, WIF, provider or
+  model activity, the FX and coordinator path, and any execution. The
+  bounded read-only GitHub evidence reads that precede the latch admission
+  still run and preflight order is unchanged (a test pins the exact call
+  sequence); a test with the real committed registry and latch proves each
+  "before", records the evidence-client calls and pins that the only call is
+  the gate-evidence listing and that the admission issues none of the reads
+  its own fact gathering owns.
+  UPDATER CONTROLS, VERIFIED BEFORE USE (owner ruling A6; all four checks
+  passed). (1) The pinned Linux artifact `claude_agent_sdk-0.2.110-py3-none-manylinux_2_17_x86_64.whl`
+  (75,924,237 bytes, SHA-256
+  `56371dd7a2c66c0bd497dc0b3cab4193a228b196f600676393d69c0ecee37cfb`,
+  equal to the PyPI digest) was downloaded to scratch only, never installed,
+  imported or executed. (2) Its bundled CLI `claude_agent_sdk/_bundled/claude`
+  is 239,438,648 bytes with SHA-256
+  `1038dba88bdf1b80941dc3e383e93b088325b00497329ac50da460c8786d5bee`,
+  equal to the Linux digest recorded earlier in this file and to
+  `bundled_cli.sha256_actual` of the B6-3 probe artifact
+  `sentinel-p5-latchprobe-r37041308260-a1` (id `11241692974`, read by REST
+  with its digest verified); declared CLI version 2.1.191. (3) `DISABLE_AUTOUPDATER`
+  (12 occurrences) and `DISABLE_UPDATES` (10) are statically present in that
+  binary (a byte read; presence only). (4) The Claude Code advanced-setup
+  documentation (https://code.claude.com/docs/en/setup, section "Disable
+  auto-updates", read 2026-10-02, paraphrased here) still says that the
+  auto-update variable stops only the background check and leaves manual
+  `claude update` and `claude install` working, and that the all-updates
+  variable blocks every update path including manual ones. The harness runs
+  with `setting_sources=[]`, so a settings-file `env` key would be ignored;
+  the SDK builds the CLI environment from the inherited process
+  environment, so the controls are job-level environment variables. Owner
+  accepted residual: the behavioral effect of the two controls on the
+  SDK-bundled CLI is not exercised before the replacement run, because
+  executing that CLI only to test them stays forbidden.
+  DATED HAZARDS RE-READ AT ARMING (2026-10-02, carried to the final GO).
+  Provider model lifecycle page: `claude-sonnet-5` Active, retirement not
+  sooner than 2027-06-30; `claude-haiku-4-5-20251001` Active, retirement not
+  sooner than 2026-10-15; neither appears in the deprecation history; the
+  stated policy is at least 60 days' notice before retirement. Runner
+  images: `ubuntu-latest` migrates to 26.04 beginning 2026-10-19, completing
+  2026-11-19, gradually, and the `ubuntu-24.04` label stays available; the
+  B2, B5 and B6-3 baselines are `ubuntu24`. Owner ruling A3: no runner-image
+  pin at this stage. At the final GO the lifecycle is re-read at most two
+  hours before commit A, and the mandatory probe re-capture must report the
+  `ubuntu24` family: a different OS major is a STOP for an owner decision
+  (pin the label or requalify), not a recorded residual.
+  VERIFICATION: focused and full suite focused set (gate runner, workflow contracts, replacement, finalizer, terminal, envelope,
+  readiness, latch) 1002 passed / 11 skipped; full suite 2957 passed / 33 skipped locally (the
+  previous 2897 plus 60 net new tests, the same 33 platform skips); `python -m pip check`
+  clean; `python .githooks/validate_artifacts.py .` Tier 0 PASS;
+  `python scripts/check_phase1_frozen.py` PASS with 41/41 blobs identical
+  (the amber line is the committed freeze-to-HEAD drift, not touched here).
+  Shared test fixtures moved to the armed constants; the finalizer
+  mechanics tests run in an explicit original-purpose configuration with new
+  armed finalizer tests beside them; the B6-3 readiness collector tests run
+  against an unarmed-runner twin (owner ruling A5: the armed-state readiness
+  evaluators belong to the readiness-at-R stage).
+  PRESERVATION. Byte-identical to the B6-3b commit `c4d3c166d30c3e5a379729d93baea7e3713d5293`:
+  the finalizer, `terminal.py`, `journal.py`, `models.py`, `oneshot.py`,
+  `replacement.py`, `receipts.py`, `latch.py`, `github_evidence.py`,
+  `execution_envelope.py`, `execution_control.py`, `scripts/_phase5_common.py`,
+  `agents/` (including the harness, `oidc.py`, `auth.py`, `envelope_guard.py`
+  and `process_control.py`), `contracts/`, `fixtures/`, `evals/`,
+  `rehearsal/`, the requirements files, the probe workflow and driver,
+  `sentinel/phase5/readiness.py`, `scripts/run_phase5_readiness.py`, every
+  other workflow, `.githooks/`, the ADRs, `DATA_RETENTION_POLICY.md` and
+  every `artifacts/phase5_*` file: registry `f64c83afebf5064a6d4dd12b3f41c5df01edfa2e369f7f53b8cdcef5bc301f39`
+  (4 lines), latch `37799c774db5d7b7281d5c9290b76b531d849a6feaa30ea21a75d51996e6ee5a`
+  (GENESIS only, UNARMED), envelope `3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598`,
+  A8 binding `891636d2396e1e80f1ee3a9c444b7a0e37700ff2d93f5555d2c166da9c55f1f3`,
+  B6-3 record `78aa2f8951295665b4bf2fad69b526e66b85294ff5410b61879ab46591dee7cc`.
+  The D4 mechanical proofs were re-run read-only: finalizer, terminal and
+  journal against the B2 source, the invocation paths, process-control paths
+  and WIF paths against the B5 source (all empty diffs), and the quality
+  paths against the original-run source limited to the four allowed diffs
+  with the harness diff hash unchanged.
+  MUTATION CHECKS (27 runs, each applied alone to one file, the focused set
+  run, the file restored and re-hashed byte-identical): `PURPOSE` back to the original; `ENVELOPE`
+  back to `None`; one hex digit of the envelope id; the id check dropped from preflight, dropped
+  from execute, and moved after the marker candidate; marker replacement fields dropped; marker
+  artifact name reverted; federation mapping reverted; `DISABLE_UPDATES` removed;
+  `DISABLE_AUTOUPDATER` set to `"0"`; an extra `DISABLE_*` name added; observer not installed,
+  placed innermost, placed outermost; a callee exception escaping unrecorded; the observer
+  swallowing `BaseException`; the observer returning a copy; an observation fault reaching the
+  run; the query outcome not unwrapped; the observer bound above the schema bound; the quality
+  record dropping the captured keys; capture made a requirement of the provenance validator; the
+  schema accepting an over-long key; the latch file touched; the workflow timeout changed; the
+  concurrency group changed. One stayed green at first (an observation fault reaching the run):
+  the test's hostile object was never reached because it was not wrapped in a query outcome, so
+  the test was strengthened and the mutation then failed it. All 27 then turned a named test red).
+  Executing model: Sonnet 5.5.
+  ACTUAL WRITE SET (exactly the 12 approved paths):
+  `scripts/run_phase5_official_gate.py`, `sentinel/phase5/evidence_records.py`,
+  `.github/workflows/sentinel-official-gate.yml`,
+  `tests/test_phase5_gate_runner.py`, `tests/test_phase5_workflow_contracts.py`,
+  `tests/test_phase5_replacement.py`, `tests/test_phase5_gate_finalizer.py`,
+  `tests/test_phase5_terminal.py`, `tests/test_phase5_execution_envelope.py`,
+  `tests/test_phase5_readiness.py`, `STATE.md` (this entry),
+  `.publicgate-allow` (one status-line entry). No latch, registry, envelope
+  or A8 artifact, finalizer, terminal, journal, harness, requirements,
+  readiness or ADR change.
+  NON-EVENTS: no ATTEMPT_AUTHORIZED written; no marker created or consumed;
+  no workflow dispatch, rerun or cancel of any kind; no provider, model,
+  OIDC or WIF call; no bundled-CLI execution (the downloaded Linux CLI was
+  only read as bytes); no federation-rule, repository-variable, secret,
+  setting, provider-cap or scheduler change (the new variable is NOT
+  created); `SentinelDailyRun` stays Disabled; no write to the private
+  governance repository; no readiness record written.
+  RESIDUALS (recorded, not closed here): the effect of the updater controls
+  on the SDK-bundled CLI is unexercised until the replacement run; the
+  replacement run resolves its own dependencies at run time and the
+  official runner records no runtime identity at execution; the first
+  exchange of the replacement rule on the official-gate workflow reference
+  happens after marker consumption and needs an explicit owner decision at
+  provider preparation; provider components 4.2, 16h and 16i stay DEFERRED;
+  the B6-3 readiness collector is the unarmed-baseline tool and now
+  reports armed facts, so the readiness-at-R stage must add the armed-state
+  evaluators for rows 6, 16d, 16e, 18 and 25, extend the carry-forward
+  workflow-diff allowance with exactly the lines above, read the variable
+  named above, and add the final-evidence mode; commit A must be a child of
+  exactly the readiness commit R and add only the latch line, so final
+  readiness evidence stamped after R cannot be committed before A and where
+  that record lives is undecided.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED, Stage
+  2C-B5 B5 PASS, execution-envelope artifact COMMITTED, official workflow
+  timeout BOUND, A8 allowed-set binding artifact COMMITTED, durable
+  replacement latch COMMITTED (UNARMED), latch enforcement LIVE, readiness
+  matrix machinery and probe lane LANDED, probe DISPATCHED ONCE and PASSED,
+  readiness record COMMITTED (B6-3 closed as PASS / ARMING-ELIGIBLE),
+  **replacement runner, workflow and evidence record ARMED IN CODE (Stage
+  2C-B6-4 recorded; closure PENDING exact-SHA CI of this commit)**,
+  ATTEMPT_AUTHORIZED NOT WRITTEN, replacement federation variable and rule
+  NOT CREATED, provider rows DEFERRED, fresh replacement readiness NOT
+  COMPLETE, replacement NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B6-4 recorded.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: wait for the exact-SHA CI of this commit; on success the
+  arming stage is complete, and provider preparation (owner: new rule, new
+  variable, cap, first-exchange residual) needs its own approved plan, then
+  readiness-at-R, the final GO and commit A, each under its own approved
+  plan. Separately owner-authorized actions, still not begun: re-enabling
+  `SentinelDailyRun`, the post-B5 workspace-cap reduction and any cleanup of
+  the now-inert timing variable.

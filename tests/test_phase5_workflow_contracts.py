@@ -10,6 +10,7 @@ is that key, matching the same quirk already present in ci.yml.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -171,7 +172,12 @@ def test_every_uses_is_a_frozen_full_sha_pin(name):
 @pytest.mark.parametrize("name,rule_var", [
     ("sentinel-schedule.yml", "SENTINEL_SCHEDULE_FEDERATION_RULE_ID"),
     ("sentinel-wif-probe.yml", "SENTINEL_P5C_FEDERATION_RULE_ID"),
-    ("sentinel-official-gate.yml", "SENTINEL_P5D_FEDERATION_RULE_ID"),
+    # Stage 2C-B6-4 (owner ruling A1): the replacement lane has its own variable.
+    # The old SENTINEL_P5D_FEDERATION_RULE_ID still names the archived original
+    # rule and is referenced by no workflow; a never-created replacement
+    # variable reads as empty, which `assert_wif_config_ready` refuses before
+    # any marker exists.
+    ("sentinel-official-gate.yml", "SENTINEL_P5D_REPLACEMENT_FEDERATION_RULE_ID"),
     ("sentinel-timing-rehearsal.yml", "SENTINEL_P5D_TIMING_FEDERATION_RULE_ID"),
 ])
 def test_per_lane_federation_rule_variable_maps_to_the_provider_env_name(name, rule_var):
@@ -180,10 +186,51 @@ def test_per_lane_federation_rule_variable_maps_to_the_provider_env_name(name, r
     # no other lane's rule variable name appears in this file
     other_vars = {
         "SENTINEL_SCHEDULE_FEDERATION_RULE_ID", "SENTINEL_P5C_FEDERATION_RULE_ID",
-        "SENTINEL_P5D_FEDERATION_RULE_ID", "SENTINEL_P5D_TIMING_FEDERATION_RULE_ID",
+        "SENTINEL_P5D_FEDERATION_RULE_ID", "SENTINEL_P5D_REPLACEMENT_FEDERATION_RULE_ID",
+        "SENTINEL_P5D_TIMING_FEDERATION_RULE_ID",
     } - {rule_var}
     for other in other_vars:
         assert other not in text
+
+
+def test_no_workflow_references_the_archived_original_rule_variable():
+    for path in WORKFLOWS_DIR.glob("*.yml"):
+        assert "SENTINEL_P5D_FEDERATION_RULE_ID" not in path.read_text(encoding="utf-8"), path.name
+
+
+# Stage 2C-B6-4 (atomic arming): the official-gate job environment, exactly.
+_OFFICIAL_JOB_ENV = {
+    "ANTHROPIC_FEDERATION_RULE_ID": "${{ vars.SENTINEL_P5D_REPLACEMENT_FEDERATION_RULE_ID }}",
+    "ANTHROPIC_ORGANIZATION_ID": "${{ vars.ANTHROPIC_ORGANIZATION_ID }}",
+    "ANTHROPIC_SERVICE_ACCOUNT_ID": "${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}",
+    "DISABLE_AUTOUPDATER": "1",
+    "DISABLE_UPDATES": "1",
+}
+
+
+def test_official_gate_job_env_is_exactly_the_federation_entries_and_the_two_updater_controls():
+    """D3 / owner ruling A6: the bundled CLI must not silently update. The harness
+    runs with `setting_sources=[]`, so a settings.json env key would be ignored;
+    the SDK builds the CLI environment from the inherited process environment, so
+    the controls are job-level environment variables, exactly `"1"`, and no other
+    `DISABLE_*` name is present anywhere in the workflow."""
+    job = next(iter(_load("sentinel-official-gate.yml")["jobs"].values()))
+    assert job["env"] == _OFFICIAL_JOB_ENV
+    assert all(isinstance(job["env"][name], str) for name in ("DISABLE_AUTOUPDATER", "DISABLE_UPDATES"))
+    for step in job["steps"]:
+        assert not any(name.startswith("DISABLE_") for name in step.get("env", {})), step.get("name")
+    text = (WORKFLOWS_DIR / "sentinel-official-gate.yml").read_text(encoding="utf-8")
+    assert sorted(set(re.findall(r"DISABLE_[A-Z_]+", text))) == ["DISABLE_AUTOUPDATER", "DISABLE_UPDATES"]
+
+
+def test_official_gate_marker_artifact_name_is_the_replacement_canonical_name():
+    from sentinel.phase5 import artifact_names
+
+    marker = next(s for s in _gate_steps() if s.get("id") == "marker")
+    name = marker["with"]["name"]
+    assert name == "sentinel-p5-oneshot-p5d-replacement-sonnet-gate-r${{ github.run_id }}"
+    assert name == artifact_names.oneshot_marker_name("P5D_REPLACEMENT_SONNET_GATE", "${{ github.run_id }}")
+    assert "official-sonnet-gate" not in name
 
 
 @pytest.mark.parametrize(

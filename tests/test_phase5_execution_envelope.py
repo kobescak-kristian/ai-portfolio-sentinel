@@ -264,13 +264,25 @@ def test_module_never_consults_the_wall_clock():
             assert name not in ("now", "utcnow", "today", "time", "gmtime", "localtime"), ast.dump(node)
 
 
-def test_official_gate_runtime_envelope_identity_stays_none():
-    """Stage 2C-B6-1 commits the envelope ARTIFACT only (the former
-    no-committed-artifact guard expired at that landing). The runner's
-    runtime ENVELOPE identity stays None until the separately governed
-    arming change (STATE.md ARMING CONTRACT)."""
-    runner = (REPO_ROOT / "scripts" / "run_phase5_official_gate.py").read_text(encoding="utf-8")
-    assert 'ENVELOPE: "EnvelopeIdentity | None" = None' in runner
+def test_official_gate_runtime_envelope_identity_equals_the_committed_artifact():
+    """Stage 2C-B6-1 committed the envelope ARTIFACT; Stage 2C-B6-4 (atomic
+    arming) binds the runner's runtime ENVELOPE identity to it. The identity
+    equals the strictly loaded committed envelope's identity and the SHA-256
+    of the artifact bytes, and ``assert_envelope_identity_matches_committed``
+    proves that equality at run time (preflight, before the marker, and
+    execute)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "official_gate_for_envelope_pin", REPO_ROOT / "scripts" / "run_phase5_official_gate.py"
+    )
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    committed = ee.load_committed_envelope(COMMITTED_ENVELOPE_PATH)
+    assert runner.ENVELOPE == committed.identity()
+    assert runner.ENVELOPE.envelope_id == hashlib.sha256(COMMITTED_ENVELOPE_PATH.read_bytes()).hexdigest()
+    assert runner.ENVELOPE.envelope_version == ee.ENVELOPE_VERSION == "1"
+    assert runner.assert_envelope_identity_matches_committed(runner.ENVELOPE).identity() == runner.ENVELOPE
 
 
 # ======================================================================

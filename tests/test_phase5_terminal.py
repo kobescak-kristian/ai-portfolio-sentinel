@@ -1222,15 +1222,24 @@ def _module_level_assignments(path: Path, name: str) -> list:
     return values
 
 
-def test_official_gate_purpose_unchanged_and_envelope_absent():
-    """The gate stays unarmed: the original purpose literal is exactly
-    what the runner carries, and the Stage-2C execution-envelope identity
-    is still None (which makes the replacement purpose refuse)."""
+def test_official_gate_is_bound_to_the_replacement_purpose_and_the_committed_envelope_identity():
+    """Stage 2C-B6-4 (atomic arming): the runner carries the replacement
+    purpose literal and an ``EnvelopeIdentity`` with the committed envelope's
+    id and version. The durable latch stays GENESIS-only, so this binding alone
+    authorizes nothing (preflight refuses at LATCH_UNARMED)."""
     runner = REPO_ROOT / "scripts" / "run_phase5_official_gate.py"
-    assert 'PURPOSE = "P5D_OFFICIAL_SONNET_GATE"' in runner.read_text(encoding="utf-8")
+    purposes = _module_level_assignments(runner, "PURPOSE")
+    assert len(purposes) == 1
+    assert isinstance(purposes[0], ast.Constant) and purposes[0].value == repl.REPLACEMENT_PURPOSE
     envelopes = _module_level_assignments(runner, "ENVELOPE")
-    assert len(envelopes) == 1
-    assert isinstance(envelopes[0], ast.Constant) and envelopes[0].value is None
+    assert len(envelopes) == 1 and isinstance(envelopes[0], ast.Call)
+    assert isinstance(envelopes[0].func, ast.Name) and envelopes[0].func.id == "EnvelopeIdentity"
+    assert not envelopes[0].args
+    keywords = {kw.arg: kw.value for kw in envelopes[0].keywords}
+    assert set(keywords) == {"envelope_id", "envelope_version"}
+    assert all(isinstance(v, ast.Constant) for v in keywords.values())
+    assert keywords["envelope_id"].value == "3380e09da8afa056a3a3a9af8df68d886e3f02683cebfeabbf2fa658c5d62598"
+    assert keywords["envelope_version"].value == "1"
 
 
 def test_terminal_library_is_wired_only_into_the_permitted_gate_scripts():
@@ -1245,10 +1254,15 @@ def test_terminal_library_is_wired_only_into_the_permitted_gate_scripts():
     assert importers <= _PERMITTED_WIRING_SCRIPTS, sorted(importers - _PERMITTED_WIRING_SCRIPTS)
 
 
-def test_replacement_purpose_literal_absent_from_the_execution_surface():
+def test_replacement_purpose_literal_is_confined_to_the_runner_binding():
+    """Stage 2C-B6-4 armed the runner: the replacement purpose literal appears in
+    the execution surface exactly once, as the runner's ``PURPOSE`` binding. The
+    finalizer and the workflow never carry it (the finalizer imports the
+    binding; the workflow names the marker artifact by its slug)."""
     for relative in _EXECUTION_SURFACE:
         text = (REPO_ROOT / relative).read_text(encoding="utf-8")
-        assert repl.REPLACEMENT_PURPOSE not in text, relative
+        expected = 1 if relative == "scripts/run_phase5_official_gate.py" else 0
+        assert text.count(repl.REPLACEMENT_PURPOSE) == expected, relative
     # Defense in depth for the scoping above: the P5-E seam validator's own
     # reference is expected to remain, and must never be removed to satisfy
     # this guard.

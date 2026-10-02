@@ -991,19 +991,58 @@ RUNNER_TEXT = (REPO_ROOT / "scripts" / "run_phase5_official_gate.py").read_text(
 COMMON_TEXT = (REPO_ROOT / "scripts" / "_phase5_common.py").read_text(encoding="utf-8")
 
 
-def test_runner_facts_for_the_committed_unarmed_runner():
+_ARMED_PURPOSE = 'PURPOSE = "P5D_REPLACEMENT_SONNET_GATE"'
+_ORIGINAL_PURPOSE = 'PURPOSE = "P5D_OFFICIAL_SONNET_GATE"'
+_ARMED_ENVELOPE = re.compile(r'ENVELOPE: "EnvelopeIdentity \| None" = EnvelopeIdentity\(.*?\n\)', re.S)
+_UNARMED_ENVELOPE = 'ENVELOPE: "EnvelopeIdentity | None" = None'
+
+
+def _unarmed_runner_twin(text: str) -> str:
+    """The B6-3-era unarmed runner, derived from the committed armed runner
+    (Stage 2C-B6-4 armed it). The B6-3 collector is the unarmed-baseline tool;
+    its logic stays covered against this twin, and A5 defers the armed-state
+    evaluators to the readiness-at-R stage."""
+    text = text.replace(_ARMED_PURPOSE, _ORIGINAL_PURPOSE, 1)
+    text, count = _ARMED_ENVELOPE.subn(_UNARMED_ENVELOPE, text, count=1)
+    assert count == 1
+    return text
+
+
+def test_runner_facts_for_the_committed_armed_runner():
+    """Stage 2C-B6-4: the committed runner is bound to the replacement purpose
+    and the committed envelope identity. The collector reports these facts
+    accurately (the B6-3 row 25 predicate was written for the unarmed state)."""
     facts = script.runner_facts(RUNNER_TEXT, COMMON_TEXT)
     assert facts == {
-        "purpose_is_original": True, "envelope_is_none": True, "preflight_consults_latch_in_order": True,
+        "purpose_is_original": False, "envelope_is_none": False, "preflight_consults_latch_in_order": True,
         "eligibility_requires_latch": True, "runner_never_overrides_attempts": True,
     }
 
 
+def test_the_unarmed_twin_reproduces_the_unarmed_runner_facts():
+    facts = script.runner_facts(_unarmed_runner_twin(RUNNER_TEXT.replace("\r\n", "\n")), COMMON_TEXT)
+    assert facts["purpose_is_original"] is True and facts["envelope_is_none"] is True
+
+
 @pytest.mark.parametrize("old,new,key", [
-    ('PURPOSE = "P5D_OFFICIAL_SONNET_GATE"', 'PURPOSE = "P5D_REPLACEMENT_SONNET_GATE"', "purpose_is_original"),
-    ('ENVELOPE: "EnvelopeIdentity | None" = None', 'ENVELOPE: "EnvelopeIdentity | None" = object()', "envelope_is_none"),
+    (_ARMED_PURPOSE, _ORIGINAL_PURPOSE, "purpose_is_original"),
+])
+def test_runner_facts_detect_a_reversion_to_the_original_purpose(old, new, key):
+    text = RUNNER_TEXT.replace("\r\n", "\n")
+    assert old in text, old
+    assert script.runner_facts(text.replace(old, new, 1), COMMON_TEXT)[key] is True
+
+
+def test_runner_facts_detect_a_reversion_of_the_envelope_binding():
+    text = RUNNER_TEXT.replace("\r\n", "\n")
+    reverted, count = _ARMED_ENVELOPE.subn(_UNARMED_ENVELOPE, text, count=1)
+    assert count == 1
+    assert script.runner_facts(reverted, COMMON_TEXT)["envelope_is_none"] is True
+
+
+@pytest.mark.parametrize("old,new,key", [
     ("        latch_records = load_replacement_latch()\n", "", "preflight_consults_latch_in_order"),
-    ("        assert_purpose_armable(PURPOSE, ENVELOPE)\n\n        candidate", "\n        candidate", "preflight_consults_latch_in_order"),
+    ("        assert_purpose_armable(PURPOSE, ENVELOPE)\n        try:\n", "        try:\n", "preflight_consults_latch_in_order"),
     ("            run_ordinal=run_ordinal, clock=clock", "            max_model_attempts_per_task=1, run_ordinal=run_ordinal, clock=clock", "runner_never_overrides_attempts"),
 ])
 def test_runner_facts_detect_arming_reordering_and_attempt_overrides(old, new, key):
@@ -1146,6 +1185,12 @@ class _FakeSources(script.Sources):
             return {"use_default": True, "use_immutable_subject": False}
         artifact_id = path.rsplit("/", 1)[1]
         return {"digest": self.digests.get(artifact_id), "expired": False}
+
+    def read_text(self, relative):
+        text = super().read_text(relative)
+        if relative == "scripts/run_phase5_official_gate.py":
+            return _unarmed_runner_twin(text)  # the B6-3 collector evaluates the unarmed baseline
+        return text
 
     def client(self):
         return self.fake_client
