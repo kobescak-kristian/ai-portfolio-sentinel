@@ -6662,3 +6662,199 @@ merges every change."
   plan. Separately owner-authorized actions, still not begun: re-enabling
   `SentinelDailyRun`, the post-B5 workspace-cap reduction and any cleanup of
   the now-inert timing variable.
+- 2026-10-03 - ADR-0012 PROVIDER PREPARATION STAGE 2C-B6-5 RECORDED:
+  REPLACEMENT FEDERATION RULE AND REPOSITORY VARIABLE CREATED AND READ
+  BACK; WORKSPACE CAP SET TO USD 9.00; COMPONENTS 4.2, 16h AND 16i PASS ON
+  THE PROVIDER-PREPARATION BASELINE; REPLACEMENT STILL ARMED, NOT
+  AUTHORIZED; CLOSURE PENDING EXACT-SHA CI OF THIS COMMIT (owner-approved
+  provider-preparation plan, revision 3, and owner rulings D6, D9-H,
+  D9-cap, D-NAME, D-RB, D-VAR, D-REC, D8 and R12, all dated 2026-10-03;
+  the stage name is working, no separate routing id). **No agent-side
+  provider, Console or GitHub mutation occurred. The owner saved the cap,
+  created the rule and set the variable; the agent read, compared,
+  evaluated and records. This stage dispatches nothing, performs no token
+  exchange, writes no ATTEMPT_AUTHORIZED record, creates no marker and
+  starts no readiness-at-R, FINAL_T2 evidence, probe dispatch, final GO or
+  commit A. B6-5 is not closed: exact-SHA CI of this commit is a post-push
+  closure condition, and only when it succeeds does the close report
+  declare it closed. If it fails the stage stays OPEN and STOPPED.**
+  STAGES. P0 (agent, read-only pre-check and non-event proofs, a fresh
+  ECB rate, the dated hazards re-read, and a dry run of the two frozen
+  evaluators over 29 synthetic readbacks, all as expected) PASS. P1 (owner
+  rulings) satisfied by the rulings above. P2a (owner Console readback,
+  strictly read-only) PASS. P2b (owner-executed, in this order: cap, rule,
+  variable last) done and each step read back. P3 (final provider gate)
+  PASS. P4 is this record.
+  IDENTIFIERS. The organization id and the service-account id were
+  compared from the owner's Console machine copies, held in a local
+  scratch file outside the repository, with the GitHub repository
+  variables by SHA-256 and byte equality; both are EQUAL and neither raw
+  value was printed or committed. Their SHA-256 values remain the redacted
+  values already published in the B6-3 record
+  (`87894b32b6c12ed93a6fd5b8b1cdeb1def3a7ce3bd93b4c6dfed9b5b04f52189` and
+  `d6b2f30335fe594b4d45c0d776166c80931283ba7b7112d38955d07c40dceff0`).
+  The first copy of the scratch file carried extra leading text on each
+  line and compared as DIFFERS; the id portions were byte-equal after that
+  text was removed, and the owner corrected the file before the check was
+  accepted. Neither variable has been modified since 2026-08-24.
+  PROVIDER BASELINE BEFORE ANY MUTATION (P2a, owner Console readback). The
+  issuer `github-actions` was Active with `check_jti` Enabled; the service
+  account `sentinel-github` held organization role Developer, Default =
+  Workspace User (the named implicit residual) and `sentinel` = Workspace
+  Developer. The Active rules tab was empty. The Archived tab listed the
+  three originals, whose ids equal the three older repository variables:
+  `sentinel-p5c-probe` `fdrl_0153QKJnAPpJPcezqz2k8bRP`,
+  `sentinel-p5d-official-gate` `fdrl_012rfPPWwnbEyU4fuEkAPM94` and
+  `sentinel-p5d-timing-rehearsal` `fdrl_011dDM4E7pzdnuphn9NhQVRe`. The
+  newest authentication events were the two Oct 01 20:02 GMT+2 successes of
+  the timing rule, which are the B5 events; nothing was newer. The
+  `sentinel` workspace showed S = USD 0.52 of USD 12.00 (reset Nov 1, 2026
+  UTC, whole-dollar granularity G = USD 1.00); prepaid credit USD 12.80;
+  auto-reload Off. Optional twin check (owner ruling R12, supplementary,
+  semantics only): the Archived original P5-D rule's visible issuer,
+  service account, subject prefix, audience, scope, token lifetime, the
+  exactly four claims (`repository_owner`, `event_name`, `ref`,
+  `workflow_ref`) and absence of a CEL condition all EQUAL the frozen
+  specification; `check_jti` is an issuer property not shown on the rule
+  page; the workspace binding and the all-workspaces flag are not
+  observable on the archived page and were neither compared nor inferred.
+  The frozen evaluator and the specification below remain authoritative.
+  CAP (owner rulings D9-H and D9-cap). Arithmetic approved by the owner
+  before the save: fresh ECB reference date 2026-10-02, 1 EUR = 1.1225
+  USD; E = EUR 5.00, H = EUR 2.50, so (E + H) x FX = EUR 7.50 x 1.1225 =
+  USD 8.41875; required = S + (E + H) x FX = 0.52 + 8.41875 = USD 8.93875;
+  smallest supported value at G = USD 1.00 is **USD 9.00**, equal to EUR
+  8.02, within the EUR 50 ceiling (USD 56.125). The owner saved the cap
+  at USD 9.00, a reduction from USD 12.00, with no rule active, and read it
+  back as "$0.52 of $9.00, Resets on Nov 1, 2026 (UTC)". The frozen
+  `evaluate_cap` returned PASS on the real figures at GitHub server time
+  2026-10-03T13:54:58Z and again at 2026-10-03T15:19:27Z with a fresh rate
+  (1.1225 both times). Credit USD 12.80 exceeds the cap and the remaining
+  exposure (USD 8.48); auto-reload Off. "The Anthropic workspace limit is a
+  provider-enforced monthly backstop, not a per-run guarantee. Sentinel's
+  mechanized accounting remains the per-run authority." The slack above
+  required is only USD 0.06125 (an EUR/USD rise of about 0.73 percent, to
+  about 1.1307, or USD 0.06 of further spend, would make USD 10 the
+  exact-smallest value): the owner accepted this as a known residual. The
+  cap is recomputed at the final GO and re-saved if FX or spend changed.
+  THE REPLACEMENT RULE (created by the owner on the existing issuer,
+  never a duplicate issuer; no connection test or token exchange was run).
+  Name `sentinel-p5d-replacement-gate`, id `fdrl_01VxJKYV9L9cGg7JiPNG942e`,
+  type Static, status Active, issuer `github-actions`, service account
+  `sentinel-github`, workspace `sentinel` only, OAuth scope
+  `workspace:developer`, token lifetime 600 seconds, audience
+  `https://api.anthropic.com`, subject prefix
+  `repo:kobescak-kristian/ai-portfolio-sentinel:ref:refs/heads/main` (no
+  wildcard), exactly four claims `repository_owner=kobescak-kristian`,
+  `event_name=workflow_dispatch`, `ref=refs/heads/main` and
+  `workflow_ref=kobescak-kristian/ai-portfolio-sentinel/.github/workflows/sentinel-official-gate.yml@refs/heads/main`,
+  no CEL condition. Every field equals the frozen specification
+  (`FROZEN_RULE_EXPECTATION`). The all-workspaces flag was explicitly read
+  as OFF at the P2b creation readback; on the fresh P3 detail page it is
+  not visible and the workspace is shown as `sentinel`, so OFF is
+  CARRIED FORWARD from the creation readback, not freshly read. The
+  workspace Active tab holds exactly this one rule; the Archived tab still
+  lists the same three originals. Authentication events for the
+  replacement rule: zero, at the P2b step-3 readback and again at P3; the
+  newest event overall is still the Oct 01 20:02:15 GMT+2 timing event.
+  The Console shows no rule creation time. The rule was created after the
+  cap readback was validated (2026-10-03T13:54:58Z, before which the Active
+  tab was empty) and before the variable was set (2026-10-03T15:06:08Z,
+  set last); the conservative 7-day-window deadline uses the earlier end,
+  so the zero-events proof stays valid only if the final GO reads the
+  Console authentication history by 2026-10-10T13:54Z.
+  THE VARIABLE (owner, set last). `SENTINEL_P5D_REPLACEMENT_FEDERATION_RULE_ID`
+  was created at 2026-10-03T15:06:08Z as a repository variable and is
+  BYTE-EQUAL to the rule id (29 characters, no surrounding whitespace). The
+  repository now holds six variables, no environment and no secret, so
+  nothing can shadow it. The three older rule variables are unchanged and
+  still name their archived rules. GitHub OIDC subject customization is
+  unchanged (`use_default` true, `use_immutable_subject` false).
+  FROZEN EVALUATORS ON THE PROVIDER-PREPARATION BASELINE. Components 4.2
+  and 16h, `readiness.evaluate_replacement_rule`: PASS (every rule field
+  equal, no other Active rule, all three originals Archived, zero
+  authentication events for the rule, variable equal to the rule id,
+  customization unchanged). Component 16i, `readiness.evaluate_cap`:
+  PASS. These are BASELINES: they satisfy no FINAL_T2 requirement and are
+  re-read at readiness-at-R and at the final GO. Provider components stay
+  DEFERRED in the B6-3 record, which is unchanged.
+  NON-EVENT PROOFS (run at P0, after each owner mutation, at P3 and
+  immediately before this write; all ALL OK). `main` equal to its remote
+  and clean; registry (4 lines, `f64c83afebf5064a6d4dd12b3f41c5df01edfa2e369f7f53b8cdcef5bc301f39`),
+  latch (GENESIS only, UNARMED, `37799c774db5d7b7281d5c9290b76b531d849a6feaa30ea21a75d51996e6ee5a`),
+  envelope, A8 binding and B6-3 record byte-unchanged; official-gate runs
+  still 1 to 4 with the highest run number 4, probe, rehearsal, timing and
+  kill-rehearsal runs one each; zero replacement-marker and zero
+  gate-evidence artifacts; no secret; `SentinelDailyRun` Disabled; no
+  commit on the remote since the arming commit.
+  DATED HAZARDS RE-READ (2026-10-03, carried to the final GO).
+  `claude-sonnet-5` Active, retirement not sooner than 2027-06-30;
+  `claude-haiku-4-5-20251001` Active, retirement not sooner than
+  2026-10-15; neither appears in the deprecation history; the stated policy
+  is at least 60 days' notice. `ubuntu-latest` migrates to 26.04 from
+  2026-10-19, gradually to 2026-11-19, and the `ubuntu-24.04` label stays
+  available (no runner-image pin, per the earlier owner ruling). The cap
+  month ends 2026-10-31 UTC and resets 2026-11-01.
+  OWNER RULING D6, ACCEPTED. The owner accepted that the first
+  authentication exchange of the new replacement rule on the official-gate
+  workflow reference happens inside the single replacement run, after the
+  one-shot marker is consumed. If that exchange fails, the replacement is
+  consumed with an infrastructure-invalid record, nothing retries
+  automatically and the matter returns to governance. No pre-exchange test
+  exists: it would need the official workflow dispatched, and any exchange
+  before dispatch breaks the frozen zero-events predicate. Evidence behind
+  it: the same claim set already exchanged on this workflow reference in
+  the original run, and the mechanism worked 24 of 24 times under the
+  timing workflow reference.
+  ACTUAL WRITE SET (exactly 2 approved paths): `STATE.md` (this entry) and
+  `.publicgate-allow` (one status-line entry). No code, test, workflow, ADR
+  or artifact change; the plan file was not touched after approval.
+  RESIDUALS (recorded, not closed here): D6 above; the new rule stays Active
+  from creation until after the replacement run, and its only authorizing
+  path is the official workflow at `main` under `workflow_dispatch`, which
+  cannot reach OIDC while the latch is UNARMED; the thin cap slack above;
+  the 7-day authentication-history window above; the effect of the updater
+  controls on the SDK-bundled CLI stays unexercised; dependency resolution
+  at run time stays unobservable; the armed-state readiness evaluators and
+  the collector for the new variable name remain to be built in
+  readiness-at-R; and the FINAL_T2 evidence location is NOT solved here
+  (commit A must be a latch-only child of the readiness commit R, so final
+  readiness evidence stamped after R cannot be committed before A). The
+  owner direction is that a model-free readiness workflow at R producing a
+  dated, digest-addressable artifact is the first candidate to evaluate in
+  readiness-at-R planning; that is NOT an owner ruling and is not
+  implemented here.
+  NON-EVENTS: no ATTEMPT_AUTHORIZED written; no marker created or
+  consumed; no workflow dispatch, rerun or cancel of any kind; no token
+  exchange, no provider call and no model call; no bundled-CLI execution;
+  no agent-side Console, variable, secret, setting, cap, rule or scheduler
+  change (the cap save, the rule creation and the variable were
+  owner-executed and read back); `SentinelDailyRun` stays Disabled; no
+  write to the private governance repository; no readiness record written;
+  no probe re-dispatch; no readiness-at-R, FINAL_T2 evidence, final GO or
+  commit A.
+  Executing model: Sonnet 5.5.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED, Stage
+  2C-B5 B5 PASS, execution-envelope artifact COMMITTED, official workflow
+  timeout BOUND, A8 allowed-set binding artifact COMMITTED, durable
+  replacement latch COMMITTED (UNARMED), latch enforcement LIVE, readiness
+  machinery and probe lane LANDED, probe DISPATCHED ONCE and PASSED,
+  readiness record COMMITTED (B6-3 closed as PASS / ARMING-ELIGIBLE),
+  replacement runner, workflow and evidence record ARMED IN CODE (B6-4
+  closed), **replacement federation rule CREATED and variable SET, cap
+  USD 9.00, provider components 4.2, 16h and 16i PASS on the
+  provider-preparation baseline (Stage 2C-B6-5 recorded; closure PENDING
+  exact-SHA CI of this commit)**, ATTEMPT_AUTHORIZED NOT WRITTEN, fresh
+  replacement readiness at R NOT COMPLETE, FINAL_T2 evidence NOT COLLECTED,
+  replacement NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B6-5 recorded.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: wait for the exact-SHA CI of this commit; on success B6-5 is
+  closed, and readiness-at-R (including the FINAL_T2 evidence-location
+  design), the final GO and commit A each need their own approved plan.
+  Separately owner-authorized actions, still not begun: re-enabling
+  `SentinelDailyRun` (D8: it stays Disabled until the replacement is
+  terminal), the cap recompute at the final GO, and any cleanup of the
+  now-inert timing variable.
