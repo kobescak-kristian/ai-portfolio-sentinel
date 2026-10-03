@@ -914,6 +914,10 @@ def test_nothing_outside_tests_imports_the_new_modules():
         # names the probe's runtime-identity document and the B5
         # runtime-identity evidence file when comparing the two.
         REPO_ROOT / "scripts" / "run_phase5_readiness.py": {"runtime_identity"},
+        # Stage 2C-B6-6a (ADR-0012 Amendment C): the FINAL_T2 collector imports
+        # none of these modules either. It only reads the probe-at-R
+        # evidence's runtime-identity document and names the B5 identity file.
+        REPO_ROOT / "scripts" / "run_phase5_final_readiness.py": {"runtime_identity"},
     }
     for root in ("scripts", ".github"):
         for path in (REPO_ROOT / root).rglob("*"):

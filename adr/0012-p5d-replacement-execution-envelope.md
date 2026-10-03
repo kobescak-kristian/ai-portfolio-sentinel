@@ -1077,3 +1077,143 @@ durable history, or inability to prove the state.
 Implementation of the replacement is not authorized by this amendment.
 Fresh readiness is not established. The replacement is not ready and is
 not authorized for dispatch.
+
+## Amendment C - 2026-10-03 FINAL_T2 readiness at R and the binding to commit A
+
+Status: ADOPTED
+
+Date: 2026-10-03
+
+This amendment is part of ADR-0012. It records where the final (FINAL_T2)
+readiness evidence lives and how it is bound to the authorization commit A,
+under the owner-approved readiness-at-R plan, revision 4, and owner rulings
+C1 to C10 and R13 to R22 of 2026-10-03. It authorizes no probe dispatch, no
+Console readback, no ATTEMPT_AUTHORIZED record, no marker, no dispatch and no
+provider or platform mutation. Readiness never authorizes execution: only the
+owner's conditional GO, the predicates below and the durable latch can.
+
+Sections affected: section 20 and section 22 (extended by C1 to C9). The
+durable latch, its record kinds and its admission rule are unchanged.
+
+### C1. The problem
+
+Commit A must be a direct child of the readiness source commit R and may
+change only the latch file by one appended line. FINAL_T2 evidence must be
+collected after R and be at most two hours old at A. So FINAL_T2 evidence can
+never be committed between R and A.
+
+### C2. Definitions
+
+- R is the single commit that lands Stage 2C-B6-6a. It is the last commit
+  before A. If CI on R fails or any change is needed, the fix commit becomes
+  the new R and all FINAL_T2 evidence is collected again.
+- T_R is GitHub's push-activity timestamp for R on `refs/heads/main`; T_A is
+  the same for A (the latch's existing anchor). Git committer dates are never
+  used.
+- R is closed when the `ci.yml` push run for exactly R has succeeded; its
+  completion time is T_CI.
+- T_floor is the GitHub server time read on the runner by the probe at R
+  (`server_time_first_utc` of its artifact).
+- Every FINAL_T2 evidence collection stamp lies in `[T_floor,
+  recorded_at_utc]`, and `T_A - T_floor <= 2 h`. Governance, ordering and
+  anchor stamps are not evidence stamps and obey only their own order:
+  `T_R <= T_CI <= T_floor`; `conditional_go.issued_at_utc < probe.created_at
+  <= T_floor`; `probe.run_started_at <= T_floor`; `T_A >= recorded_at_utc`.
+  An anchor is never rejected merely because it precedes T_floor.
+
+### C3. Where the evidence lives (Option 2R)
+
+No new workflow is added. The existing model-free probe lane
+(`sentinel-latch-read-probe.yml`) is dispatched unchanged at R, exactly once
+per attempt. Its GitHub-digested artifact is the runner half of the evidence
+and the GitHub-attested start of the window. A runner cannot read the other
+facts (repository variables and settings need the owner's token, the local
+scheduler is on the owner's machine, Console facts are read only by the
+owner), so a composite FINAL_T2 record is built locally after R. It embeds the
+probe evidence, labels every fact with its provenance (runner artifact,
+GitHub REST with the owner's token, local machine, owner Console, public web)
+and stamps every group with GitHub server time. It carries no DEFERRED and no
+PREARM_BASELINE status; every component of a row whose tiers include T2
+carries FINAL_T2.
+
+### C4. Owner Console facts
+
+Console facts are owner-attested and are never presented as mechanical. The
+agent reads GitHub server time before and after the owner's read-only
+readback; the owner attests: "read-only Console readback by the owner between
+opened_at_utc and closed_at_utc; no mutation". The rule variable value and
+the OIDC customization are read mechanically, never transcribed. The
+readback must close before 2026-10-10T13:54Z (the 7-day authentication
+history bound recorded at provider preparation). The transcription is not
+passed through a workflow input.
+
+### C5. Conditional GO
+
+The independent review and the required overnight complete before attempt 1.
+Before an attempt's probe is dispatched, the owner issues one conditional,
+no-discretion GO with exactly these terms: "authorize commit A if and only if
+every frozen B6-6b predicate, FINAL_T2 predicate, digest/binding predicate
+and STOP condition passes". It gets a `conditional_go_ref` that is unique per
+issued GO, not per attempt, and is carried inside the record. Attempt 2 may
+reuse it only if the frozen terms are unchanged, no adjudication altered
+them and the GO still applies; otherwise a new GO and ref are issued before
+attempt 2's probe. No GO is issued or changed after an attempt's probe
+starts. There is no discretionary owner confirmation inside an attempt. If a
+predicate needs owner adjudication, the attempt ends before A.
+
+### C6. Attempts
+
+Each attempt permits exactly one probe dispatch at R; a session permits at
+most two attempts; attempt 2 is allowed only if attempt 1 ended before A
+exists, and it uses completely fresh evidence. Once A exists, no second
+authorization attempt and no further probe dispatch is permitted.
+
+### C7. Freeze point and binding
+
+`authorize` is the single freeze point: it reads fresh GitHub server time,
+sets `recorded_at_utc`, re-evaluates every predicate (including
+`recorded_at_utc - T_floor <= 100 minutes`), constructs the canonical record
+bytes exactly once, writes them to two durable retained copies and reads both
+back, computes their SHA-256, and appends ATTEMPT_AUTHORIZED with
+`owner_go_ref` matching exactly `^q77-p5d-final-go-a/[0-9a-f]{64}$`, the
+suffix being that SHA-256. The regex is authoritative. The authorization
+window closes 24 hours after `recorded_at_utc`. Any failure refuses before A
+exists; a post-append verification failure restores the latch to its R bytes.
+
+### C8. Mandatory pre-dispatch predicates
+
+The replacement is dispatched only if all three hold: `confirm-a` PASS
+(both retained copies identical; record strict and eligible; its SHA-256
+equals the `owner_go_ref` suffix; the checkout line equals the GitHub patch
+line; A is the latch-only direct child of R; `T_A - recorded_at_utc <= 20
+minutes` and `T_A - T_floor <= 2 h`; remote main, origin/main and HEAD are A;
+clean tree; no commit after A), exact-SHA CI success on A, and the
+pre-dispatch gate (HEAD, origin/main and remote main equal A and a clean tree,
+re-read immediately before dispatch). CI success never overrides a moved
+main.
+
+### C9. Retention and durability
+
+Before A, attempt records are not authoritative. `authorize` requires two
+distinct durable retention paths outside the repository, outside operating
+system temporary storage and outside session scratch storage. Once A is
+pushed, the bound record is irreplaceable: neither copy is deleted until the
+same bytes are committed at `artifacts/phase5_readiness_final.json` and that
+commit has passed its verification and exact-SHA CI. While A is eligible for
+dispatch no commit or push is allowed; if main moves away from A, nothing is
+reset, nothing is dispatched, and the authorization closes. The record is
+committed byte-identically in the post-terminal recording stage, or, if A
+never runs, in the first governed closure commit; in both cases its SHA-256
+must equal the `owner_go_ref` suffix in A. No private local path is
+published.
+
+### C10. Unchanged by this amendment
+
+- the latch module, its records and its admission rule;
+- section 22 rows 1 to 25 and their frozen predicates;
+- the quality model contract, the frozen quality surface and the GREEN /
+  HONEST_FAIL rule;
+- the replacement count, the owner ruling and the one-shot semantics.
+
+Fresh readiness at R is not established by this amendment. The replacement
+is not authorized for dispatch.

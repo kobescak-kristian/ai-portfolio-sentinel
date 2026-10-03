@@ -493,3 +493,43 @@ readiness record is a rows verdict, not replacement readiness: provider
 rows stay DEFERRED until later, separately governed stages.
 
 No production or production-ready claim follows from this section.
+
+## 20. ADR-0012 Stage 2C-B6-6 addition: FINAL_T2 readiness record at R
+
+Stage 2C-B6-6a (ADR-0012 Amendment C) lands the code only. Every item below
+is created in Stage 2C-B6-6b, behind the owner's pre-issued conditional GO.
+
+**Probe-at-R evidence (not committed).** One dispatch per attempt of the
+unchanged probe lane publishes the artifact described in §19, retained 90
+days. Its bytes are also embedded in the FINAL_T2 record, so the evidence
+outlives the artifact.
+
+**FINAL_T2 draft (local, not authoritative).** Written by `collect-final`
+to a local working file. A draft is never digested, never bound and never
+committed. Drafts of attempts that end before commit A are diagnostics only.
+
+**FINAL_T2 record (write-once).** The canonical record constructed once by
+`authorize`. It carries identifiers, GitHub server time stamps, provenance
+labels, per-component results, the embedded probe evidence, the owner's
+Console transcription (Console figures, rule configuration and the
+organization and service-account ids as SHA-256 only), the FX reading, the
+model lifecycle snapshot and the owner's conditional GO reference. It contains
+no token, secret, raw non-public identifier, local path or model content.
+Its SHA-256 is carried in commit A's `owner_go_ref`.
+
+**Retention of the record.** Before commit A exists the record is not
+authoritative. Once commit A is pushed, two byte-identical copies are kept on
+two distinct durable local storage locations outside the repository, outside
+operating-system temporary storage and outside session scratch storage.
+Neither copy is deleted until the same bytes are committed at
+`artifacts/phase5_readiness_final.json` and that commit has passed its
+verification and exact-SHA CI. The commit happens in the post-terminal
+recording stage, or, if commit A never runs, in the first governed closure
+commit. The committed bytes' SHA-256 must equal the `owner_go_ref` suffix.
+The local locations themselves are never published.
+
+**What these are not.** None of them authorizes dispatch, a marker, provider
+access or OIDC. Only the conditional GO, the mandatory pre-dispatch
+predicates (Amendment C, C8) and the durable latch can.
+
+No production or production-ready claim follows from this section.

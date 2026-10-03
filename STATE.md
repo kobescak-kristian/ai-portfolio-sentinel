@@ -6858,3 +6858,137 @@ merges every change."
   `SentinelDailyRun` (D8: it stays Disabled until the replacement is
   terminal), the cap recompute at the final GO, and any cleanup of the
   now-inert timing variable.
+- 2026-10-03 - ADR-0012 REPAIR STAGE 2C-B6-6a LANDED: READINESS-AT-R
+  TOOLING AND ADR-0012 AMENDMENT C; THIS COMMIT IS THE CANDIDATE READINESS
+  SOURCE COMMIT R; NOTHING DISPATCHED OR AUTHORIZED; CLOSURE PENDING
+  EXACT-SHA CI OF THIS COMMIT (owner-approved readiness-at-R plan, revision
+  4, and owner rulings C1 to C10 and R13 to R22, all dated 2026-10-03; the
+  stage name is working, no separate routing id). **Model-free stage. It
+  lands code, tests, Amendment C and this entry. It dispatches no workflow,
+  reads no Console state, collects no FINAL_T2 evidence, writes no
+  ATTEMPT_AUTHORIZED record, creates no marker and calls no provider or
+  model. B6-6a is not closed: exact-SHA CI of this commit is a post-push
+  closure condition. Only when it succeeds is this commit R, and the close
+  report, not this file, declares it. If it fails the stage stays OPEN and
+  STOPPED, and the fix commit becomes the new R candidate.**
+  DESIGN (Option 2R, Amendment C). B6-5 left open where FINAL_T2 evidence
+  can live, because commit A must be a latch-only direct child of R. No new
+  workflow is added: a runner cannot read the repository variables and
+  settings (they need the owner's token), the local scheduler or the
+  provider Console, so a single workflow artifact cannot hold the evidence.
+  Instead the existing probe lane is dispatched unchanged at R, exactly once
+  per attempt, as the runner half and the GitHub-attested start of the
+  window (T_floor); a composite FINAL_T2 record is built locally after R,
+  embeds the probe evidence, labels every fact with its provenance and
+  stamps each group with GitHub server time; Console facts are
+  owner-attested inside a server-time bracket; the record's canonical bytes
+  are frozen once by `authorize`, written to two durable retained copies and
+  bound into commit A through `owner_go_ref`
+  (`q77-p5d-final-go-a/<sha256>`), so A stays latch-only and `latch.py` is
+  unchanged. Freshness is proved from GitHub alone: every evidence stamp in
+  `[T_floor, recorded_at_utc]`, `recorded_at_utc - T_floor <= 100 min`
+  before the push, `T_A - recorded_at_utc <= 20 min` and `T_A - T_floor <=
+  2 h` after it. Anchor stamps (T_R, T_CI, the probe's creation and start,
+  the conditional GO, adjudications) obey their own order and are never held
+  to the evidence window. The owner issues one conditional, no-discretion
+  GO before an attempt's probe; there is no discretionary confirmation
+  inside an attempt; at most two attempts per session, one probe each, none
+  after A exists. `confirm-a` PASS, exact-SHA CI success on A and the
+  pre-dispatch gate (A is the head of main, clean tree) are mandatory before
+  any dispatch. The bound record is committed byte-identically after the
+  replacement is terminal, or in the first governed closure commit if A
+  never runs.
+  WHAT LANDED. `sentinel/phase5/final_readiness.py` (pure: draft and record
+  schema, armed-state evaluators for rows 6/16e, 16d, 18 and 25, the armed
+  carry-forward allowance of exactly the timeout change plus the six B6-4
+  lines, window and freshness predicates, `owner_go_ref` encode, parse and
+  binding, the Console deadline 2026-10-10T13:54Z).
+  `scripts/run_phase5_final_readiness.py` (`collect-final`, `verify-final`,
+  `authorize`, `confirm-a`, `pre-dispatch`, `write-set`; none executed).
+  `tests/test_phase5_final_readiness.py`. ADR-0012 Amendment C.
+  `DATA_RETENTION_POLICY.md` section 20.
+  NEW FINDING, FIXED HERE. Exact-SHA CI on commit A would have failed by
+  construction: eight tests pinned the committed latch to GENESIS-only, and
+  commit A cannot change tests. Those tests now read the committed GENESIS
+  line alone, and one new test accepts exactly GENESIS-only or GENESIS plus
+  one strictly valid ATTEMPT_AUTHORIZED with the final-GO `owner_go_ref`
+  form. GENESIS-only at R stays enforced mechanically by row 25 of the
+  FINAL_T2 record. A-SIMULATION (scratch clone only, never committed): this
+  tree plus a synthetic ATTEMPT_AUTHORIZED ran the full suite green: 3079 passed / 33 skipped, the same as the tree without it.
+  VERIFICATION: focused set (final readiness, readiness, latch, gate runner,
+  process control) 658 passed / 14 skipped; full suite 3079 passed / 33 skipped (the previous 2957 plus 122 net new tests, the same 33 platform skips), 93.7% coverage locally; `python -m pip
+  check` clean; `python .githooks/validate_artifacts.py .` Tier 0 PASS;
+  `python scripts/check_phase1_frozen.py` PASS. Empty diff over
+  `readiness.py`, the B6-3 collector, `latch.py`, `github_evidence.py`, the
+  official runner, the finalizer, `_phase5_common.py`, every workflow and
+  every `artifacts/phase5_*` file: registry
+  `f64c83afebf5064a6d4dd12b3f41c5df01edfa2e369f7f53b8cdcef5bc301f39`, latch
+  `37799c774db5d7b7281d5c9290b76b531d849a6feaa30ea21a75d51996e6ee5a`
+  (GENESIS only, UNARMED), B6-3 record
+  `78aa2f8951295665b4bf2fad69b526e66b85294ff5410b61879ab46591dee7cc`.
+  MUTATION CHECKS (56 run, each applied alone to one file, the new test file
+  run, the file restored and re-hashed byte-identical): covering the
+  forbidden evidence states, the T2-row rule, every anchor-order leg, the
+  evidence window, an anchor held to the window, the 100-minute and
+  20-minute margins, the Console deadline, every `owner_go_ref` form and
+  binding leg, canonical bytes, the armed latch and carry-forward rules, the
+  conditional-GO terms, one probe per attempt, the attestation, the credit
+  check, the stamp rule, the fresh server time at freeze, the re-evaluation
+  before the freeze, the conditional-GO argument, the retained-copy checks,
+  the latch restore, the write-set proof, every retention-destination rule,
+  every `confirm-a` and pre-dispatch leg, the mechanical variable read, the
+  runner-image family and the probe identity. 55 turned a named test red.
+  One stayed green at first and was a real gap (skipping the re-evaluation
+  before the freeze still refused later, but only after the retained copies
+  were written); the refusal test now proves no copy exists, and the
+  mutation then failed it. One stayed green because the check was
+  redundant (FX freshness is already implied by the 100-minute window); that
+  check was removed.
+  Executing model: Opus 5.5.
+  ACTUAL WRITE SET (exactly the 11 approved paths):
+  `sentinel/phase5/final_readiness.py` (new),
+  `scripts/run_phase5_final_readiness.py` (new),
+  `tests/test_phase5_final_readiness.py` (new), `tests/test_phase5_latch.py`,
+  `tests/test_phase5_readiness.py`, `tests/test_phase5_gate_runner.py` (the
+  last three A-tolerance only), `tests/test_checker_process_control.py` (one
+  per-path allowance), `adr/0012-p5d-replacement-execution-envelope.md`
+  (Amendment C only), `DATA_RETENTION_POLICY.md` (section 20), `STATE.md`
+  (this entry), `.publicgate-allow` (one status-line entry).
+  NON-EVENTS: no workflow dispatch, rerun or cancel; no probe re-dispatch;
+  no Console readback; no FINAL_T2 evidence; no ATTEMPT_AUTHORIZED; no marker
+  created or consumed; no token exchange, provider or model call; no
+  bundled-CLI execution; no federation-rule, variable, secret, setting, cap
+  or scheduler change; `SentinelDailyRun` stays Disabled; no write to the
+  private governance repository.
+  RESIDUALS (recorded, not closed here): the authorization window is frozen
+  at the latch maximum of 24 hours; the Console authentication-history
+  deadline 2026-10-10T13:54Z binds the whole B6-6b session, after the
+  independent review and the overnight; the thin cap slack (USD 0.06125)
+  from B6-5 is re-checked inside the FINAL_T2 window; `authorize --dry-run`
+  still writes the two retained copies to the paths it is given; the D6
+  first-exchange residual, the unexercised updater controls and run-time
+  dependency resolution are unchanged.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED, Stage
+  2C-B5 B5 PASS, execution-envelope artifact COMMITTED, official workflow
+  timeout BOUND, A8 allowed-set binding artifact COMMITTED, durable
+  replacement latch COMMITTED (UNARMED), latch enforcement LIVE, readiness
+  machinery and probe lane LANDED, probe DISPATCHED ONCE and PASSED,
+  readiness record COMMITTED (B6-3 closed as PASS / ARMING-ELIGIBLE),
+  replacement runner, workflow and evidence record ARMED IN CODE (B6-4
+  closed), replacement rule and variable SET and cap USD 9.00 (B6-5
+  closed), **readiness-at-R tooling and ADR-0012 Amendment C LANDED (Stage
+  2C-B6-6a; closure PENDING exact-SHA CI of this commit)**, FINAL_T2
+  evidence NOT COLLECTED, ATTEMPT_AUTHORIZED NOT WRITTEN, replacement NOT
+  AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with repair Stage 2C-B6-6a landed.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: wait for the exact-SHA CI of this commit; on success this
+  commit is R. Then the independent second-model review and the overnight,
+  then Stage 2C-B6-6b (FINAL_T2 collection and commit A, under the owner's
+  pre-issued conditional GO), all before 2026-10-10T13:54Z. No commit may
+  land on main after R and before A. Separately owner-authorized actions,
+  still not begun: re-enabling `SentinelDailyRun` (D8), the cap recompute
+  inside the FINAL_T2 window, and any cleanup of the now-inert timing
+  variable.

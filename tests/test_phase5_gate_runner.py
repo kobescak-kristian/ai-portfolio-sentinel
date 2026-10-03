@@ -1212,8 +1212,22 @@ def test_latch_admission_is_evaluated_exactly_once_and_only_in_preflight():
     assert "server_time_utc" not in _names_in(preflight)
 
 
+def _use_committed_genesis_view(module, monkeypatch, tmp_path):
+    """A-tolerance (Stage 2C-B6-6a, ADR-0012 Amendment C): preflight loads the
+    committed latch's GENESIS line alone. Commit A appends one line and cannot
+    change tests; GENESIS-only at R is enforced by row 25 of the FINAL_T2
+    record. The load stays the real strict loader."""
+    latch = REPO_ROOT / "artifacts" / "phase5_replacement_latch.jsonl"
+    first = latch.read_bytes().replace(b"\r\n", b"\n").split(b"\n", 1)[0] + b"\n"
+    view = tmp_path / "committed_genesis_view.jsonl"
+    view.write_bytes(first)
+    real_load = module.load_replacement_latch
+    monkeypatch.setattr(module, "load_replacement_latch", lambda: real_load(view))
+
+
 def test_preflight_with_the_real_committed_latch_is_unarmed_and_refuses(tmp_path, monkeypatch, capsys):
     module, args, order = _prepare_preflight(tmp_path, monkeypatch, real_eligibility=True)
+    _use_committed_genesis_view(module, monkeypatch, tmp_path)
     monkeypatch.setattr(module, "PURPOSE", _repl.REPLACEMENT_PURPOSE)
     assert module.cmd_preflight(args) == 2
     err = capsys.readouterr().err
@@ -2316,6 +2330,7 @@ def test_armed_preflight_with_the_real_committed_genesis_only_latch_refuses_at_l
     from agents.checker import oidc as oidc_mod
 
     module, args, order = _prepare_preflight(tmp_path, monkeypatch, real_eligibility=True)
+    _use_committed_genesis_view(module, monkeypatch, tmp_path)
     client = _RecordingPreflightClient()
     monkeypatch.setattr(module, "build_evidence_client", lambda env, **kw: client)
 

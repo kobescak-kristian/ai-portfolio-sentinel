@@ -182,8 +182,50 @@ def _refused(verdict, reason):
 # ======================================================================
 
 
-def test_committed_latch_is_exactly_one_server_time_genesis_and_unarmed():
+def _committed_genesis_view(tmp_path: Path) -> Path:
+    """A-tolerance (Stage 2C-B6-6a, ADR-0012 Amendment C): the committed
+    latch's GENESIS line alone. On commit A the committed latch carries one
+    more line, and commit A cannot change any test, so tests that prove UNARMED
+    behaviour read this view. GENESIS-only at R itself is enforced
+    mechanically by row 25 of the FINAL_T2 record."""
+    first = COMMITTED_LATCH.read_bytes().replace(b"\r\n", b"\n").split(b"\n", 1)[0] + b"\n"
+    path = tmp_path / "committed_genesis_view.jsonl"
+    path.write_bytes(first)
+    return path
+
+
+def test_committed_latch_is_genesis_only_or_genesis_plus_one_final_go_authorization():
+    """Exactly two committed states are legal: GENESIS only (every commit up
+    to and including R), or GENESIS plus one strictly valid ATTEMPT_AUTHORIZED
+    whose owner_go_ref has the exact final-GO form (commit A)."""
+    from sentinel.phase5.final_readiness import OWNER_GO_REF_PATTERN
+
     records = lt.load_latch(COMMITTED_LATCH)
+    assert lt.record_sha256(records[0]) == COMMITTED_HEAD_SHA256
+    assert len(records) in (1, 2)
+    if len(records) == 2:
+        auth = records[1]
+        assert isinstance(auth, lt.LatchAttemptAuthorized)
+        assert OWNER_GO_REF_PATTERN.fullmatch(auth.owner_go_ref)
+        assert auth.prev_record_sha256 == COMMITTED_HEAD_SHA256
+
+
+def test_the_committed_state_check_rejects_any_other_shape(tmp_path):
+    from sentinel.phase5.final_readiness import OWNER_GO_REF_PATTERN
+
+    view = _committed_genesis_view(tmp_path)
+    lt.append_attempt_authorized(view, server_now_utc=T_REC, readiness_source_sha=R, owner_go_ref="owner-go-test",
+                                 window_closes_at_utc=CLOSE, prior_official_gate_run_number=F)
+    assert not OWNER_GO_REF_PATTERN.fullmatch(lt.load_latch(view)[1].owner_go_ref)
+    lines = view.read_bytes().split(b"\n")
+    view.write_bytes(view.read_bytes() + lines[1] + b"\n")
+    with pytest.raises(lt.LatchError):
+        lt.load_latch(view)
+
+
+def test_committed_latch_is_exactly_one_server_time_genesis_and_unarmed(tmp_path):
+    view = _committed_genesis_view(tmp_path)
+    records = lt.load_latch(view)
     assert len(records) == 1 and isinstance(records[0], lt.LatchGenesis)
     genesis = records[0]
     assert genesis.purpose == repl.REPLACEMENT_PURPOSE
@@ -193,9 +235,7 @@ def test_committed_latch_is_exactly_one_server_time_genesis_and_unarmed():
     assert genesis.governance_ref == "q77-p5d-repair-stage2cb6-2-latch-genesis"
     assert genesis.recorded_at_utc == COMMITTED_GENESIS_RECORDED_AT
     assert lt.record_sha256(genesis) == COMMITTED_HEAD_SHA256
-    lf_bytes = COMMITTED_LATCH.read_bytes().replace(b"\r\n", b"\n")
-    assert lf_bytes.count(b"\n") == 1
-    assert hashlib.sha256(lf_bytes).hexdigest() == COMMITTED_LF_BYTES_SHA256
+    assert hashlib.sha256(view.read_bytes()).hexdigest() == COMMITTED_LF_BYTES_SHA256
     for moment in (COMMITTED_GENESIS_RECORDED_AT, CLOSE, datetime(2030, 1, 1, tzinfo=UTC)):
         assert lt.admission_state(records, moment) == "UNARMED"
     _refused(lt.latch_verdict(records, None), "LATCH_UNARMED")
@@ -825,13 +865,13 @@ def test_gather_reads_server_time_last_and_the_admission_is_computed_once():
     assert client.calls.count("list_run_attempt_job_evidence") == 1
 
 
-def test_an_unarmed_latch_refuses_without_any_github_read():
+def test_an_unarmed_latch_refuses_without_any_github_read(tmp_path):
     class _NoReads:
         def __getattr__(self, name):
             raise AssertionError(f"unexpected GitHub read {name}")
 
     verdict = common.replacement_latch_admission(
-        _NoReads(), _Ctx(), lt.load_latch(COMMITTED_LATCH), _ENV, expected_api_job_name="gate",
+        _NoReads(), _Ctx(), lt.load_latch(_committed_genesis_view(tmp_path)), _ENV, expected_api_job_name="gate",
     )
     _refused(verdict, "LATCH_UNARMED")
 

@@ -943,7 +943,18 @@ def test_postcommit_write_set_commit_count_and_parent_are_all_checked():
 # ======================================================================
 
 
-def test_frozen_constants_equal_the_committed_artifacts():
+def _committed_genesis_view(directory: Path) -> Path:
+    """A-tolerance (Stage 2C-B6-6a, ADR-0012 Amendment C): the committed
+    latch's GENESIS line alone; commit A appends one line and cannot change
+    tests. GENESIS-only at R is enforced by row 25 of the FINAL_T2 record."""
+    latch = REPO_ROOT / "artifacts" / "phase5_replacement_latch.jsonl"
+    first = latch.read_bytes().replace(b"\r\n", b"\n").split(b"\n", 1)[0] + b"\n"
+    path = directory / "committed_genesis_view.jsonl"
+    path.write_bytes(first)
+    return path
+
+
+def test_frozen_constants_equal_the_committed_artifacts(tmp_path):
     import hashlib
 
     def sha(rel):
@@ -952,9 +963,10 @@ def test_frozen_constants_equal_the_committed_artifacts():
     assert sha("artifacts/phase5_receipt_registry.jsonl") == rd.EXPECTED_REGISTRY_SHA256
     assert sha("artifacts/phase5_a8_model_binding.json") == rd.EXPECTED_A8_BINDING_SHA256
     assert sha("artifacts/phase5_execution_envelope.json") == rd.EXPECTED_ENVELOPE_ID
-    assert sha("artifacts/phase5_replacement_latch.jsonl") == rd.EXPECTED_LATCH_FILE_SHA256
+    view = _committed_genesis_view(tmp_path)
+    assert hashlib.sha256(view.read_bytes()).hexdigest() == rd.EXPECTED_LATCH_FILE_SHA256
     from sentinel.phase5.latch import load_latch, record_sha256
-    assert record_sha256(load_latch(REPO_ROOT / "artifacts/phase5_replacement_latch.jsonl")[-1]) == rd.EXPECTED_LATCH_HEAD_SHA256
+    assert record_sha256(load_latch(REPO_ROOT / "artifacts/phase5_replacement_latch.jsonl")[0]) == rd.EXPECTED_LATCH_HEAD_SHA256
     a8 = json.loads((REPO_ROOT / "artifacts/phase5_a8_model_binding.json").read_text(encoding="utf-8"))
     assert set(a8["allowed_model_keys"]) == set(rd.ALLOWED_MODEL_KEYS)
     assert a8["required_primary_model"] == rd.REQUIRED_PRIMARY_MODEL
@@ -1215,6 +1227,18 @@ def _restore_diff_hash():
     original = script.diff_sha256
     yield
     script.diff_sha256 = original
+
+
+@pytest.fixture(autouse=True)
+def _genesis_only_committed_latch(monkeypatch, tmp_path_factory):
+    """A-tolerance: the B6-3 collector evaluates the unarmed GENESIS-only
+    baseline, so it reads the committed GENESIS line alone (see
+    ``_committed_genesis_view``)."""
+    view = _committed_genesis_view(tmp_path_factory.mktemp("latch"))
+    committed = (REPO_ROOT / "artifacts" / "phase5_replacement_latch.jsonl").resolve()
+    original = script.latch_facts_local
+    monkeypatch.setattr(script, "latch_facts_local",
+                        lambda path: original(view if Path(path).resolve() == committed else path))
 
 
 def test_a_fully_consistent_world_builds_an_arming_eligible_record_with_the_exact_deferred_shape():
