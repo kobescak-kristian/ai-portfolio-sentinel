@@ -6994,6 +6994,177 @@ merges every change."
   inside the FINAL_T2 window, and any cleanup of the now-inert timing
   variable.
 
+- 2026-10-05 - ADR-0012 STAGE 2C-B6-6b SESSION 1 CLOSED WITHOUT COMMIT A:
+  TWO ATTEMPTS TERMINATED BEFORE A; THIS CLOSURE COMMIT IS THE NEW
+  READINESS SOURCE COMMIT R2 CANDIDATE; ALL PRIOR FINAL_T2 EVIDENCE VOID;
+  LATCH GENESIS-ONLY; REPLACEMENT NOT AUTHORIZED; CLOSURE PENDING EXACT-SHA
+  CI OF THIS COMMIT (owner ruling of 2026-10-05 under ADR-0012 Amendment C
+  as written: a new readiness source commit is permitted after a B6-6b
+  session terminates before A, provided the prior session is durably
+  closed, the new readiness source is mechanically revalidated and every
+  FINAL_T2 fact is collected fresh; this is an owner ruling under the
+  existing Amendment C design, not a change to the B6-6 design, and no
+  Amendment D is created). **This entry authorizes nothing. It records a
+  session that produced no authorization. No ATTEMPT_AUTHORIZED record was
+  written, no marker was created or consumed, no token exchange, provider
+  call, model call or replacement dispatch occurred, and the durable latch
+  is byte-unchanged at GENESIS only. R2 is this commit only if its exact-SHA
+  CI succeeds; the close report, not this file, declares it.**
+  THE SESSION (2026-10-05, under the pre-issued conditional GO
+  `q77-p5d-cgo-20261005-a1`, frozen terms, issued_at_utc stamped
+  2026-10-05T17:59:34Z from GitHub server time; independent second-model
+  review attested complete by the owner and the required overnight elapsed
+  before attempt 1; the 24-hour authorization window accepted by the owner
+  on 2026-10-03). Readiness source R was
+  `632e9f400da929f700a901fbd2d1d4b8de6b9c3f` (exact-SHA CI run
+  `37141169262`). Every pre-probe predicate held before each attempt: HEAD,
+  origin/main and remote main equal to R, clean tree, latch GENESIS-only
+  (file SHA-256 `37799c77...`), official-gate runs exactly 1 to 4, zero
+  replacement-marker and zero gate-evidence artifacts, `SentinelDailyRun`
+  Disabled, and two distinct durable retention destinations outside the
+  repository, outside operating-system temporary storage and outside
+  session scratch, both absent (no retained copy was ever written).
+  ATTEMPT 1. Probe run `37352901778` (`workflow_dispatch`, attempt 1, head
+  R, success; artifact `11363730888`, archive SHA-256 equal to GitHub's
+  digest; all 15 required checks PASS; T_floor 2026-10-05T18:02:25Z;
+  runner image `ubuntu24` `20260927.320.1`). Runtime identity differed from
+  the B5 baseline by exactly one transitive distribution, `rpds-py`
+  2026.6.3 -> 2026.9.1 (not a direct pin; reached through the jsonschema /
+  referencing closure; no fatal difference, no residual). Under plan
+  revision 4 section 3a and R17 a transitive difference needs owner
+  adjudication outside the attempt, so rows 2 and 16g could not PASS
+  mechanically and attempt 1 TERMINATED BEFORE A. No draft, no Console
+  readback, no retained copy, no latch change. A read-only index
+  comparison afterwards showed `rpds-py` 2026.9.1 had been published on
+  2026-10-04T16:28Z, about 25 hours before the probe: the drift was
+  foreseeable and no pre-probe step had looked for it.
+  OWNER ADJUDICATION (2026-10-05, outside any live attempt; ruled_at_utc
+  2026-10-05T18:18:10Z from GitHub server time, before attempt 2's probe
+  was created): ruling_ref `q77-b66b-rpds-py-20261005-a1`, decision
+  ACCEPTED for exactly the transition `rpds-py` 2026.6.3 -> 2026.9.1. It
+  accepts no later `rpds-py` version and no other dependency difference.
+  The owner confirmed under R21 that `q77-p5d-cgo-20261005-a1` still
+  applied unchanged for attempt 2.
+  ATTEMPT 2. A constraint-aware forecast (pip dry-run resolution of the
+  pinned requirements against the B5 baseline) predicted exactly the
+  adjudicated difference and nothing else; every pre-probe predicate held
+  again. Probe run `37355207967` (attempt 1 of that run, head R, success;
+  artifact `11364770625`, archive SHA-256 equal to GitHub's digest; all 15
+  checks PASS; T_floor 2026-10-05T18:21:25Z; the same runtime identity as
+  attempt 1, so the drift was exactly the adjudicated transition and rows
+  2 and 16g evaluated PASS with the ruling). The Console bracket opened at
+  2026-10-05T18:22:03Z; FX (ECB reference rate 2026-10-05, 1 EUR = 1.1204
+  USD, retrieved 18:22:32Z) and the model-lifecycle snapshot (read
+  18:23:03Z; `claude-sonnet-5` Active, retirement not sooner than
+  2027-06-30; `claude-haiku-4-5-20251001` Active, retirement not sooner
+  than 2026-10-15; neither named as a deprecated model) were collected
+  inside the window. Two terminating events followed, in this order:
+  (1) at 2026-10-05T18:48:05Z remote main moved away from R when the KOS
+  unit declaration commit `cdba9032b3776a111d4db4771451189c260c16d0`
+  landed (pushed by the owner from another session; it touches only
+  `.kos/unit.json` and STATE.md, no frozen readiness or execution path),
+  which invalidated the R -> A invariant first and would have made
+  `authorize` refuse at step 0; (2) the attempt-2 FINAL_T2 freshness window
+  then expired at 2026-10-05T20:01:25Z (T_floor + 100 minutes) without a
+  completed Console transcription. The bracket was voided, never closed.
+  Attempt 2 TERMINATED BEFORE A. Neither attempt produced A. Session 1
+  consumed both attempts Amendment C C6 permits per session, so it is
+  CLOSED without A.
+  WHAT IS VOID. Every FINAL_T2 fact of both attempts: both probe runs as
+  readiness evidence, both T_floor values, the FX reading, the lifecycle
+  snapshot, the opened bracket and every local or GitHub fact read inside
+  the attempts. No draft or record was ever built, digested, retained or
+  bound. All FINAL_T2 evidence MUST be collected fresh after R2.
+  WHAT CARRIES FORWARD (owner rulings, 2026-10-05): the 24-hour
+  authorization window acceptance (2026-10-03); the independent
+  second-model review completion; the required overnight completion; the
+  `rpds-py` adjudication above, exact transition only.
+  R2 (owner ruling). This closure commit, with parent `cdba9032b...`, is
+  the new readiness source commit R2 candidate. It is mechanically
+  revalidated: the diff from R to this commit touches only
+  `.kos/unit.json`, STATE.md and (if the publication gate requires it)
+  `.publicgate-allow`, none of which is in any frozen readiness path set;
+  the latch, registry, envelope, A8 binding, B6-3 record, every workflow,
+  every Phase-5 module, script and test, `requirements.txt` and ADR-0012
+  are byte-unchanged since R. On exact-SHA CI success R2 is the full SHA
+  of this commit, and commit A must be a latch-only direct child of R2.
+  No probe run exists at R2 yet. The old two-attempt budget belonged to
+  the closed session at R; the fresh B6-6b session at R2 receives a fresh
+  at-most-two-attempt budget under Amendment C C6, counted mechanically by
+  probe runs at R2. A NEW conditional GO ref is issued for the fresh
+  session, `q77-p5d-cgo-r2-20261005-a1`; `q77-p5d-cgo-20261005-a1` is not
+  reused. The frozen conditional-GO terms are unchanged: "authorize commit
+  A if and only if every frozen B6-6b predicate, FINAL_T2 predicate,
+  digest/binding predicate and STOP condition passes".
+  PRE-PROBE PROCEDURAL RULES FOR THE FRESH SESSION (owner ruling,
+  2026-10-05, binding; no code change): (1) runtime-identity forecast
+  first: before a probe attempt is consumed, the pip dry-run runtime
+  identity forecast is run against the B5 baseline and the existing exact
+  `rpds-py` adjudication, and any difference beyond that transition is a
+  STOP before the probe; (2) owner-at-Console gate: the probe is not
+  dispatched merely because R2 is ready; the owner must already have the
+  Console open and be continuously available, and the agent waits for the
+  explicit phrase READY NOW; (3) main freeze: from probe dispatch until the
+  attempt terminates before A, or until A exists and later ceases to be
+  dispatch-eligible, no other session, process, agent or owner action may
+  push to main; (4) deadline display: immediately after the probe
+  establishes T_floor the agent prints T_floor (UTC and Malta local time),
+  the FINAL_T2 freeze deadline T_floor + 100 minutes and the A outer
+  deadline T_floor + 120 minutes under a fixed prominent heading; (5) the
+  complete consolidated Console template is ready before dispatch and the
+  single readback is requested immediately after the probe passes.
+  Executing model: Fable 5.1.
+  ACTUAL WRITE SET (exactly the approved paths): STATE.md (this entry) and
+  `.publicgate-allow` only if the publication gate mechanically requires a
+  status-line entry. No code, workflow, test, artifact, latch,
+  requirements or ADR change.
+  NON-EVENTS: no ATTEMPT_AUTHORIZED written; no latch change; no marker
+  created or consumed; no token exchange, provider call or model call; no
+  replacement dispatch; no bundled-CLI execution; no retained FINAL_T2 copy
+  written; no federation-rule, variable, secret, setting, cap or scheduler
+  change; `SentinelDailyRun` stays Disabled; two probe dispatches of the
+  unchanged model-free probe lane at R (one per attempt, as Amendment C C6
+  permits) and no rerun or cancel; no official-gate, timing or
+  kill-rehearsal run; no write to the private governance repository from
+  this stage.
+  RESIDUALS (recorded, not closed here): the Console authentication-history
+  deadline 2026-10-10T13:54Z (a frozen constant) binds the fresh session;
+  the `rpds-py` ruling covers one exact transition and any further index
+  movement needs a new ruling; the 100-minute pre-push window holds a human
+  Console readback and tolerates no latency, which the owner-at-Console
+  gate now addresses procedurally; the thin cap slack from B6-5 is
+  re-checked inside the fresh window; the D6 first-exchange residual, the
+  unexercised updater controls and run-time dependency resolution are
+  unchanged.
+  STATUS AFTER THIS RECORD: P5-A COMPLETE. P5-B COMPLETE. P5-C COMPLETE.
+  **P5-D remains IN PROGRESS / UNRESOLVED**: original official run
+  `EXECUTION_INVALID / NO_QUALITY_RESULT`, original marker CONSUMED, Stage
+  2C-B5 B5 PASS, execution-envelope artifact COMMITTED, official workflow
+  timeout BOUND, A8 allowed-set binding artifact COMMITTED, durable
+  replacement latch COMMITTED (UNARMED), latch enforcement LIVE, readiness
+  machinery and probe lane LANDED, readiness record COMMITTED (B6-3 closed),
+  replacement ARMED IN CODE (B6-4 closed), replacement rule and variable
+  SET and cap USD 9.00 (B6-5 closed), readiness-at-R tooling and Amendment
+  C LANDED (B6-6a closed, R = `632e9f40...`), **B6-6b SESSION 1 CLOSED
+  WITHOUT A (two attempts terminated before A); this commit is the R2
+  candidate (closure PENDING exact-SHA CI of this commit)**, FINAL_T2
+  evidence VOID and NOT COLLECTED, ATTEMPT_AUTHORIZED NOT WRITTEN,
+  replacement NOT AUTHORIZED FOR DISPATCH. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Q-77 remains OPEN with Stage 2C-B6-6b session 1 closed without A.
+  Production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: wait for the exact-SHA CI of this commit; on success this
+  commit is R2. Then the fresh B6-6b session: forecast, pre-probe
+  predicates, the owner-at-Console gate (READY NOW), one probe at R2, the
+  single Console readback, fresh evidence, `collect-final`, `verify-final`,
+  `authorize`, commit A as a latch-only direct child of R2, write-set
+  proof, push, `confirm-a`, exact-SHA CI on A and the pre-dispatch gate,
+  all before 2026-10-10T13:54Z; no replacement dispatch (a separate owner
+  gate). No commit may land on main after R2 and before A, and none after
+  A while A is eligible for dispatch. Separately owner-authorized actions,
+  still not begun: re-enabling `SentinelDailyRun` (D8), the cap recompute
+  inside the FINAL_T2 window, and any cleanup of the now-inert timing
+  variable.
+
 ## Backlog (KOS unit records; Target KOS 06 §D, GOVERNANCE §9)
 
 Rows are read by the KOS computed view (`python core/kos_core.py index
