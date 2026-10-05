@@ -404,7 +404,9 @@ identity; a library wired into nothing, still unarmed) are landed,
 the remaining execution-envelope stages (2C-3 wiring, 2C-B binding),
 rehearsal and readiness stages remain pending, the durable one-way
 single-attempt consumption latch remains a hard pre-arming gate, and
-the replacement is not ready or authorized for dispatch. Windows scheduler cutover, prospective
+the replacement is not ready or authorized for dispatch. (Superseded
+2026-10-05: the one replacement official gate ran and recorded GREEN on
+synthetic fixtures; see the 2026-10-05 post-terminal entry below.) Windows scheduler cutover, prospective
 five-slot live window, evidence finalization and release remain
 P5-E through P5-H and are still pending. Phase 6 is NOT STARTED.
 The overall production-readiness program
@@ -7164,6 +7166,136 @@ merges every change."
   still not begun: re-enabling `SentinelDailyRun` (D8), the cap recompute
   inside the FINAL_T2 window, and any cleanup of the now-inert timing
   variable.
+
+- 2026-10-05 - ADR-0012 STAGE 2C-B6-6b COMPLETED AT R2 AND THE ONE
+  REPLACEMENT OFFICIAL SONNET GATE RAN: DISPOSITION GREEN, FINALIZER
+  VERDICT TRUSTED_QUALITY, TERMINAL; THIS COMMIT IS THE POST-TERMINAL
+  RECORDING STAGE (ADR-0012 Amendment C C9); CLOSURE PENDING EXACT-SHA CI
+  OF THIS COMMIT. **GREEN here is a result on the frozen SYNTHETIC
+  fixtures with a frozen answer key. It is not a live-run result and it
+  is not, by itself, a production or production-ready claim; the
+  production-readiness program remains OPEN.**
+  B6-6b SESSION 2 (fresh session at R2
+  `79f9ffc46a7a48bdb2da86d935bd4beeefa164a2`, fresh two-attempt budget;
+  attempt 1 only). Forecast first: pip dry-run resolution of
+  `requirements.txt` against the B5 identity distributions (B5 identity
+  file digest re-verified) showed exactly one difference, `rpds-py`
+  2026.6.3 -> 2026.9.1, the transition already ACCEPTED under ruling
+  `q77-b66b-rpds-py-20261005-a1` (ruled_at_utc 2026-10-05T18:18:10Z). The
+  adjudication input file had been lost with the previous session's
+  scratch storage; it was rebuilt field for field from the 2026-10-05
+  session-1 entry above (package, both versions, decision, ruling_ref,
+  ruled_at_utc) and strict-loaded; no ruling was changed or added.
+  Pre-probe predicates at R2 all held at 2026-10-05T22:39:42Z: HEAD =
+  origin/main = remote main = R2, clean tree, latch GENESIS-only (SHA-256
+  `37799c77...`), official runs 1 to 4 only, zero replacement markers,
+  zero gate-evidence artifacts, zero probe runs at R2, both retention
+  files absent, `SentinelDailyRun` Disabled. The owner gave the exact
+  phrase READY NOW with the Console open.
+  ATTEMPT 1. One probe dispatch at R2: run `37384032362` (created
+  2026-10-05T22:41:12Z, attempt 1, success, the only probe at R2;
+  digest-verified artifact; result PASS; runtime drift exactly the
+  adjudicated `rpds-py` transition, no fatal difference, no residual).
+  T_floor 2026-10-05T22:41:29Z; conditional GO
+  `q77-p5d-cgo-r2-20261005-a1` issued 2026-10-05T22:26:18Z, before the
+  probe was created. Owner Console bracket 2026-10-05T22:42:23Z to
+  23:05:30Z (read-only, owner-attested): replacement rule Active with
+  every frozen field equal; the three original rules (P5C, P5D_ORIGINAL,
+  TIMING) Archived; zero authentication events for the replacement rule
+  (newest event overall is the 2026-10-01 B5 timing event); identifier
+  hashes equal to the B6-5 values; `sentinel` workspace month-to-date
+  spend USD 0.52, cap USD 9.00, prepaid credit USD 12.80, auto-reload
+  Off, USD, calendar-month UTC. Granularity, owner attestation: "Console
+  exposes no separate granularity field; during the current read-only
+  bracket the owner verified that the spend-limit control accepts
+  whole-USD increments only, so the observed step is USD 1.00. No
+  mutation or save occurred." It is fresh evidence from this bracket,
+  not a carry-forward from B6-5 and not a ruling. FX: ECB reference rate
+  2026-10-05, 1 EUR = 1.1204 USD, retrieved 2026-10-05T22:43:51Z. Model
+  lifecycle read 2026-10-05T22:43:53Z: `claude-haiku-4-5-20251001` and
+  `claude-sonnet-5` both Active, no deprecation notice. `collect-final`:
+  draft eligible, 25 rows, every component PASS and FINAL_T2;
+  `verify-final --draft` ELIGIBLE. `authorize` PASS at recorded_at_utc
+  2026-10-05T23:10:16Z (71 minutes inside the 100-minute freeze
+  deadline): two retained durable copies outside the repository,
+  byte-identical; record SHA-256
+  `d9117bdbaff16848843479671dbcb6b7bda7eb910b7622203bafcced57974e90`;
+  `owner_go_ref`
+  `q77-p5d-final-go-a/d9117bdbaff16848843479671dbcb6b7bda7eb910b7622203bafcced57974e90`;
+  one ATTEMPT_AUTHORIZED line appended (prior official run number 4).
+  COMMIT A `612832e4d7bf0706cf994a83462e50cce9d9e1be`: one parent R2,
+  only the latch file, one added line; `write-set` PASS; pushed with
+  Tier 0 and leak-grep PASS; `confirm-a` PASS; exact-SHA CI run
+  `37387016722` success; `pre-dispatch` PASS at 2026-10-05T23:13:28Z.
+  REPLACEMENT DISPATCH (separate owner GO, 2026-10-05). Pre-dispatch
+  facts re-read at 2026-10-05T23:22:39Z (within 2 h of A, so the five
+  base facts apply): repository head, rule variable equal to the Console
+  rule id, official runs 1 to 4, zero replacement markers and gate
+  evidence, latch GENESIS + one ATTEMPT_AUTHORIZED, scheduler Disabled;
+  `pre-dispatch` PASS again. Exactly one dispatch of
+  `sentinel-official-gate.yml` with `expected_source_sha` = A: run
+  `37388164100`, official run number 5, attempt 1, created
+  2026-10-05T23:23:00Z, completed success 2026-10-05T23:30:09Z, every
+  step success; no cancel, no rerun. One-shot marker artifact
+  `sentinel-p5-oneshot-p5d-replacement-sonnet-gate-r37388164100` (digest
+  `sha256:85d8917e1fb116486856ced73d893488fb3b5ae798771c6cec0884057c03773c`);
+  gate evidence artifact `sentinel-p5-gate-evidence-r37388164100-a1`
+  (digest
+  `sha256:95b5799bd16c0deef7e469b8ef6a6cbe681f9db189a29b664488e1471c0442ea`,
+  downloaded and digest-verified).
+  RESULT (SYNTHETIC fixtures, frozen answer key; verbatim from the gate
+  evidence): disposition GREEN; model `claude-sonnet-5`, profile
+  `sonnet-official-gate`, auth mode `github-actions-wif-federation`;
+  replacement_of_run_id `32880880053`, owner_ruling_id
+  `q77-p5d-replacement-owner-ruling-a`, marker purpose
+  `P5D_REPLACEMENT_SONNET_GATE`, envelope id `3380e09d...`, terminal
+  writer RUNNER, no termination source, no observed signals. Run IDs
+  `r-bcacf20af69140c89b25ebb82977a296`,
+  `r-5d4869f8387d42419f6242f525415277`. Pooled precision 60/60 = 1.0000
+  (>= 0.90); pooled recall 60/60 = 1.0000 (>= 0.85); per-class recall
+  10/10 for each of the six classes (>= 0.80); clean false flags 0/166
+  (<= 16); every execution-validity predicate (13) and every invariant
+  (every_task_terminal, zero_lost_tasks, idempotent_rerun,
+  dedup_correct_on_doubled_fixture_run) PASS; 27 of 27 checks PASS, zero
+  failed checks, zero miss patterns. Gate cost 1,073,575 micro-EUR
+  (<= 5,000,000 cap): run 1 988 input / 16,358 output tokens, 597,367
+  micro-EUR; run 2 999 input / 15,248 output tokens, 476,208 micro-EUR.
+  Finalizer: marker CONSUMED, candidate verdict TRUSTED_QUALITY, action
+  PRESERVE_RUNNER_EVIDENCE.
+  ANALYSIS. Every scoring threshold, both cross-run invariants and every
+  execution-validity predicate passed with no margin consumed (no miss,
+  no false positive, no clean unit flagged), and the run stayed well
+  inside its cost cap and timeout. Under ADR-0012 section 10 a valid GREEN
+  is terminal: no confirmation run, no retry. It shows the official gate
+  passed once on synthetic fixtures under the bounded envelope; it says
+  nothing about live-run quality or availability.
+  POST-TERMINAL RECORDING (this commit). `verify-final --record` PASS:
+  the committed bytes at `artifacts/phase5_readiness_final.json`, both
+  retained copies and the `owner_go_ref` suffix in A all have SHA-256
+  `d9117bdb...74e90`. Both retained copies are kept until this commit's
+  exact-SHA CI succeeds; any later deletion is an owner action.
+  Executing model: Opus 5.5.
+  ACTUAL WRITE SET: `artifacts/phase5_readiness_final.json` (new,
+  byte-identical to the retained record), STATE.md (this entry and one
+  superseding sentence in the header status paragraph), and
+  `.publicgate-allow` only if the publication gate mechanically requires
+  it. No code, workflow, test, latch, requirements or ADR change.
+  NON-EVENTS: one probe and one replacement dispatch only; no rerun or
+  cancel; no second latch line; no provider, rule, variable, secret, cap
+  or scheduler change; `SentinelDailyRun` stays Disabled; no P5-E step;
+  no write to the private governance repository and no memory write
+  (owner order; the failure-register reconciliation stays deferred).
+  STATUS AFTER THIS RECORD: P5-A, P5-B, P5-C COMPLETE. **P5-D COMPLETE on
+  exact-SHA CI success of this commit** (ADR-0011 sequence step 4: the
+  one official Sonnet gate ran and its GREEN is recorded with analysis);
+  the original run stays `EXECUTION_INVALID / NO_QUALITY_RESULT` and
+  non-qualifying. P5-E NOT STARTED. Phase 6 NOT STARTED. The
+  production-readiness program remains OPEN; production-ready claim NOT
+  PERMITTED. v0.7 NOT TAGGED.
+  Next action: exact-SHA CI of this commit; then, as separately
+  authorized owner steps, the private failure-register reconciliation
+  and P5-E (disable the Windows schedule, verify the migration boundary,
+  freeze the five-slot qualification window).
 
 ## Backlog (KOS unit records; Target KOS 06 §D, GOVERNANCE §9)
 
