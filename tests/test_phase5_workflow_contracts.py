@@ -34,6 +34,7 @@ EXPECTED_FILES = {
     "sentinel-kill-rehearsal.yml",
     "sentinel-timing-rehearsal.yml",
     "sentinel-latch-read-probe.yml",
+    "kos-controls.yml",
 }
 
 P5_WORKFLOWS = {
