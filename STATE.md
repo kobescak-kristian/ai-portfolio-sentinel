@@ -7297,6 +7297,66 @@ merges every change."
   and P5-E (disable the Windows schedule, verify the migration boundary,
   freeze the five-slot qualification window).
 
+- 2026-10-07 - CONTROL PACKAGE 1.4 INSTALLED WITH THE WORKFLOW-SET
+  COMPANION (commit `3f5eac63039e17ad0b9263a82abd8bc74466fc64`, parent
+  `be1e5907da41eb2e017ae048c2bb114f9d1a8d05`); THIS ENTRY IS A
+  RECORDING-ONLY COMMIT. **No Phase-5 evidence, code, schedule,
+  qualification logic, receipt, latch, cost ledger or `.kos/unit.json`
+  changed. P5-E remains NOT STARTED.**
+  WHAT LANDED. One direct commit applying the externally prepared
+  control-package delta (sha256
+  `d7c7aeaa5d781003918db5f5f7b12529e319136434acae99a351c6b4f3ca0dba`,
+  0 CR bytes) exactly as cleared by the governance interlock review of
+  2026-10-07, plus the one-line companion that review required in the
+  same commit. ACTUAL WRITE SET (exactly 10 paths, +1424 lines, 0
+  deleted): `.claude/settings.json`, `.codex/rules/default.rules`,
+  `.githooks/check_controls.py`, `.githooks/check_work.py`,
+  `.githooks/check_write_set.py`, `.githooks/pre-commit` (modified),
+  `.github/workflows/kos-controls.yml`, `.kos/controls-manifest.sha256`,
+  `.kos/controls.json`, and `tests/test_phase5_workflow_contracts.py`
+  (one added line: `kos-controls.yml` in `EXPECTED_FILES`). The nine
+  delta blobs equal the cleared blob ids (`fcf4456`, `53b0be7`,
+  `8e7af6e`, `4896037`, `046d3db`, `9007d04`, `60bc58f`, `47d9e4d`,
+  `27da29d`); the companion blob `69e40b4` equals the reviewed trial.
+  Byte-unchanged: `.githooks/pre-push` (the receipt-registry and latch
+  append-only guards), `.githooks/validate_artifacts.py`, every other
+  workflow, `fixtures/`, `evals/`, `artifacts/`, `telemetry/`.
+  WHY THE COMPANION IS CORRECT. The workflow-contract test pins the
+  repository's complete workflow set, so a new workflow must be a
+  reviewed, deliberate addition; `kos-controls.yml` was reviewed (read-only
+  permissions, no write scope, no OIDC, no shared concurrency group,
+  push and pull-request triggers only, actions pinned to the same SHAs as
+  the other workflows). It never runs during a qualification window,
+  because no push to main is allowed then.
+  VERIFICATION (verbatim). Fresh LF checkout at `3f5eac6`: control check
+  OK (5 members at 1.4); Tier 0 PASS; Phase-1 freeze guard PASS;
+  pytest 3079 passed, 33 skipped, 0 failed. Publication gate
+  `gate_scan.sh --at 3f5eac6` PASS(0). Pre-push Tier 0 and leak-grep
+  PASS. Push activity `be1e590..3f5eac6` at 2026-10-07T19:03:12Z.
+  Exact-SHA CI: `ci.yml` run `37671553194` (context `test`) success,
+  completed 2026-10-07T19:04:36Z; `kos-controls.yml` run `37671553205`
+  (context `kos-controls`) success, completed 2026-10-07T19:03:25Z.
+  Executing model: Opus 5.5.
+  PHASE-5 INTERLOCK. Prior P5-D evidence (GREEN at commit A
+  `612832e`) is unaffected. Before the P5-E freeze, the final
+  qualification source must be revalidated with the workflow set now
+  including `kos-controls.yml`. Branch protection on main is the next,
+  separately cleared step (required contexts exactly `test` and
+  `kos-controls`); once it is applied, every later Phase-5 change lands
+  through an owner-merged pull request, and the final qualification
+  source is the resulting main commit. Still open before any P5-E
+  freeze, unchanged by this entry: the replacement-evidence
+  source-binding repair, the replacement receipt and CostRow recording,
+  the scheduled-run delay versus the frozen 120-minute tolerance, the
+  `.kos/unit.json` status-claim correction, and the Windows
+  disabled-at governance ruling.
+  STATUS AFTER THIS RECORD: P5-A, P5-B, P5-C, P5-D COMPLETE. P5-E NOT
+  STARTED. Phase 6 NOT STARTED. The production-readiness program
+  remains OPEN; production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: apply main branch protection under its clearance
+  conditions; then the P5-E repair plan through owner-merged pull
+  requests.
+
 ## Backlog (KOS unit records; Target KOS 06 §D, GOVERNANCE §9)
 
 Rows are read by the KOS computed view (`python core/kos_core.py index
