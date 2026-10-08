@@ -35,6 +35,7 @@ EXPECTED_FILES = {
     "sentinel-timing-rehearsal.yml",
     "sentinel-latch-read-probe.yml",
     "kos-controls.yml",
+    "sentinel-schedule-probe.yml",
 }
 
 P5_WORKFLOWS = {
@@ -850,3 +851,56 @@ def test_probe_trigger_is_dispatch_only_with_no_schedule_push_or_pr():
 
 def test_probe_driver_exists():
     assert (Path("scripts") / "run_phase5_latch_read_probe.py").exists()
+
+
+# =====================================================================
+# Phase-5 scheduler viability probe, Stage 1 (owner ruling 2026-10-09):
+# a NON-QUALIFYING, model-free latency probe. Pinned so it can never become
+# a model, credential or write path, and so every cron line names its own
+# nominal date. Removed (with this test) before any P5-E qualification freeze.
+# =====================================================================
+
+SCHEDULE_PROBE = "sentinel-schedule-probe.yml"
+_DATED_CRON = re.compile(r"^37 ([0-9]|1[0-9]|2[0-3]) ([1-9]|[12][0-9]|3[01]) ([1-9]|1[0-2]) \*$")
+
+
+def test_schedule_probe_is_schedule_only_with_unique_date_encoded_cron_lines():
+    data = _load(SCHEDULE_PROBE)
+    trigger = data[True]
+    assert set(trigger) == {"schedule"}
+    crons = [entry["cron"] for entry in trigger["schedule"]]
+    assert all(set(entry) == {"cron"} for entry in trigger["schedule"])
+    assert 1 <= len(crons) <= 24
+    assert len(set(crons)) == len(crons)
+    for cron in crons:
+        assert _DATED_CRON.fullmatch(cron), cron
+
+
+def test_schedule_probe_is_model_free_and_read_only():
+    data = _load(SCHEDULE_PROBE)
+    assert data["permissions"] == {"contents": "read"}
+    assert "concurrency" not in data
+    assert "env" not in data
+    assert list(data["jobs"]) == ["probe"]
+    job = data["jobs"]["probe"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == 2
+    assert "permissions" not in job and "env" not in job and "concurrency" not in job
+    assert _all_uses(data) == []
+    assert len(job["steps"]) == 1
+    step = job["steps"][0]
+    assert set(step) == {"name", "env", "run"}
+    assert step["env"] == {"NOMINAL": "${{ github.event.schedule }}"}
+    assert step["run"] == 'echo "nominal=$NOMINAL"'
+    text = (WORKFLOWS_DIR / SCHEDULE_PROBE).read_text(encoding="utf-8")
+    for forbidden in ("secrets.", "vars.", "id-token", "workflow_dispatch", "pull_request",
+                      "actions/checkout", "uses:", "ANTHROPIC", "FEDERATION", "sentinel run"):
+        assert forbidden not in text, forbidden
+    assert data["run-name"] == "schedule-probe ${{ github.event.schedule }}"
+
+
+def test_schedule_probe_is_not_the_qualifying_workflow():
+    from sentinel.phase5.orchestrator import SCHEDULED_WORKFLOW_IDENTITY
+
+    assert SCHEDULED_WORKFLOW_IDENTITY == ".github/workflows/sentinel-schedule.yml"
+    assert SCHEDULED_WORKFLOW_IDENTITY != f".github/workflows/{SCHEDULE_PROBE}"

@@ -7357,6 +7357,91 @@ merges every change."
   conditions; then the P5-E repair plan through owner-merged pull
   requests.
 
+- 2026-10-09 - PHASE-5 SCHEDULER VIABILITY PROBE, STAGE 1 LANDED
+  (owner ruling 2026-10-09: staged probe design approved; pre-registered
+  mechanical criteria authoritative; statistical figures explanatory only
+  and never override them). **Non-qualifying and model-free. ADR-0011, the
+  `sentinel-schedule.yml` cron `37 6 * * *` and the 120-minute
+  qualification tolerance are unchanged. P5-E remains NOT STARTED.**
+  WHY. Every scheduled `sentinel-schedule` run since 2026-08-27 (44 of
+  44 through 2026-10-08) was created more than 120 minutes after its
+  06:37 UTC slot (256 to 742 minutes), so a five-slot window cannot
+  qualify at the current time. The probe answers only: is there evidence
+  that another UTC schedule time materially improves GitHub Actions
+  scheduling latency for this repository? A negative result is no claim
+  about GitHub Actions in general.
+  WHAT. `.github/workflows/sentinel-schedule-probe.yml`: schedule
+  trigger only, `permissions: contents: read`, one job (`ubuntu-latest`,
+  `timeout-minutes: 2`) with one `echo` step; no checkout, no action, no
+  secret, no variable, no OIDC, no `workflow_dispatch`, no pull-request
+  trigger, no concurrency group (so no delayed observation is
+  cancelled). `run-name` carries `github.event.schedule`, so each run's
+  REST `display_title` names its nominal slot. Qualification ignores it:
+  it matches only `.github/workflows/sentinel-schedule.yml`. Pinned by
+  three contract tests in `tests/test_phase5_workflow_contracts.py` and
+  listed in `EXPECTED_FILES`.
+  STAGE-1 SLOTS (frozen). Hours 02:37, 06:37, 10:37, 14:37, 18:37 and
+  22:37 UTC on D1 = 2026-10-10, D2 = 2026-10-11 and D3 = 2026-10-12: 18
+  date-encoded lines `37 H D 10 *`, each firing once. 06:37 is the
+  same-minute control against the real `sentinel-schedule` run. Merge
+  deadline 2026-10-10T00:37Z (first slot at least 2 hours after merge);
+  a later merge regenerates the dates before merge and no stale slot is
+  evidence.
+  NOMINAL-SLOT MAPPING (pre-registered). Nominal = the month, day and
+  hour in the run's `github.event.schedule`, minute 37, UTC, year 2026.
+  delay = `created_at` minus nominal, whole minutes rounded down.
+  Exactly one run: 0 <= delay <= 120 ON_TIME; 120 < delay < 1440 LATE;
+  delay >= 1440 LATE / DATE-AMBIGUOUS (not on time, never reassigned).
+  No run once 24 hours have passed: MISSING. More than one run for a
+  line: DUPLICATE (every run reported; slot not on time). delay < 0,
+  `run_attempt` != 1 or an event other than `schedule`: INVALID (not on
+  time). `head_sha` is recorded for every run.
+  STAGE-1 CRITERIA (pre-registered; evaluated read-only once every slot
+  is resolved, at the latest 2026-10-13T22:37Z). Baseline: the real
+  06:37 run since 2026-08-27, minimum 256 minutes, 0 of 44 on time.
+  CANDIDATE hour: 3 of 3 slots present (none MISSING, DUPLICATE, INVALID
+  or LATE / DATE-AMBIGUOUS), at least 2 of 3 ON_TIME, worst delay <= 240
+  minutes. Checked first, ESCALATE to the owner if the probe's 06:37 and
+  the real 06:37 on the same date differ by more than 120 minutes on at
+  least 2 of the 3 days (workflow-specific delay), or if 3 or more of
+  the 18 slots are MISSING, DUPLICATE or INVALID (probe unreliable).
+  Otherwise CONTINUE to Stage 2 if at least one CANDIDATE hour exists;
+  STOP if none: record "no evidence that another UTC time materially
+  improves scheduling latency for this repository", remove the probe,
+  and the owner decides between an external exact-time trigger and
+  redefining on time as one run per daily slot. Also reported: every
+  hour's median, and whether every hour median lies within 60 minutes
+  of the median of all 18 slots (broadly similar across the day).
+  STAGE 2 (only after the Stage-1 evidence is returned and these criteria
+  are applied). At most 2 CANDIDATE hours, each with neighbours H-1 and
+  H+1 at :37, for 7 days. A cron change to hour H is recommended only if
+  Stage 2 shows 7 of 7 present, no DUPLICATE or INVALID, 7 of 7 ON_TIME;
+  Stage 1 plus Stage 2 show at least 9 of 10 ON_TIME with none LATE /
+  DATE-AMBIGUOUS; and the worst Stage-2 delay is <= 60 minutes (<= 30 if
+  either neighbour has fewer than 5 of 7 ON_TIME, then with the caveat
+  to the owner). A recommended change still needs an ADR-0011 amendment
+  with its code and tests, and then 5 consecutive ON_TIME real
+  `sentinel-schedule` runs at the new time before any freeze.
+  REMOVAL. The probe workflow, its `EXPECTED_FILES` entry and its tests
+  are removed by a separate change before any P5-E qualification freeze,
+  restoring the 10-workflow set.
+  Executing model: Opus 5.5.
+  ACTUAL WRITE SET (exactly 3 paths): `.github/workflows/sentinel-schedule-probe.yml`
+  (new), `tests/test_phase5_workflow_contracts.py` (`EXPECTED_FILES` +1
+  line; three probe tests), `STATE.md` (this entry). Lands as one
+  owner-merged pull request.
+  NON-EVENTS: no change to `sentinel-schedule.yml`, its cron, the
+  tolerance, the qualification, orchestrator, models or freeze code,
+  ADR-0011 or any other ADR; no dispatch; no freeze; no provider, model,
+  credential, variable, secret or settings change; `SentinelDailyRun`
+  stays Disabled.
+  STATUS AFTER THIS RECORD: P5-A to P5-D COMPLETE. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Production-readiness program OPEN;
+  production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: after merge, exact-SHA CI on the merge commit; then
+  collect and classify the 18 Stage-1 observations and apply the
+  criteria above, returning the evidence before any Stage-2 change.
+
 ## Backlog (KOS unit records; Target KOS 06 §D, GOVERNANCE §9)
 
 Rows are read by the KOS computed view (`python core/kos_core.py index

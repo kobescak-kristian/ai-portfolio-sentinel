@@ -1,0 +1,41 @@
+# sentinel-schedule-probe -- NON-QUALIFYING, model-free scheduler latency
+# probe (Phase-5 scheduler viability, Stage 1; owner ruling 2026-10-09).
+# It measures only when GitHub creates scheduled runs. Each cron line names
+# its own date (minute hour day month), so github.event.schedule identifies
+# the exact nominal slot. No checkout, no action, no credential, no variable,
+# no secret, no OIDC, no model, no data written. Qualification ignores it
+# (it matches only sentinel-schedule.yml). It is removed before any P5-E
+# qualification freeze.
+name: sentinel-schedule-probe
+run-name: "schedule-probe ${{ github.event.schedule }}"
+on:
+  schedule:
+    - cron: "37 2 10 10 *"
+    - cron: "37 6 10 10 *"
+    - cron: "37 10 10 10 *"
+    - cron: "37 14 10 10 *"
+    - cron: "37 18 10 10 *"
+    - cron: "37 22 10 10 *"
+    - cron: "37 2 11 10 *"
+    - cron: "37 6 11 10 *"
+    - cron: "37 10 11 10 *"
+    - cron: "37 14 11 10 *"
+    - cron: "37 18 11 10 *"
+    - cron: "37 22 11 10 *"
+    - cron: "37 2 12 10 *"
+    - cron: "37 6 12 10 *"
+    - cron: "37 10 12 10 *"
+    - cron: "37 14 12 10 *"
+    - cron: "37 18 12 10 *"
+    - cron: "37 22 12 10 *"
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Record the nominal slot
+        env:
+          NOMINAL: ${{ github.event.schedule }}
+        run: echo "nominal=$NOMINAL"
