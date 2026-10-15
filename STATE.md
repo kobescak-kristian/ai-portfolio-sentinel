@@ -7442,6 +7442,85 @@ merges every change."
   collect and classify the 18 Stage-1 observations and apply the
   criteria above, returning the evidence before any Stage-2 change.
 
+- 2026-10-16 - PHASE-5 SCHEDULER VIABILITY PROBE, STAGE 1 RESULT: STOP;
+  PROBE REMOVED (owner approval 2026-10-16 of the Stage-1 review and of
+  this removal). **Non-qualifying evidence. No Stage 2. ADR-0011, the
+  `sentinel-schedule.yml` cron `37 6 * * *` and the 120-minute
+  qualification tolerance are unchanged. P5-E remains NOT STARTED.**
+  EVIDENCE (REAL scheduler observations on this repository; model-free;
+  no synthetic fixtures involved). Source: the raw REST run listing for
+  `sentinel-schedule-probe.yml`, read 2026-10-16. 18 runs for the 18
+  lines; every run event `schedule`, `run_attempt` 1, conclusion
+  `success`, `head_sha` `72bbc8fa4e8affa014d7114be617cd9ca75605d2`.
+  Delay = `created_at` minus nominal, whole minutes rounded down:
+
+  | Date (UTC) | 02:37 | 06:37 | 10:37 | 14:37 | 18:37 | 22:37 |
+  |---|---|---|---|---|---|---|
+  | 2026-10-10 | 378 | 380 | 319 | 252 | 199 | 155 |
+  | 2026-10-11 | 395 | 409 | 347 | 271 | 228 | 186 |
+  | 2026-10-12 | 425 | 562 | 561 | 456 | 378 | 271 |
+
+  Run ids in the same order. 2026-10-10: `38039544038`, `38053896541`,
+  `38065660437`, `38077319087`, `38089551354`, `38101060627`.
+  2026-10-11: `38127550540`, `38143184238`, `38155324406`,
+  `38166727482`, `38180397461`, `38192991634`. 2026-10-12:
+  `38231567832`, `38274268427`, `38301178619`, `38315405152`,
+  `38329664655`, `38340249079`.
+  CLASSIFICATION. 18 of 18 LATE (120 < delay < 1440); 0 ON_TIME, 0
+  LATE / DATE-AMBIGUOUS, 0 MISSING, 0 DUPLICATE, 0 INVALID. Minimum
+  delay 155 (2026-10-10 22:37), maximum 562 (2026-10-12 06:37).
+  CRITERIA APPLIED (pre-registered, 2026-10-09 entry). ESCALATE,
+  workflow-specific delay: probe 06:37 against the real 06:37 run on the
+  same date, 380 vs 383 (run `38054075798`), 409 vs 411
+  (`38143302949`), 562 vs 566 (`38274679786`); differences 3, 2 and 4
+  minutes, 0 of 3 days above 120. Not triggered. ESCALATE, probe
+  unreliable: 0 of 18 MISSING, DUPLICATE or INVALID (threshold 3). Not
+  triggered. CANDIDATE hours: 0 of 6 (no hour has any ON_TIME slot).
+  Outcome: **STOP**. Recorded per the criteria: no evidence that another
+  UTC time materially improves scheduling latency for this repository.
+  This is no claim about GitHub Actions in general.
+  EXPLANATORY ONLY (never overrides the criteria). Hour medians: 02:37
+  395, 06:37 409, 10:37 347, 14:37 271, 18:37 228, 22:37 186; median of
+  all 18 slots 362.5. The 14:37, 18:37 and 22:37 medians lie more than
+  60 minutes from it, so the delay is not broadly similar across the
+  day; even the lowest hour stays above 120 minutes on all 3 days.
+  CORRECTION (append-only; the 2026-10-09 entry above stays as written).
+  Its "44 of 44 through 2026-10-08" and its baseline "0 of 44 on time"
+  are wrong. Recount from the raw REST run listing for
+  `sentinel-schedule.yml`, read 2026-10-16: the daily slots 2026-08-27
+  through 2026-10-08 hold **43** scheduled runs, **43 of 43** created
+  more than 120 minutes after their 06:37 UTC slot (256 to 742 minutes),
+  0 of 43 on time. Through 2026-10-15: 50 of 50 late, same range. Since
+  2026-08-25: 52 scheduled runs in 52 daily slots (2026-08-25 to
+  2026-10-15), exactly one per slot, every `run_attempt` 1 and conclusion
+  `success`; only the first two were on time (2026-08-25 delay 51,
+  2026-08-26 delay 52). The listing also holds one `push` run
+  (2026-08-24T14:45:36Z), which is no scheduled run. The minimum (256),
+  the maximum (742) and the Stage-1 outcome are unaffected. Lesson:
+  recount from the raw REST listing before committing a number; the
+  failure-register entry belongs to the governance repository and is
+  not part of this write set.
+  WHAT LANDED. `.github/workflows/sentinel-schedule-probe.yml` deleted;
+  `tests/test_phase5_workflow_contracts.py` restored mechanically to the
+  pre-probe blob `69e40b4` (the `EXPECTED_FILES` entry and the three
+  probe tests removed), restoring the 10-workflow set. ACTUAL WRITE SET
+  (exactly 3 paths): those two paths and `STATE.md` (this entry). Lands
+  as one owner-merged pull request.
+  Executing model: Opus 5.5.
+  NON-EVENTS: no change to `sentinel-schedule.yml`, its cron, the
+  tolerance, the qualification, orchestrator, models or freeze code,
+  ADR-0011 or any other ADR; the ADR-0011 daily-slot amendment is not
+  implemented here; no dispatch; no qualification window frozen; no
+  provider, model, credential, variable, secret or settings change;
+  `SentinelDailyRun` stays Disabled.
+  STATUS AFTER THIS RECORD: P5-A to P5-D COMPLETE. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Production-readiness program OPEN;
+  production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Next action: after merge, exact-SHA CI on the merge commit and
+  deletion of the merged branches `probe/scheduler-latency-stage1` and
+  this removal branch; then the ADR-0011 daily-slot amendment as its
+  own T2 change and owner-merged pull request.
+
 ## Backlog (KOS unit records; Target KOS 06 §D, GOVERNANCE §9)
 
 Rows are read by the KOS computed view (`python core/kos_core.py index
