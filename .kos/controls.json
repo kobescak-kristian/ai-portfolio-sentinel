@@ -10,6 +10,7 @@
       ".github/workflows/",
       ".kos/",
       ".claude/settings.json",
+      ".claude/settings.local.json",
       ".codex/"
     ],
     "C3": [
