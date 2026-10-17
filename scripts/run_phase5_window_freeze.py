@@ -14,8 +14,11 @@ prerequisite verification (seam 3, repaired -- ADR-0012 Amendment A1
 and section 19; dispatch q77-p5d-repair-stage2-implement-a: the
 committed durable receipt registry is now consulted FIRST for
 existence, count and correlation truth, with any still-retained live
-artifact hash-verified against its receipt as defense in depth), and
-the EUR40 five-slot freeze headroom check.
+artifact hash-verified against its receipt as defense in depth), the
+EUR40 five-slot freeze headroom check, and the pre-window daily-slot
+streak (ADR-0011 §5 daily-slot amendment: five closed daily intervals,
+each with exactly one successful scheduled invocation at the SHA being
+frozen).
 """
 
 from __future__ import annotations
@@ -322,6 +325,78 @@ def _verify_provider_phase_prerequisites(
     return all_rows
 
 
+PREWINDOW_INTERVALS = 5
+
+
+def _verify_prewindow_daily_slot_streak(client, expected_source_sha: str, now: datetime) -> tuple:
+    """ADR-0011 §5 daily-slot amendment, rulings D1/D2/D4. The five most
+    recent CLOSED daily intervals ``[06:37 UTC, next 06:37 UTC)`` must each
+    hold exactly one invocation of the scheduled workflow. Closure is
+    judged by the earlier of GitHub server time (read BEFORE the listing,
+    so no invocation can still appear in a closed interval) and ``now``,
+    the window record's own creation instant. Each invocation must be a
+    ``schedule`` event, ``run_attempt`` 1, the frozen workflow path, branch
+    ``main``, ``head_sha`` == the SHA being frozen (so any push to main
+    resets the count, D1), completed with conclusion ``success``. Every
+    invocation of the workflow in an interval
+    is counted -- none is filtered out -- so a wrong-provenance one breaks
+    that interval (D4). Scheduler-cadence evidence only: these are never
+    qualifying Sentinel runs (D2). Returns the five observations for the
+    frozen window record; any shortfall refuses."""
+    from sentinel.phase5.models import PrewindowObservation
+
+    try:
+        closure_at = min(client.server_time_utc(), now)
+        last_start = closure_at.replace(hour=6, minute=37, second=0, microsecond=0) - timedelta(days=1)
+        if last_start + timedelta(hours=24) > closure_at:
+            last_start -= timedelta(days=1)
+        starts = [last_start - timedelta(days=PREWINDOW_INTERVALS - 1 - i) for i in range(PREWINDOW_INTERVALS)]
+        runs = client.list_workflow_runs_counted(
+            SCHEDULED_WORKFLOW_IDENTITY,
+            created_after=starts[0],
+            created_before=starts[-1] + timedelta(hours=24),
+        )
+    except Exception as exc:  # noqa: BLE001 - an unreadable listing is never read as a clean streak
+        raise Phase5ScriptError(f"PREWINDOW_DAILY_SLOT_STREAK_UNMET: run listing unavailable ({type(exc).__name__})") from exc
+
+    observations = []
+    for start in starts:
+        end = start + timedelta(hours=24)
+        in_interval = [run for run in runs if start <= run.created_at < end]
+        label = start.strftime("%Y-%m-%d")
+        if len(in_interval) != 1:
+            raise Phase5ScriptError(
+                f"PREWINDOW_DAILY_SLOT_STREAK_UNMET: interval {label} holds {len(in_interval)} "
+                "invocations of the scheduled workflow (exactly one required)"
+            )
+        run = in_interval[0]
+        faults = [
+            name
+            for name, ok in (
+                ("event", run.event == "schedule"),
+                ("run_attempt", run.run_attempt == 1),
+                ("workflow_path", run.workflow_path == SCHEDULED_WORKFLOW_IDENTITY),
+                ("head_branch", run.head_branch == "main"),
+                ("head_sha", run.sha == expected_source_sha),
+                ("status", run.status == "completed"),
+                ("conclusion", run.conclusion == "success"),
+            )
+            if not ok
+        ]
+        if faults:
+            raise Phase5ScriptError(
+                f"PREWINDOW_DAILY_SLOT_STREAK_UNMET: interval {label} invocation {run.run_id} "
+                f"fails {', '.join(faults)}"
+            )
+        observations.append(
+            PrewindowObservation(
+                interval_start_utc=start, github_run_id=run.run_id, event="schedule", run_attempt=1,
+                head_sha=run.sha, created_at_utc=run.created_at, conclusion="success",
+            )
+        )
+    return tuple(observations)
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-source-sha", required=True)
@@ -416,16 +491,20 @@ def main(argv: list[str]) -> int:
         if not window_freeze_headroom_ok(spend, "DAILY"):
             return refuse("HEADROOM_INSUFFICIENT", ctx)
 
+        # -- pre-window daily-slot streak (ADR-0011 §5 amendment) -------
+        prewindow = _verify_prewindow_daily_slot_streak(client, args.expected_source_sha, now)
+
         # -- construct GENESIS -------------------------------------------
         window_id = f"p5w-{ctx.run_id}"
         slots = tuple(
             ExpectedSlot(slot_index=i, expected_at_utc=slot1 + timedelta(days=i - 1)) for i in range(1, 6)
         )
         window_fields = dict(
-            schema_version=1, window_id=window_id, created_at_utc=now,
+            schema_version=2, window_id=window_id, created_at_utc=now,
             control_workflow_identity=CONTROL_WORKFLOW_IDENTITY, control_run_id=ctx.run_id,
             source_sha=args.expected_source_sha, scheduled_workflow_identity=SCHEDULED_WORKFLOW_IDENTITY,
-            ref=FROZEN_REF, cron=FROZEN_CRON, timezone="UTC", tolerance_minutes=120,
+            ref=FROZEN_REF, cron=FROZEN_CRON, timezone="UTC", timing_rule="DAILY_SLOT",
+            prewindow_observations=prewindow,
             expected_slots=slots, qualifying_source="live", qualifying_judgment_mode="agent",
             **migration,
         )

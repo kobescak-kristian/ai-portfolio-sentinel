@@ -256,19 +256,24 @@ def derive_timing_outcome(
     window: QualificationWindowRecord, slot_n: int, github_run: GithubRunMetadata
 ) -> "tuple[str, str, int | None]":
     """P5-B Part 3/3 adapter seam (revision c, seam 2): owns ONLY the
-    already-landed negative-delay / within-tolerance / outside-tolerance
-    calculation. Extracted verbatim from ``_compute_outcome`` — the
-    caller must reach this only AFTER the successor chain (predecessor
-    hash, artifact identity, control-state transition, carried CostRow
-    agreement) has already validated; this function never validates
-    that chain and never runs ahead of it."""
-    expected = next(s for s in window.expected_slots if s.slot_index == slot_n)
-    delay = minutes_between(expected.expected_at_utc, github_run.created_at)
-    if delay < 0:
-        return "WRONG_PROVENANCE_NONQUALIFYING", "observed before expected slot", None
-    if delay <= window.tolerance_minutes:
-        return "QUALIFYING", "within tolerance", delay
-    return "LATE_NONQUALIFYING", "outside tolerance", delay
+    timing calculation. ADR-0011 §5 daily-slot amendment (timing rule
+    DAILY_SLOT): the invocation observed in daily interval N,
+    ``[slot N, slot N+1)``, is on time for that interval whatever its
+    delay; the delay is recorded, never judged for punctuality, and is
+    never read as proof of which GitHub cron firing caused the run.
+    ``LATE_NONQUALIFYING`` (created at or after the next interval start)
+    is defensive: runtime ownership already bounds ``created_at`` by the
+    interval. The caller must reach this only AFTER the successor chain
+    (predecessor hash, artifact identity, control-state transition,
+    carried CostRow agreement) has already validated; this function
+    never validates that chain and never runs ahead of it."""
+    start, end = _slot_ownership_interval(window, slot_n)
+    delay = minutes_between(start, github_run.created_at)
+    if github_run.created_at < start:
+        return "WRONG_PROVENANCE_NONQUALIFYING", "observed before the daily interval opens", None
+    if github_run.created_at < end:
+        return "QUALIFYING", "observed inside its daily interval", delay
+    return "LATE_NONQUALIFYING", "created at or after the next daily interval opens", delay
 
 
 def _compute_outcome(
@@ -433,14 +438,15 @@ def _normalize_run_history(history: Sequence[GithubRunMetadata]) -> list[GithubR
 def associate_runs_to_slots(
     window: QualificationWindowRecord, github_run_history: Sequence[GithubRunMetadata]
 ) -> dict[int, SlotAssociation]:
+    """Every invocation of the frozen scheduled workflow counts toward
+    its daily interval (ADR-0011 §5 daily-slot amendment, ruling D4):
+    a wrong-event, wrong-ref, wrong-SHA or rerun invocation is NOT
+    filtered out — it is associated, so it either breaks the interval
+    as a DUPLICATE or, alone, is classified non-qualifying by
+    ``classify_run``. Runs of other workflows never touch an interval."""
     normalized = _normalize_run_history(github_run_history)
     matching_identity = [
-        run
-        for run in normalized
-        if run.event == "schedule"
-        and run.workflow_identity == window.scheduled_workflow_identity
-        and run.ref == window.ref
-        and run.source_sha == window.source_sha
+        run for run in normalized if run.workflow_identity == window.scheduled_workflow_identity
     ]
     result: dict[int, SlotAssociation] = {}
     for slot in window.expected_slots:
@@ -472,7 +478,7 @@ def independent_review_slots(
                     "DUPLICATE_NONQUALIFYING",
                     window.window_id,
                     slot.slot_index,
-                    "multiple distinct scheduled executions in one ownership interval",
+                    "multiple distinct scheduled-workflow invocations in one daily interval",
                     now=now,
                     determined_by="independent_review",
                 )

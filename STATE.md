@@ -7521,6 +7521,79 @@ merges every change."
   this removal branch; then the ADR-0011 daily-slot amendment as its
   own T2 change and owner-merged pull request.
 
+- 2026-10-17 - ADR-0011 DAILY-SLOT AMENDMENT IMPLEMENTED (T2; lands as
+  one owner-merged pull request). **P5-E NOT STARTED. No qualification
+  window frozen. The five-day no-push period has NOT started.** Rationale
+  and rule: `adr/0011-phase5-unattended-operation-contract.md` §5,
+  "Amendment (2026-10-17): daily-slot qualification timing".
+  OWNER RULINGS (2026-10-16), now on disk: D1 the five pre-freeze
+  scheduler observations run at exactly the SHA that will be frozen; any
+  push to `main` resets the count. D2 each pre-freeze invocation must
+  reach terminal `success`; they prove scheduler cadence only and are
+  NOT P5-E qualifying Sentinel/model runs. D3 `QualificationWindowRecord`
+  `schema_version` 2 with `timing_rule = DAILY_SLOT` instead of
+  `tolerance_minutes = 120`. D4 a wrong-provenance invocation of the
+  frozen `sentinel-schedule.yml` breaks its daily interval; it is not
+  silently filtered out. Claim: daily cadence over intervals
+  [06:37 UTC, next 06:37 UTC); never punctual cron execution, never
+  attribution of a delayed run to a hidden cron firing.
+  T2 GATES: independent second-model review 2026-10-16 ACCEPT WITH
+  CHANGES (no blocker), revisions applied; overnight gate passed
+  2026-10-17 (owner statement).
+  STAGE-1 PROBE CLOSURE (final). Removal PR merged as `91df005`;
+  exact-SHA CI on it: `CI` run `38823022649` success, `kos-controls`
+  run `38823022652` success. Branches `probe/scheduler-latency-stage1`
+  and the removal branch deleted (remote heads read 2026-10-17: `main`
+  only). Local-control fix (`.claude/settings.local.json` mapped as C2
+  in `.kos/controls.json`, commit `2089426`) merged as `de0e6f7`: `CI`
+  run `39003738511` success, `kos-controls` run `39003738523` success.
+  COUNT CORRECTION. The 43 of 43 correction (not 44 of 44) is recorded
+  append-only in the 2026-10-16 entry above. Recount from the raw REST
+  listing for `sentinel-schedule.yml`, read 2026-10-17: 55 runs = 1
+  `push` + 54 `schedule` runs in 54 daily intervals 2026-08-25 to
+  2026-10-17 (that interval still open), exactly one per interval, all
+  `run_attempt` 1 and `success`; since 2026-08-27, 52 of 52 more than
+  120 minutes late (256 to 742). REAL scheduler observations; model-free.
+  The failure-register entry for the 44/43 error still belongs to the
+  governance repository and is not part of this write set.
+  WHAT LANDED. Models: window `schema_version` 2, `timing_rule`
+  DAILY_SLOT, five frozen `PrewindowObservation` entries inside the
+  hashed record (exact frozen SHA, consecutive closed intervals, distinct
+  runs); QUALIFYING delay 0..1439, LATE >= 1440 (defensive).
+  Qualification: `derive_timing_outcome` judges the interval end, not
+  120 minutes; `associate_runs_to_slots` keeps every invocation of the
+  scheduled workflow (D4). Freeze script: fail-closed
+  `PREWINDOW_DAILY_SLOT_STREAK_UNMET` check before GENESIS. Orchestrator:
+  rehearsal window literal only (synthetic, rehearsal-labelled
+  observations). ACTUAL WRITE SET (exactly 9 paths): the ADR,
+  `sentinel/phase5/models.py`, `sentinel/phase5/qualification.py`,
+  `sentinel/phase5/orchestrator.py`, `scripts/run_phase5_window_freeze.py`,
+  `tests/test_phase5_bundle.py`, `tests/test_phase5_qualification.py`,
+  `tests/test_phase5_window_freeze.py`, `STATE.md` (this entry).
+  VERIFICATION (local, on the uncommitted tree over `de0e6f7`; SYNTHETIC
+  test fixtures only): full pytest 3165 passed, 33 skipped, 0 failed,
+  exit 0; 21 of 21 mutations of the new guards killed (interval `<`,
+  interval start, slot-5 end, D4 filter both ways, both model bounds,
+  three window-record checks, streak exactly-one, half-open, closure
+  time, all seven streak predicates, chain-before-timing order); Tier 0
+  PASS; Phase-1 freeze guard PASS; KOS controls OK (local and CI leg).
+  Exact-SHA CI is owed on the merge commit.
+  NON-EVENTS: no workflow file changed (cron `37 6 * * *` and event
+  `schedule` unchanged); ADR-0012, cost and cadence code, receipts,
+  latch and evidence records untouched; no dispatch; no provider,
+  model, credential, variable, secret or settings change;
+  `SentinelDailyRun` stays Disabled.
+  OPEN GATE: P5-G reconstruction is implemented as library code only
+  and not wired to any production entrypoint; wiring it is an explicit
+  gate before Phase-5 closure (amendment item H).
+  STATUS AFTER THIS RECORD: P5-A to P5-D COMPLETE. P5-E NOT STARTED.
+  Phase 6 NOT STARTED. Production-readiness program OPEN;
+  production-ready claim NOT PERMITTED. v0.7 NOT TAGGED.
+  Executing model: Opus 5.5.
+  Next action: owner merge; exact-SHA CI on the merge commit; land the
+  remaining P5-E prerequisites; only after the last push to `main` do
+  five closed intervals at that SHA start counting toward the freeze.
+
 ## Backlog (KOS unit records; Target KOS 06 §D, GOVERNANCE §9)
 
 Rows are read by the KOS computed view (`python core/kos_core.py index

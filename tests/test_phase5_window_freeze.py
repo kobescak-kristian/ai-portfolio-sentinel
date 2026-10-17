@@ -172,9 +172,27 @@ class _FakeClient:
     Amendment A1). Empty by default: every receipt is treated as
     already expired, exercising the pure receipt-only path."""
 
-    def __init__(self, bundles: dict[str, Path], run_artifacts: "dict[str, list] | None" = None):
+    def __init__(
+        self, bundles: dict[str, Path], run_artifacts: "dict[str, list] | None" = None,
+        schedule_runs: "list | None" = None, server_now: "datetime | None" = None,
+    ):
         self._bundles = bundles
         self._run_artifacts = run_artifacts or {}
+        # ADR-0011 §5 daily-slot amendment: by default every requested
+        # pre-window interval holds one clean on-SHA scheduled invocation.
+        self._schedule_runs = schedule_runs
+        self._server_now = server_now
+        self.listed = []
+
+    def server_time_utc(self):
+        return self._server_now or datetime.now(timezone.utc)
+
+    def list_workflow_runs_counted(self, workflow_path, *, created_after, created_before, **_kwargs):
+        self.listed.append((workflow_path, created_after, created_before))
+        runs = self._schedule_runs
+        if runs is None:
+            runs = _clean_streak_runs(created_after, created_before)
+        return [run for run in runs if created_after <= run.created_at <= created_before]
 
     def get_main_head_sha(self) -> str:
         return SOURCE_SHA
@@ -209,6 +227,30 @@ class _FakeClient:
             root.mkdir(exist_ok=True)
             shutil.copy(source, root / source.name)
         return root
+
+
+SCHEDULED_PATH = ".github/workflows/sentinel-schedule.yml"
+
+
+def _schedule_run(run_id, created_at, **overrides):
+    from sentinel.phase5.github_evidence import RunRef
+
+    fields = dict(
+        run_id=str(run_id), run_attempt=1, event="schedule", ref="refs/heads/main", sha=SOURCE_SHA,
+        workflow_path=SCHEDULED_PATH, created_at=created_at, run_started_at=created_at,
+        run_number=None, status="completed", conclusion="success", head_branch="main",
+    )
+    fields.update(overrides)
+    return RunRef(**fields)
+
+
+def _clean_streak_runs(first_start, end):
+    runs, start, i = [], first_start, 0
+    while start < end:
+        runs.append(_schedule_run(5000 + i, start + timedelta(minutes=300)))
+        start += timedelta(days=1)
+        i += 1
+    return runs
 
 
 def _write_marker(path: Path, purpose: str, run_id: str = "1"):
@@ -358,6 +400,13 @@ def test_freeze_succeeds_and_produces_a_validate_bundle_clean_genesis(tmp_path, 
     assert len(validated.window.expected_slots) == 5
     assert validated.window.expected_slots[0].expected_at_utc.hour == 6
     assert validated.window.expected_slots[0].expected_at_utc.minute == 37
+    assert validated.window.schema_version == 2
+    assert validated.window.timing_rule == "DAILY_SLOT"
+    observations = validated.window.prewindow_observations
+    assert len(observations) == 5
+    assert all(o.head_sha == SOURCE_SHA and o.conclusion == "success" for o in observations)
+    assert observations[-1].interval_start_utc + timedelta(hours=24) <= validated.window.created_at_utc
+    assert fake_client.listed and fake_client.listed[0][0] == SCHEDULED_PATH
 
 
 def test_freeze_succeeds_with_honest_fail_replacement_identically(tmp_path, monkeypatch):
@@ -800,3 +849,124 @@ def test_genesis_manifest_constructible_only_via_bundle_build(monkeypatch):
     build_bundle's manifest_fields dict, never GenesisManifest(...) directly."""
     text = (REPO_ROOT / "scripts" / "run_phase5_window_freeze.py").read_text(encoding="utf-8")
     assert "GenesisManifest(" not in text
+
+
+# ---------------------------------------------------------------------------
+# Pre-window daily-slot streak (ADR-0011 §5 daily-slot amendment, D1/D2/D4)
+# ---------------------------------------------------------------------------
+
+STREAK_NOW = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
+STREAK_STARTS = [datetime(2026, 10, d, 6, 37, 0, tzinfo=timezone.utc) for d in range(15, 20)]
+
+
+def _good_streak():
+    return [_schedule_run(6000 + i, start + timedelta(minutes=300)) for i, start in enumerate(STREAK_STARTS)]
+
+
+def _streak(runs, now=STREAK_NOW):
+    client = _FakeClient(bundles={}, schedule_runs=runs, server_now=now)
+    return wf._verify_prewindow_daily_slot_streak(client, SOURCE_SHA, now)
+
+
+def test_streak_passes_with_five_clean_closed_intervals():
+    observations = _streak(_good_streak())
+    assert [o.interval_start_utc for o in observations] == STREAK_STARTS
+    assert [o.github_run_id for o in observations] == [str(6000 + i) for i in range(5)]
+
+
+def test_streak_accepts_any_delay_inside_the_interval():
+    runs = _good_streak()
+    runs[0] = _schedule_run(6000, STREAK_STARTS[0] + timedelta(minutes=1439, seconds=59))
+    runs[1] = _schedule_run(6001, STREAK_STARTS[1])
+    assert len(_streak(runs)) == 5
+
+
+def test_streak_ignores_the_still_open_interval():
+    runs = _good_streak() + [_schedule_run(6100, datetime(2026, 10, 20, 11, 0, 0, tzinfo=timezone.utc))]
+    assert len(_streak(runs)) == 5
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda runs: runs.pop(2), id="missing-mid-gap"),
+        pytest.param(lambda runs: runs.pop(0), id="fewer-than-five-closed-intervals"),
+        pytest.param(lambda runs: runs.append(_schedule_run(6200, STREAK_STARTS[3] + timedelta(minutes=600))),
+                     id="duplicate"),
+        pytest.param(lambda runs: runs.append(
+            _schedule_run(6201, STREAK_STARTS[3] + timedelta(minutes=10), event="workflow_dispatch")),
+            id="stray-wrong-event-extra-run"),
+        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(6001, runs[1].created_at, run_attempt=2)),
+                     id="run-attempt-2"),
+        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(6001, runs[1].created_at, event="push")),
+                     id="wrong-event"),
+        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(
+            6001, runs[1].created_at, workflow_path=".github/workflows/other.yml")), id="wrong-path"),
+        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(6001, runs[1].created_at, head_branch="dev")),
+                     id="wrong-branch"),
+        pytest.param(lambda runs: runs.__setitem__(4, _schedule_run(6004, runs[4].created_at, sha="b" * 40)),
+                     id="wrong-head-sha-push-reset"),
+        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(6001, runs[1].created_at, conclusion="failure")),
+                     id="conclusion-failure"),
+        pytest.param(lambda runs: runs.__setitem__(
+            1, _schedule_run(6001, runs[1].created_at, status="in_progress", conclusion=None)), id="in-progress"),
+        pytest.param(lambda runs: runs.__setitem__(
+            1, _schedule_run(6001, runs[1].created_at, status="queued")), id="status-not-completed-alone"),
+        pytest.param(lambda runs: runs.__setitem__(
+            1, _schedule_run(6001, STREAK_STARTS[1] - timedelta(seconds=1))), id="created-before-interval"),
+        pytest.param(lambda runs: runs.__setitem__(
+            1, _schedule_run(6001, STREAK_STARTS[2])), id="created-at-next-interval-start"),
+    ],
+)
+def test_streak_refuses(mutate):
+    runs = _good_streak()
+    mutate(runs)
+    with pytest.raises(wf.Phase5ScriptError, match="PREWINDOW_DAILY_SLOT_STREAK_UNMET"):
+        _streak(runs)
+
+
+def test_streak_refuses_when_the_listing_is_unreadable():
+    class _Broken(_FakeClient):
+        def list_workflow_runs_counted(self, *args, **kwargs):
+            raise RuntimeError("total_count mismatch")
+
+    client = _Broken(bundles={}, server_now=STREAK_NOW)
+    with pytest.raises(wf.Phase5ScriptError, match="PREWINDOW_DAILY_SLOT_STREAK_UNMET"):
+        wf._verify_prewindow_daily_slot_streak(client, SOURCE_SHA, STREAK_NOW)
+
+
+def test_streak_closure_uses_the_earlier_of_server_time_and_now():
+    """A server clock ahead of the window's own ``now`` must not close an
+    interval that is still open at the window creation instant."""
+    runs = _good_streak()[1:] + [_schedule_run(6005, datetime(2026, 10, 20, 7, 0, 0, tzinfo=timezone.utc))]
+    client = _FakeClient(bundles={}, schedule_runs=runs, server_now=datetime(2026, 10, 21, 7, 0, 0, tzinfo=timezone.utc))
+    with pytest.raises(wf.Phase5ScriptError, match="PREWINDOW_DAILY_SLOT_STREAK_UNMET"):
+        wf._verify_prewindow_daily_slot_streak(client, SOURCE_SHA, STREAK_NOW)
+
+
+def test_freeze_refuses_without_a_prewindow_streak(tmp_path, monkeypatch):
+    for key, value in ENV.items():
+        monkeypatch.setenv(key, value)
+    repo_root_fake = tmp_path / "repo"
+    (repo_root_fake / "telemetry").mkdir(parents=True)
+    (repo_root_fake / "telemetry" / "cost_ledger.jsonl").write_text("", encoding="utf-8")
+    monkeypatch.setattr(wf, "REPO_ROOT", repo_root_fake)
+    receipts = _make_receipts_registry(tmp_path)
+    monkeypatch.setattr(wf, "load_durable_history", lambda: receipts)
+    monkeypatch.setattr(wf, "build_evidence_client", lambda env: _FakeClient(bundles={}, schedule_runs=[]))
+    monkeypatch.setattr(wf, "assert_expected_source_on_disk", lambda sha: None)
+
+    work_root = tmp_path / "work"
+    exit_code = wf.main([
+        "--expected-source-sha", SOURCE_SHA,
+        "--first-slot-date", "2027-06-01",
+        "--windows-task-name", "SentinelDailyRun",
+        "--disabled-at-utc", "2027-05-30T00:00:00+00:00",
+        "--final-legacy-db-sha256", "c" * 64,
+        "--legacy-row-counts", VALID_ROW_COUNTS,
+        "--dual-scheduler-verification-at-utc", "2027-05-30T01:00:00+00:00",
+        "--work-root", str(work_root),
+    ])
+    assert exit_code == 1
+    assert "PREWINDOW_DAILY_SLOT_STREAK_UNMET" in (work_root / "freeze_refusal.json").read_text(encoding="utf-8")
+    assert not (work_root / "genesis-out").exists()

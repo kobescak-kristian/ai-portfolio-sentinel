@@ -676,10 +676,31 @@ def run_rehearsal(
     preflight_ledger.record("S08_PRE_PROVIDER_EVIDENCE", "OK", "rehearsal evidence prepared")
 
     now = ports.clock()
-    from .models import CarriedFile, GenesisManifest, Phase5ControlState as _P5State, QualificationWindowRecord as _Win, ExpectedSlot
+    from .models import (
+        CarriedFile, GenesisManifest, Phase5ControlState as _P5State, PrewindowObservation,
+        QualificationWindowRecord as _Win, ExpectedSlot,
+    )
+
+    # Synthetic, rehearsal-labelled pre-window observations: the window
+    # schema requires five, and this rehearsal window never qualifies.
+    last_closed_start = now.replace(hour=6, minute=37, second=0, microsecond=0) - timedelta(days=1)
+    if last_closed_start + timedelta(hours=24) > now:
+        last_closed_start -= timedelta(days=1)
+    rehearsal_observations = tuple(
+        PrewindowObservation(
+            interval_start_utc=last_closed_start - timedelta(days=4 - i),
+            github_run_id=f"rehearsal-prewindow-{i + 1}",
+            event="schedule",
+            run_attempt=1,
+            head_sha=expected_source_sha,
+            created_at_utc=last_closed_start - timedelta(days=4 - i),
+            conclusion="success",
+        )
+        for i in range(5)
+    )
 
     window = _Win(
-        schema_version=1,
+        schema_version=2,
         window_id="p5w-rehearsal",
         created_at_utc=now,
         control_workflow_identity=".github/workflows/sentinel-window-control.yml",
@@ -689,7 +710,8 @@ def run_rehearsal(
         ref=FROZEN_REF,
         cron=FROZEN_CRON,
         timezone="UTC",
-        tolerance_minutes=120,
+        timing_rule="DAILY_SLOT",
+        prewindow_observations=rehearsal_observations,
         expected_slots=tuple(
             ExpectedSlot(slot_index=i, expected_at_utc=now.replace(hour=6, minute=37, second=0, microsecond=0) + timedelta(days=i))
             for i in range(1, 6)

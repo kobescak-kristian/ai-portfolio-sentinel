@@ -56,10 +56,30 @@ def fake_carried_files(hash_by_path: dict[str, str] | None = None) -> tuple[m.Ca
     )
 
 
+def make_prewindow_observations(created_at: datetime = WINDOW_CREATED_AT, source_sha: str = SOURCE_SHA):
+    """Five closed daily intervals ending at or before ``created_at``,
+    each with one on-SHA successful scheduled invocation (DAILY_SLOT)."""
+    last_start = created_at.replace(hour=6, minute=37, second=0, microsecond=0) - timedelta(days=1)
+    if last_start + timedelta(hours=24) > created_at:
+        last_start -= timedelta(days=1)
+    return tuple(
+        m.PrewindowObservation(
+            interval_start_utc=last_start - timedelta(days=4 - i),
+            github_run_id=f"prewindow-{i + 1}",
+            event="schedule",
+            run_attempt=1,
+            head_sha=source_sha,
+            created_at_utc=last_start - timedelta(days=4 - i) + timedelta(minutes=300),
+            conclusion="success",
+        )
+        for i in range(5)
+    )
+
+
 def make_window(**overrides) -> m.QualificationWindowRecord:
     slots = tuple(m.ExpectedSlot(slot_index=i, expected_at_utc=slot_ts(i)) for i in range(1, 6))
     fields = dict(
-        schema_version=1,
+        schema_version=2,
         window_id="p5w-control-run-1",
         created_at_utc=WINDOW_CREATED_AT,
         control_workflow_identity=CONTROL_WORKFLOW,
@@ -69,12 +89,16 @@ def make_window(**overrides) -> m.QualificationWindowRecord:
         ref=REF,
         cron=CRON,
         timezone="UTC",
-        tolerance_minutes=120,
+        timing_rule="DAILY_SLOT",
         expected_slots=slots,
         qualifying_source="live",
         qualifying_judgment_mode="agent",
     )
     fields.update(overrides)
+    if "prewindow_observations" not in fields:
+        fields["prewindow_observations"] = make_prewindow_observations(
+            fields["created_at_utc"], fields["source_sha"]
+        )
     return m.QualificationWindowRecord(**fields)
 
 
@@ -286,7 +310,9 @@ def test_sentinel_run_evidence_requires_github_run_id():
         {"cron": "0 0 * * *"},
         {"ref": "refs/heads/other"},
         {"timezone": "Europe/Vienna"},
-        {"tolerance_minutes": 60},
+        {"timing_rule": "TOLERANCE_120"},
+        {"schema_version": 1},
+        {"tolerance_minutes": 120},
         {"qualifying_source": "fixtures"},
         {"qualifying_judgment_mode": "stub"},
     ],
@@ -549,6 +575,146 @@ def test_qualification_slot_outcome_origin_typing():
             classification_reason="bad",
             determined_by="independent_review",
         )
+
+
+def _slot_outcome(outcome, delay, determined_by="single_run_classification"):
+    return m.QualificationSlotOutcome(
+        schema_version=1,
+        window_id="p5w-control-run-1",
+        slot_index=1,
+        outcome=outcome,
+        delay_minutes=delay,
+        classified_at_utc=WINDOW_CREATED_AT,
+        classification_reason="test",
+        determined_by=determined_by,
+    )
+
+
+@pytest.mark.parametrize("delay", [0, 120, 121, 742, 1439])
+def test_daily_slot_qualifying_accepts_any_delay_inside_the_interval(delay):
+    assert _slot_outcome("QUALIFYING", delay).delay_minutes == delay
+
+
+@pytest.mark.parametrize("delay", [None, -1, 1440])
+def test_daily_slot_qualifying_rejects_delay_outside_the_interval(delay):
+    with pytest.raises(ValidationError):
+        _slot_outcome("QUALIFYING", delay)
+
+
+@pytest.mark.parametrize("delay", [None, 121, 1439])
+def test_daily_slot_late_requires_the_next_interval(delay):
+    with pytest.raises(ValidationError):
+        _slot_outcome("LATE_NONQUALIFYING", delay)
+
+
+def test_daily_slot_late_accepts_1440():
+    assert _slot_outcome("LATE_NONQUALIFYING", 1440).delay_minutes == 1440
+
+
+def test_missing_lost_never_carries_a_delay():
+    with pytest.raises(ValidationError):
+        _slot_outcome("MISSING_LOST", 0, determined_by="independent_review")
+
+
+# ---------------------------------------------------------------------------
+# Window schema v2: DAILY_SLOT + frozen pre-window observations
+# (ADR-0011 §5 daily-slot amendment, rulings D1-D4)
+# ---------------------------------------------------------------------------
+
+
+def test_window_schema_v2_valid_and_hash_covers_prewindow_evidence():
+    window = make_window()
+    assert window.schema_version == 2 and window.timing_rule == "DAILY_SLOT"
+    assert len(window.prewindow_observations) == 5
+    obs = list(window.prewindow_observations)
+    obs[0] = obs[0].model_copy(update={"github_run_id": "prewindow-other"})
+    assert m.sha256_hex_of_model(make_window(prewindow_observations=tuple(obs))) != m.sha256_hex_of_model(window)
+
+
+@pytest.mark.parametrize("missing", ["timing_rule", "prewindow_observations", "schema_version"])
+def test_window_schema_v2_required_fields(missing):
+    data = make_window().model_dump()
+    del data[missing]
+    with pytest.raises(ValidationError):
+        m.QualificationWindowRecord(**data)
+
+
+def _shift_obs(obs, days=0, **update):
+    start = obs.interval_start_utc + timedelta(days=days)
+    return obs.model_copy(
+        update={"interval_start_utc": start, "created_at_utc": start + timedelta(minutes=300), **update}
+    )
+
+
+def test_window_prewindow_requires_exactly_five():
+    obs = make_window().prewindow_observations
+    with pytest.raises(ValidationError):
+        make_window(prewindow_observations=obs[1:])
+    with pytest.raises(ValidationError):
+        make_window(prewindow_observations=obs + (_shift_obs(obs[-1], github_run_id="prewindow-6"),))
+
+
+def test_window_prewindow_intervals_must_be_consecutive():
+    obs = list(make_window().prewindow_observations)
+    obs[0] = _shift_obs(obs[0], days=-1)  # a one-day gap before interval 2
+    with pytest.raises(ValidationError):
+        make_window(prewindow_observations=tuple(obs))
+
+
+def test_window_prewindow_last_interval_must_be_closed_at_freeze():
+    obs = tuple(_shift_obs(o, days=1) for o in make_window().prewindow_observations)
+    with pytest.raises(ValidationError):
+        make_window(prewindow_observations=obs)
+
+
+def test_window_prewindow_run_ids_must_be_distinct():
+    obs = list(make_window().prewindow_observations)
+    obs[1] = obs[1].model_copy(update={"github_run_id": obs[0].github_run_id})
+    with pytest.raises(ValidationError):
+        make_window(prewindow_observations=tuple(obs))
+
+
+def test_window_prewindow_must_run_at_the_frozen_sha():
+    """D1: an observation at any other SHA (a push to main in between)
+    can never be part of the frozen pre-window evidence."""
+    obs = list(make_window().prewindow_observations)
+    obs[2] = obs[2].model_copy(update={"head_sha": OTHER_SOURCE_SHA})
+    with pytest.raises(ValidationError):
+        make_window(prewindow_observations=tuple(obs))
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"event": "workflow_dispatch"},
+        {"run_attempt": 2},
+        {"conclusion": "failure"},
+        {"head_sha": "A" * 40},
+        {"github_run_id": " "},
+    ],
+)
+def test_prewindow_observation_pinned_literals(update):
+    data = make_window().prewindow_observations[0].model_dump()
+    data.update(update)
+    with pytest.raises(ValidationError):
+        m.PrewindowObservation(**data)
+
+
+@pytest.mark.parametrize(
+    "created_offset", [timedelta(seconds=-1), timedelta(hours=24)]
+)
+def test_prewindow_observation_must_be_created_inside_its_interval(created_offset):
+    data = make_window().prewindow_observations[0].model_dump()
+    data["created_at_utc"] = data["interval_start_utc"] + created_offset
+    with pytest.raises(ValidationError):
+        m.PrewindowObservation(**data)
+
+
+def test_prewindow_interval_start_must_be_0637():
+    data = make_window().prewindow_observations[0].model_dump()
+    data["interval_start_utc"] = data["interval_start_utc"] + timedelta(minutes=1)
+    with pytest.raises(ValidationError):
+        m.PrewindowObservation(**data)
 
 
 # ---------------------------------------------------------------------------

@@ -200,7 +200,9 @@ Before slot 1, a machine-readable qualification record freezes:
 - branch/ref;
 - exact source commit SHA;
 - qualifying run mode;
-- the 120-minute qualification tolerance.
+- the 120-minute qualification tolerance. *(Superseded by the
+  daily-slot amendment at the end of this section: the record freezes
+  timing rule `DAILY_SLOT` and five pre-window observations instead.)*
 
 No push to `main` is allowed while that five-slot qualification window
 is active.
@@ -242,6 +244,10 @@ The following never count:
 - the WIF capability probe;
 - historical Windows scheduler runs.
 
+*The next three paragraphs (the 120-minute timing rule) are superseded
+by the daily-slot amendment at the end of this section; they stay as
+written for the record.*
+
 Qualification timing is frozen at 120 minutes from the expected slot.
 
 A matching scheduled execution inside 120 minutes may qualify and its
@@ -256,13 +262,135 @@ scheduled execution in GitHub's run history is `MISSING/LOST`.
 Both `LATE_NONQUALIFYING` and `MISSING/LOST` break the consecutive
 five-run streak. So do a failed or nonterminal Sentinel run, duplicate
 execution, missing CostRow, wrong provenance, or broken predecessor
-state chain.
+state chain. *(The `LATE_NONQUALIFYING` part of this paragraph is
+superseded by the daily-slot amendment below; every other breaker
+stands.)*
 
 A failed qualification window is not repaired by counting a manual run
 or a rerun. A new five-slot window must be frozen prospectively.
 
 Any change to workflow identity, cron, timezone, cadence or source SHA
 invalidates the active window and requires a newly frozen window.
+
+#### Amendment (2026-10-17): daily-slot qualification timing
+
+**Decision.** Qualification timing is the observable daily interval:
+for each closed interval exactly one valid invocation of the frozen
+scheduled workflow must exist, and five closed pre-window intervals
+must show this at the exact SHA to be frozen before any window is
+frozen; the 120-minute tolerance is withdrawn.
+
+**A. Trigger and evidence.** Stop condition "current GitHub or Anthropic
+platform semantics invalidate a binding assumption in this ADR" (see
+Reopening / stop conditions). The binding assumption was that a
+scheduled run is normally created within 120 minutes of its cron
+instant. REAL scheduler observations on this repository (model-free;
+no synthetic fixtures involved). Source: the raw REST run listing for
+`sentinel-schedule.yml`, read 2026-10-17: 55 runs, of which 1 `push`
+run (2026-08-24) and 54 `schedule` runs in 54 consecutive daily
+intervals 2026-08-25 to 2026-10-17 (the 2026-10-17 interval was still
+open at reading), exactly one per interval, every `run_attempt` 1,
+conclusion `success`, path `.github/workflows/sentinel-schedule.yml`,
+branch `main`. Delay = `created_at` minus the interval's 06:37 UTC
+start, whole minutes rounded down: since 2026-08-27, 52 of 52 above 120
+(256 to 742); only 2026-08-25 (51) and 2026-08-26 (52) were inside 120.
+The non-qualifying Stage-1 probe (removed, STATE entry 2026-10-16):
+18 of 18 above 120 (155 to 562), no other UTC hour better. GitHub's
+documentation states that `schedule` events can be delayed and, under
+high load, queued jobs dropped, and gives no service level. Under the
+original rule no window could pass: it measured GitHub queue latency,
+not the unattended operation Phase 5 is meant to prove.
+
+**B. Owner rulings (2026-10-16; T2 overnight gate passed 2026-10-17).**
+- D1: the five pre-freeze observations run at exactly the SHA that
+  will be frozen. Any push to `main` resets the count.
+- D2: each pre-freeze invocation must reach terminal conclusion
+  `success`. They prove scheduler cadence only. They are NOT P5-E
+  qualifying Sentinel/model runs and need no live or model judgment
+  (the existing `NO_ACTIVE_WINDOW` early exit is what they execute).
+- D3: `QualificationWindowRecord` moves to `schema_version` 2 and
+  carries `timing_rule = DAILY_SLOT` instead of
+  `tolerance_minutes = 120`.
+- D4: only invocations of the frozen scheduled workflow
+  (`.github/workflows/sentinel-schedule.yml`) are relevant. A
+  wrong-provenance invocation of it breaks its daily interval and is
+  never silently filtered out. Runs of other workflows never touch an
+  interval.
+
+**C. The rule.** Cron stays `37 6 * * *`; event stays `schedule`. Daily
+interval N is `[N, N+1)`: N = 06:37 UTC, N+1 = the next day's 06:37
+UTC; the fifth window interval closes 24 hours after its own start.
+The invocation observed in interval N is the one interval N owns, and
+for each closed interval exactly one valid invocation must exist. Its
+delay is recorded and never judged for punctuality.
+`LATE_NONQUALIFYING` now means only "created at or after the next
+interval start"; runtime ownership already bounds `created_at` by the
+interval, so it is defensive and unreachable at runtime. An interval
+breaks on: no invocation (`MISSING_LOST` at interval close), more than
+one invocation of the workflow (`DUPLICATE_NONQUALIFYING`, including a
+wrong-provenance one next to a valid one), `run_attempt` other than 1,
+wrong event, workflow, ref or source SHA, a failed or nonterminal
+run, and every other §5 breaker. Wording such as "the run for nominal
+slot N" means "the invocation observed in interval N".
+
+**D. Pre-freeze requirement.** The window-control freeze refuses
+(`PREWINDOW_DAILY_SLOT_STREAK_UNMET`) unless the five most recent
+closed daily intervals, judged by the earlier of GitHub server time
+and the record's creation instant, each hold exactly one invocation of
+the scheduled workflow with event `schedule`, `run_attempt` 1, the
+frozen path, branch `main`, `head_sha` equal to the SHA being frozen,
+status `completed` and conclusion `success`. All invocations in an
+interval are counted. The five observations (interval start, run id,
+`head_sha`, `created_at`, conclusion) are frozen inside the hashed
+window record, so the proof is durable without a later commit.
+Earliest freeze = the last push to `main` plus five closed intervals.
+
+**E. Claim consequence.** Phase 5 may claim one unattended scheduled
+execution per daily interval (daily cadence). It never claims punctual
+cron execution and never claims which hidden GitHub cron firing caused
+a delayed run. Later MONITORING and SLO text must say the same.
+
+**F. Unchanged.** Every other §5 predicate: exact workflow, ref and
+source SHA; `run_attempt` 1; live, agent-judgment, terminal, within
+budget, exactly one CostRow; the state chain and its one-to-one links;
+§6 cost and cadence controls; no push to `main` while a frozen
+qualification window is active; prospective freezing; reruns,
+`workflow_dispatch` and history never count. ADR-0012 is untouched.
+
+**G. Disclosed residual.** A static cron string records no nominal
+date. An invocation created at or after N+1 cannot be told apart from
+interval N+1's own invocation: interval N then shows MISSING and N+1
+DUPLICATE, or a sustained shift of every run by 24 hours or more
+could look clean. Even then each interval holds exactly one real
+unattended scheduled execution at the frozen SHA, which is the only
+property this rule claims. Observed maximum delay: 742 minutes.
+
+**H. P5-G open gate.** The independent review and reconstruction
+functions (`associate_runs_to_slots`, `independent_review_slots`) are
+implemented and tested but not wired to any production entrypoint. A
+P5-G reconstruction entrypoint that reads the REST run listing of the
+scheduled workflow and the artifact chain is an explicit
+implementation gate before Phase-5 closure.
+
+**I. Alternatives rejected.** Keep 120 minutes: 52 of 52 recent runs
+fail it, so it can never pass. Widen the tolerance to a larger number
+of minutes: still a punctuality claim GitHub does not support, and any
+number would be fitted to the observed history. Move the cron to
+another hour: the Stage-1 probe found no better hour. Accept
+pre-freeze runs on the first-parent history of the frozen SHA (pushes
+allowed during the five days): rejected by D1, since a pre-freeze
+observation must prove the exact source that will be frozen.
+
+**J. Not a silent weakening.** This is a deliberate, owner-ruled,
+prospective change recorded before any qualification window was ever
+frozen; no window exists whose result it could rescue. The punctuality
+evidence the old rule demanded is withdrawn openly, and the claim in
+E shrinks with it.
+
+**K. Reopening.** Reopen if GitHub documents a service level for
+`schedule` events; if any closed interval of the scheduled workflow
+shows no invocation or more than one in two of any ten consecutive
+intervals; or if any observed delay reaches 1440 minutes.
 
 ### 6. Cost and cadence contract
 
