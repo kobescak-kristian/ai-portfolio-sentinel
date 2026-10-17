@@ -150,9 +150,7 @@ def _verify_retained_payload(client, work_root: Path, receipt, model_cls, label:
     return model_cls.model_validate_json(payload.decode("utf-8"))
 
 
-def _verify_provider_phase_prerequisites(
-    client, work_root: Path, receipts, expected_source_sha: str
-) -> tuple:
+def _verify_provider_phase_prerequisites(client, work_root: Path, receipts) -> tuple:
     """Seam 3, repaired for durable history (ADR-0012 Amendment A1 and
     section 19; dispatch q77-p5d-repair-stage2-implement-a).
 
@@ -181,10 +179,14 @@ def _verify_provider_phase_prerequisites(
        ``P5D_REPLACEMENT_SONNET_GATE`` marker receipt and exactly one
        ``GATE_EVIDENCE`` receipt for that purpose with disposition
        GREEN or HONEST_FAIL, correlated to the marker by
-       (github_run_id, run_attempt); if its artifact is still retained,
+       (github_run_id, run_attempt), both bound to the recorded
+       replacement run at its own historical source A
+       (``REPLACEMENT_SOURCE_SHA``); if its artifact is still retained,
        its bytes must independently pass
-       ``validate_replacement_provenance`` and its parsed disposition
-       must equal the durable receipt's own disposition.
+       ``validate_replacement_provenance`` against A -- never against the
+       qualification source Q being frozen, which is a later commit --
+       and its parsed disposition must equal the durable receipt's own
+       disposition.
 
     Any count other than exactly one, or any correlation mismatch,
     fails closed. GREEN and HONEST_FAIL are accepted identically, so
@@ -216,6 +218,8 @@ def _verify_provider_phase_prerequisites(
         OWNER_RULING_ID,
         REPLACEMENT_OF_RUN_ID,
         REPLACEMENT_PURPOSE,
+        REPLACEMENT_RUN_ID,
+        REPLACEMENT_SOURCE_SHA,
     )
     from telemetry.cost_ledger import read_cost_rows, serialize_cost_row
 
@@ -293,12 +297,25 @@ def _verify_provider_phase_prerequisites(
             "correlated to the replacement marker"
         )
     replacement_gate_receipt = replacement_gate_receipts[0]
+    # Source binding: the replacement ran at its own historical source A
+    # (REPLACEMENT_SOURCE_SHA); the qualification source Q being frozen is
+    # a later commit and is never required to equal A. Q binds only the
+    # disk/live checks, the window record and the pre-window streak.
+    if (
+        replacement_marker.github_run_id != REPLACEMENT_RUN_ID
+        or replacement_marker.source_sha != REPLACEMENT_SOURCE_SHA
+        or replacement_gate_receipt.source_sha != REPLACEMENT_SOURCE_SHA
+    ):
+        raise Phase5ScriptError(
+            "durable replacement receipts do not bind the recorded replacement run "
+            f"{REPLACEMENT_RUN_ID!r} at its source {REPLACEMENT_SOURCE_SHA!r}"
+        )
     replacement_record = _verify_retained_payload(
         client, work_root, replacement_gate_receipt, GateEvidenceRecord, "replacement-gate"
     )
     if replacement_record is not None:
         try:
-            validate_replacement_provenance(replacement_record, expected_source_sha=expected_source_sha)
+            validate_replacement_provenance(replacement_record, expected_source_sha=REPLACEMENT_SOURCE_SHA)
         except ValueError as exc:
             raise Phase5ScriptError(f"replacement evidence provenance invalid: {exc}") from exc
         if replacement_record.disposition != replacement_gate_receipt.disposition:
@@ -479,9 +496,7 @@ def main(argv: list[str]) -> int:
 
         # -- P5-C/P5-D prerequisite verification (seam 3, durable) ----
         receipts = load_durable_history()
-        provider_cost_rows = _verify_provider_phase_prerequisites(
-            client, work_root, receipts, args.expected_source_sha
-        )
+        provider_cost_rows = _verify_provider_phase_prerequisites(client, work_root, receipts)
 
         # -- headroom ---------------------------------------------------
         committed_ledger = REPO_ROOT / "telemetry" / "cost_ledger.jsonl"

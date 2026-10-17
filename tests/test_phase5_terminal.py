@@ -1184,6 +1184,11 @@ _PERMITTED_WIRING_SCRIPTS = frozenset(
         # the model-free kill-rehearsal driver establishes the same
         # terminal layout and RUNNER journal the official gate does.
         "scripts/run_phase5_kill_rehearsal.py",
+        # P5-E prerequisite (owner instruction 2026-10-18): durable receipt
+        # recording reads the published terminal record through the shared
+        # verify_terminal_bytes and the journal through the strict reader.
+        # Read-only: it imports no writer.
+        "scripts/establish_phase5_replacement_receipts.py",
     }
 )
 # The P5-E seam validator legitimately names the replacement purpose (it

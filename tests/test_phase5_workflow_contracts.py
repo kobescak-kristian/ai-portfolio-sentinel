@@ -84,6 +84,14 @@ def test_schedule_workflow_trigger_is_exact_cron_only():
     assert trigger["schedule"] == [{"cron": "37 6 * * *"}]
 
 
+def test_schedule_workflow_runner_is_pinned_to_ubuntu_24_04():
+    """Owner decision 2026-10-17: no runner-major-version change during the
+    pre-freeze observations or the qualification window (the
+    ubuntu-latest move to 26.04 begins 2026-10-19)."""
+    data = _load("sentinel-schedule.yml")
+    assert data["jobs"]["scheduled"]["runs-on"] == "ubuntu-24.04"
+
+
 @pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-wif-probe.yml",
                                    "sentinel-official-gate.yml", "sentinel-window-control.yml",
                                    "sentinel-kill-rehearsal.yml", "sentinel-timing-rehearsal.yml",
