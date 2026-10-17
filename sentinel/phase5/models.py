@@ -145,12 +145,47 @@ class ExpectedSlot(BaseModel):
         return self
 
 
-class QualificationWindowRecord(BaseModel):
-    """Immutable, frozen before slot 1 (ADR-0011 §5)."""
+class PrewindowObservation(BaseModel):
+    """One pre-freeze scheduler observation (ADR-0011 §5 daily-slot
+    amendment, rulings D1/D2/D4): the single invocation of the scheduled
+    workflow observed in one closed daily interval
+    ``[interval_start_utc, interval_start_utc + 24h)``. Scheduler-cadence
+    evidence only — never a qualifying Sentinel run."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1]
+    interval_start_utc: datetime
+    github_run_id: str
+    event: Literal["schedule"]
+    run_attempt: Literal[1]
+    head_sha: str
+    created_at_utc: datetime
+    conclusion: Literal["success"]
+
+    @model_validator(mode="after")
+    def _validate(self) -> "PrewindowObservation":
+        _require_daily_slot_instant(self.interval_start_utc)
+        _require_identifier(self.github_run_id)
+        _require_hex40(self.head_sha)
+        _require_utc(self.created_at_utc)
+        if not (
+            self.interval_start_utc
+            <= self.created_at_utc
+            < self.interval_start_utc + timedelta(hours=24)
+        ):
+            raise ValueError("a pre-window observation must be created inside its own daily interval")
+        return self
+
+
+class QualificationWindowRecord(BaseModel):
+    """Immutable, frozen before slot 1 (ADR-0011 §5 and its daily-slot
+    amendment). ``timing_rule`` DAILY_SLOT: the invocation observed in
+    daily interval N, ``[slot N, slot N+1)``, is the one that interval
+    owns; no punctuality tolerance exists."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[2]
     window_id: str
     created_at_utc: datetime
     control_workflow_identity: str
@@ -160,7 +195,8 @@ class QualificationWindowRecord(BaseModel):
     ref: Literal["refs/heads/main"]
     cron: Literal["37 6 * * *"]
     timezone: Literal["UTC"]
-    tolerance_minutes: Literal[120]
+    timing_rule: Literal["DAILY_SLOT"]
+    prewindow_observations: tuple[PrewindowObservation, ...]
     expected_slots: tuple[ExpectedSlot, ...]
     qualifying_source: Literal["live"]
     qualifying_judgment_mode: Literal["agent"]
@@ -192,6 +228,20 @@ class QualificationWindowRecord(BaseModel):
                 raise ValueError("expected slots must be exactly 24 hours apart")
         if instants[0] <= self.created_at_utc:
             raise ValueError("slot 1 must be strictly prospective relative to creation")
+
+        observations = self.prewindow_observations
+        if len(observations) != 5:
+            raise ValueError("a qualification window freezes exactly five pre-window observations")
+        starts = [o.interval_start_utc for o in observations]
+        for earlier, later in zip(starts, starts[1:]):
+            if later - earlier != timedelta(hours=24):
+                raise ValueError("pre-window observations must cover five consecutive daily intervals")
+        if starts[-1] + timedelta(hours=24) > self.created_at_utc:
+            raise ValueError("every pre-window interval must be closed before the window is frozen")
+        if len({o.github_run_id for o in observations}) != 5:
+            raise ValueError("pre-window observations must be five distinct invocations")
+        if any(o.head_sha != self.source_sha for o in observations):
+            raise ValueError("every pre-window observation must run at exactly the frozen source SHA")
 
         supersedes_pair = (self.supersedes_window_id, self.supersedes_window_record_sha256)
         if (supersedes_pair[0] is None) != (supersedes_pair[1] is None):
@@ -356,12 +406,16 @@ class QualificationSlotOutcome(BaseModel):
                     "independent review may only produce MISSING_LOST or "
                     "DUPLICATE_NONQUALIFYING"
                 )
+        # DAILY_SLOT: the observed delay is recorded, never judged against a
+        # punctuality tolerance. 1439 is the last whole minute inside the
+        # daily interval; LATE (>= 1440) is defensive and unreachable at
+        # runtime, where ownership already bounds created_at by the interval.
         if self.outcome == "QUALIFYING":
-            if self.delay_minutes is None or not (0 <= self.delay_minutes <= 120):
-                raise ValueError("QUALIFYING requires delay_minutes in [0, 120]")
+            if self.delay_minutes is None or not (0 <= self.delay_minutes <= 1439):
+                raise ValueError("QUALIFYING requires delay_minutes in [0, 1439]")
         if self.outcome == "LATE_NONQUALIFYING":
-            if self.delay_minutes is None or self.delay_minutes <= 120:
-                raise ValueError("LATE_NONQUALIFYING requires delay_minutes > 120")
+            if self.delay_minutes is None or self.delay_minutes < 1440:
+                raise ValueError("LATE_NONQUALIFYING requires delay_minutes >= 1440")
         if self.outcome == "MISSING_LOST" and self.delay_minutes is not None:
             raise ValueError("MISSING_LOST never carries a delay")
         return self

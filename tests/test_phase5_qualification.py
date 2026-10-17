@@ -133,8 +133,32 @@ def test_classify_run_qualifies_at_exactly_120_minutes():
     assert result.delay_minutes == 120
 
 
-def test_classify_run_late_at_121_minutes():
-    ctx = _happy_path(delay=timedelta(minutes=121))
+@pytest.mark.parametrize(
+    "delay, expected_minutes",
+    [
+        (timedelta(minutes=121), 121),
+        (timedelta(minutes=742), 742),
+        (timedelta(minutes=1439, seconds=59), 1439),
+    ],
+)
+def test_classify_run_qualifies_anywhere_inside_the_daily_interval(delay, expected_minutes):
+    """DAILY_SLOT: the former 120-minute tolerance is gone; a late
+    invocation still owned by its daily interval qualifies and its delay
+    is recorded (ADR-0011 §5 daily-slot amendment)."""
+    ctx = _happy_path(delay=delay)
+    result = q.classify_run(
+        ctx["window"], 1, ctx["github_run"], [ctx["evidence"]], [ctx["cost_row"]], ctx["successor"], ctx["chain"],
+        window_already_consumed=False, now=ctx["github_run"].created_at,
+    )
+    assert result.outcome == "QUALIFYING"
+    assert result.delay_minutes == expected_minutes
+
+
+def test_classify_run_late_at_the_next_interval_start_is_defensive_late():
+    """A created_at at or after the next interval start is never owned by
+    this interval at runtime; the classifier still answers LATE if
+    reached (defensive branch)."""
+    ctx = _happy_path(delay=timedelta(minutes=1440))
     successor = ctx["successor"]
     late_manifest = successor.manifest.model_copy(update={"qualification_outcome": "LATE_NONQUALIFYING"})
     late_state = make_control_state(
@@ -148,7 +172,7 @@ def test_classify_run_late_at_121_minutes():
         window_already_consumed=False, now=ctx["github_run"].created_at,
     )
     assert result.outcome == "LATE_NONQUALIFYING"
-    assert result.delay_minutes == 121
+    assert result.delay_minutes == 1440
 
 
 def test_classify_run_negative_delay_is_wrong_provenance():
@@ -577,7 +601,7 @@ def test_ownership_intervals_tile_with_no_gaps_or_overlaps():
     assert boundaries[-1][1] == slot_ts(5) + timedelta(hours=24)
 
 
-def test_run_at_121_minutes_matches_and_classifies_late_not_missing():
+def test_run_at_121_minutes_matches_its_interval_not_missing():
     window = make_window()
     run = make_github_run(window, 1, created_at=slot_ts(1) + timedelta(minutes=121))
     associations = q.associate_runs_to_slots(window, [run])
@@ -725,6 +749,8 @@ def test_derive_pre_successor_outcome_returns_none_when_successor_required():
 
 def test_derive_timing_outcome_matches_classify_run_on_a_valid_chain():
     for delay, expected in ((timedelta(minutes=0), "QUALIFYING"), (timedelta(minutes=120), "QUALIFYING"),
+                             (timedelta(minutes=121), "QUALIFYING"), (timedelta(minutes=1439), "QUALIFYING"),
+                             (timedelta(minutes=1440), "LATE_NONQUALIFYING"),
                              (timedelta(minutes=-5), "WRONG_PROVENANCE_NONQUALIFYING")):
         ctx = _happy_path(delay=delay)
         outcome, _reason, _delay_minutes = q.derive_timing_outcome(ctx["window"], 1, ctx["github_run"])
@@ -732,7 +758,8 @@ def test_derive_timing_outcome_matches_classify_run_on_a_valid_chain():
 
 
 def test_helper_and_final_classifier_never_disagree_on_a_valid_chain():
-    for delay in (timedelta(minutes=0), timedelta(minutes=60), timedelta(minutes=120)):
+    for delay in (timedelta(minutes=0), timedelta(minutes=60), timedelta(minutes=120),
+                  timedelta(minutes=121), timedelta(minutes=1439, seconds=59)):
         ctx = _happy_path(delay=delay)
         result = q.classify_run(
             ctx["window"], 1, ctx["github_run"], [ctx["evidence"]], [ctx["cost_row"]], ctx["successor"], ctx["chain"],
@@ -742,13 +769,14 @@ def test_helper_and_final_classifier_never_disagree_on_a_valid_chain():
         assert result.outcome == outcome
 
 
-def test_precedence_regression_121_minute_run_with_broken_chain_is_state_chain_failure_not_late():
+def test_precedence_regression_late_run_with_broken_chain_is_state_chain_failure_not_late():
     """Required regression (revision c, seam 2): timing must NEVER be
-    evaluated ahead of successor-chain validation. A 121-minute-late
-    run whose successor/predecessor chain is broken must classify
+    evaluated ahead of successor-chain validation. A run created at the
+    next interval start (the only delay DAILY_SLOT still calls LATE)
+    whose successor/predecessor chain is broken must classify
     STATE_CHAIN_FAILURE, not LATE_NONQUALIFYING — proving
     derive_timing_outcome is unreachable until the chain validates."""
-    ctx = _happy_path(delay=timedelta(minutes=121))
+    ctx = _happy_path(delay=timedelta(minutes=1440))
     successor = ctx["successor"]
     # Break the chain: claim a predecessor hash that does not match the
     # real genesis, AND make the manifest's own claim agree with the
@@ -794,3 +822,77 @@ def test_run_started_at_does_not_affect_classification():
     )
     assert result.outcome == "QUALIFYING"
     assert result.delay_minutes == 5
+
+
+# ---------------------------------------------------------------------------
+# ADR-0011 §5 daily-slot amendment: interval boundaries (R5) and
+# wrong-provenance invocations of the scheduled workflow (ruling D4).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("slot_n", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize(
+    "offset, owned, timing",
+    [
+        (timedelta(seconds=-1), False, "WRONG_PROVENANCE_NONQUALIFYING"),
+        (timedelta(0), True, "QUALIFYING"),
+        (timedelta(minutes=1439, seconds=59), True, "QUALIFYING"),
+        (timedelta(minutes=1440), False, "LATE_NONQUALIFYING"),
+        (timedelta(minutes=1440, seconds=1), False, "LATE_NONQUALIFYING"),
+    ],
+)
+def test_daily_interval_boundaries_agree_across_timing_review_and_runtime(slot_n, offset, owned, timing):
+    """derive_timing_outcome, _slot_ownership_interval and the runtime
+    resolve_owned_slot describe ONE half-open interval [slot N, slot N+1)
+    for every slot, slot 5 included."""
+    from sentinel.phase5.orchestrator import resolve_owned_slot
+
+    window = make_window()
+    created_at = slot_ts(slot_n) + offset
+    start, end = q._slot_ownership_interval(window, slot_n)
+    assert (start <= created_at < end) is owned
+    run = make_github_run(window, slot_n, created_at=created_at)
+    assert q.derive_timing_outcome(window, slot_n, run)[0] == timing
+    owner = resolve_owned_slot(window, created_at)
+    if owned:
+        assert owner is not None and owner.slot_index == slot_n
+    else:
+        assert owner is None or owner.slot_index != slot_n
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"event": "workflow_dispatch"},
+        {"event": "push"},
+        {"ref": "refs/heads/other"},
+        {"source_sha": "b" * 40},
+        {"run_attempt": 2},
+    ],
+)
+def test_wrong_provenance_scheduled_workflow_invocation_is_associated_not_filtered(override):
+    """D4: a wrong-provenance invocation of the frozen scheduled workflow
+    is associated with its interval (never silently dropped), so alone it
+    is classified non-qualifying and next to a valid one it is a DUPLICATE."""
+    window = make_window()
+    bad = make_github_run(window, 1, github_run_id="gh-bad", created_at=slot_ts(1) + timedelta(minutes=30), **override)
+    alone = q.associate_runs_to_slots(window, [bad])
+    assert alone[1].kind == "MATCHED" and alone[1].run == bad
+    early = q.derive_pre_successor_outcome(window, 1, bad, [], [], window_already_consumed=False)
+    assert early is not None and early[0] in ("WRONG_PROVENANCE_NONQUALIFYING", "DUPLICATE_NONQUALIFYING")
+    good = make_github_run(window, 1, created_at=slot_ts(1) + timedelta(minutes=300))
+    both = q.associate_runs_to_slots(window, [good, bad])
+    assert both[1].kind == "DUPLICATE"
+    reviewed = q.independent_review_slots(window, [good, bad], now=slot_ts(2))
+    assert [r.outcome for r in reviewed if r.slot_index == 1] == ["DUPLICATE_NONQUALIFYING"]
+
+
+def test_invocations_of_other_workflows_never_touch_an_interval():
+    window = make_window()
+    good = make_github_run(window, 1, created_at=slot_ts(1) + timedelta(minutes=300))
+    other = make_github_run(
+        window, 1, github_run_id="gh-other", workflow_identity=".github/workflows/ci.yml",
+        created_at=slot_ts(1) + timedelta(minutes=30),
+    )
+    associations = q.associate_runs_to_slots(window, [good, other])
+    assert associations[1].kind == "MATCHED" and associations[1].run == good
