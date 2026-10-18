@@ -37,6 +37,11 @@ COMMITTED_REGISTRY = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
 Q_SHA = "a" * 40  # a later qualification source; never equal to A
 
 
+def _historical_registry_bytes() -> bytes:
+    lines = COMMITTED_REGISTRY.read_bytes().splitlines()
+    return b"".join(line + b"\n" for line in lines[:4])
+
+
 def _load_script():
     spec = importlib.util.spec_from_file_location("establish_phase5_replacement_receipts", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -168,7 +173,9 @@ class _FakeClient:
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     registry = tmp_path / "registry.jsonl"
-    shutil.copy(COMMITTED_REGISTRY, registry)
+    # the pre-establishment state: the four historical receipts, i.e. the
+    # first four lines of the committed registry
+    registry.write_bytes(_historical_registry_bytes())
     ledger = tmp_path / "cost_ledger.jsonl"
     ledger.write_text("", encoding="utf-8")
     monkeypatch.setenv("GITHUB_TOKEN", "test-token-not-real")
@@ -487,3 +494,29 @@ def test_dry_run_refuses_a_trusted_record_that_diverges_from_recorded_history(wo
     monkeypatch.setattr(ers, "GithubEvidenceClient", lambda **_kwargs: _FakeClient(record=record))
     assert _run(registry, ledger, "--dry-run") == 1
     assert "STOP: EstablishmentRefused" in capsys.readouterr().err
+
+
+
+def test_committed_registry_is_the_historical_four_plus_the_established_replacement_pair():
+    """After the 2026-10-18 establishment the committed registry is exactly
+    the historical prefix this tool ran against, plus one replacement
+    marker and one GREEN gate-evidence receipt at source A."""
+    receipts = rc.load_registry(COMMITTED_REGISTRY)
+    assert len(receipts) == ers.HISTORICAL_RECEIPT_COUNT + 2
+    ers.check_registry_precondition(receipts[: ers.HISTORICAL_RECEIPT_COUNT])
+    assert [(r.receipt_class, r.purpose, r.github_run_id, r.source_sha, r.artifact_id, r.disposition)
+            for r in receipts[4:]] == [
+        ("ONESHOT_MARKER_CONSUMED", REPLACEMENT_PURPOSE, REPLACEMENT_RUN_ID, REPLACEMENT_SOURCE_SHA,
+         ers.REPLACEMENT_MARKER.artifact_id, "CONSUMED"),
+        ("GATE_EVIDENCE", REPLACEMENT_PURPOSE, REPLACEMENT_RUN_ID, REPLACEMENT_SOURCE_SHA,
+         ers.REPLACEMENT_GATE_EVIDENCE.artifact_id, "GREEN"),
+    ]
+    with pytest.raises(ers.EstablishmentRefused):
+        ers.check_registry_precondition(receipts)
+
+
+def test_committed_ledger_holds_each_replacement_cost_row_exactly_once():
+    rows = read_cost_rows(REPO_ROOT / "telemetry" / "cost_ledger.jsonl")
+    matches = [r for r in rows if r.run_id in ers.EXPECTED_COST_RUN_IDS]
+    assert sorted(r.run_id for r in matches) == sorted(ers.EXPECTED_COST_RUN_IDS)
+    assert sum(r.cost_eur_micros for r in matches) == ers.EXPECTED_COST_TOTAL_EUR_MICROS

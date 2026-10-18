@@ -645,16 +645,27 @@ COMMITTED_EXPECTED_EVENTS = (
     ("ONESHOT_MARKER_CONSUMED", "P5D_OFFICIAL_SONNET_GATE", "32880880053", 1, "CONSUMED", 9575720463),
     ("EXECUTION_DISPOSITION", "P5D_OFFICIAL_SONNET_GATE", "32880880053", 1, "EXECUTION_INVALID / NO_QUALITY_RESULT", None),
 )
-COMMITTED_EXPECTED_COUNT = 4
-COMMITTED_EXPECTED_HEAD_SHA256 = "9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39"
+HISTORICAL_HEAD_SHA256 = "9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39"
+# Appended 2026-10-18 by scripts/establish_phase5_replacement_receipts.py
+# (approved FACTS_SHA256 630eb0d1...d1323): the one replacement execution.
+REPLACEMENT_EXPECTED_EVENTS = (
+    ("ONESHOT_MARKER_CONSUMED", "P5D_REPLACEMENT_SONNET_GATE", "37388164100", 1, "CONSUMED", 11379088051),
+    ("GATE_EVIDENCE", "P5D_REPLACEMENT_SONNET_GATE", "37388164100", 1, "GREEN", 11380108778),
+)
+COMMITTED_EXPECTED_COUNT = 6
+COMMITTED_EXPECTED_HEAD_SHA256 = "0cccfb063f5b30a397eeafcac7bd36f4bfabcc68a955e7cbfb99b04d1c8a81cc"
 
 
-def test_18_committed_registry_loads_as_exactly_the_four_historical_events():
+def test_18_committed_registry_is_the_four_historical_events_then_the_replacement_pair():
     receipts = rc.load_registry(COMMITTED_REGISTRY)
     observed = tuple(
         (r.receipt_class, r.purpose, r.github_run_id, r.run_attempt, r.disposition, r.artifact_id) for r in receipts
     )
-    assert observed == COMMITTED_EXPECTED_EVENTS
+    assert observed == COMMITTED_EXPECTED_EVENTS + REPLACEMENT_EXPECTED_EVENTS
+    assert rc.registry_head_sha256(receipts[:4]) == HISTORICAL_HEAD_SHA256  # history unchanged
+    assert receipts[4].prev_receipt_sha256 == HISTORICAL_HEAD_SHA256
+    assert receipts[4].source_sha == receipts[5].source_sha == "612832e4d7bf0706cf994a83462e50cce9d9e1be"
+    assert rc.authoritative_quality_receipt(receipts, "P5D_REPLACEMENT_SONNET_GATE") == receipts[5]
     assert receipts[0].source_sha == receipts[1].source_sha == "f5b2ae6e393252594efa5b48e1f86a1f2296f797"
     assert receipts[2].source_sha == receipts[3].source_sha == "eef88a289cf465ad352ee223221d5497465469b3"
     assert receipts[3].governance_ref == "q77-p5d-invalid-run-record-a"
@@ -662,7 +673,7 @@ def test_18_committed_registry_loads_as_exactly_the_four_historical_events():
     assert rc.is_purpose_consumed(receipts, "P5C_WIF_PROBE")
     assert rc.is_purpose_consumed(receipts, "P5D_OFFICIAL_SONNET_GATE")
     assert rc.authoritative_quality_receipt(receipts, "P5D_OFFICIAL_SONNET_GATE") is None
-    assert rc.evidence_receipts(receipts, "GATE_EVIDENCE") == ()
+    assert rc.evidence_receipts(receipts, "GATE_EVIDENCE") == (receipts[5],)
 
 
 def test_19_committed_registry_head_hash_and_count_match_established_pins():

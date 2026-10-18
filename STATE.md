@@ -7594,6 +7594,97 @@ merges every change."
   remaining P5-E prerequisites; only after the last push to `main` do
   five closed intervals at that SHA start counting toward the freeze.
 
+- 2026-10-18 - P5-E FINAL PREREQUISITES: REPLACEMENT RECEIPTS AND COSTROWS
+  ESTABLISHED, SOURCE BINDING REPAIRED, SCHEDULED RUNNER PINNED (one
+  owner-merged pull request, two commits). **P5-E NOT STARTED. No
+  qualification window frozen. The five-day pre-freeze count has NOT
+  started. P5-G NOT implemented.** The ADR-0011 daily-slot amendment merged
+  as `dcb9fd4`; exact-SHA CI on it: `CI` run `39061127058` success,
+  `kos-controls` run `39061127014` success.
+  READ-ONLY AUDIT (2026-10-17, before any write). Open before the count, each
+  needing a push to main: (1) the window freeze validated retained
+  replacement evidence against the freeze SHA Q, so any Q other than the
+  replacement's own source A refused while the artifacts are retained
+  (until 2027-01-03); (2) the durable registry held zero replacement
+  receipts and the committed ledger lacked the two gate CostRows, so freeze
+  seam 3 always refused; (3) the owner's runner pin; (4) the false `Phase 5
+  complete` status line. Not a push (owner actions before freeze or slot 1):
+  the schedule-bound federation rule and repository variable
+  `SENTINEL_SCHEDULE_FEDERATION_RULE_ID` do not exist; the Windows
+  disabled-at ruling (the 2026-09-22 disable was recorded as a temporary B5
+  hold); deletion of the merged branch `q77/adr0011-daily-slot-amendment`.
+  P5-G wiring is a gate before Phase-5 closure (ADR-0011 amendment H), not
+  before the count; it stays out.
+  COMMIT 1 (code). `sentinel-schedule.yml` `runs-on: ubuntu-24.04` (owner
+  decision: no runner major-version change during pre-freeze observations
+  or the window). Freeze seam 3 binds the replacement receipts and any
+  retained gate evidence to `REPLACEMENT_SOURCE_SHA` = A =
+  `612832e4d7bf0706cf994a83462e50cce9d9e1be` (run `37388164100`); Q no
+  longer reaches the seam. New GET-only tool
+  `scripts/establish_phase5_replacement_receipts.py` (dry-run, then a real
+  run gated by `--expect-facts-sha256`): checks the run binding and
+  conclusion, both artifact ids and the digests recorded on 2026-10-05, and
+  requires the gate-evidence artifact to hold exactly its three uploaded
+  files: the terminal record must be TRUSTED_QUALITY under the shared
+  `verify_terminal_bytes`, the journal must read OK with no signal, runner
+  exception or terminal-write failure, and the checks file must hold the
+  recorded 27 lines with none failing; all three file digests are bound
+  into FACTS_SHA256. The first operator dry-run refused (the tool expected
+  one file); the tool was repaired before any write. `.kos/unit.json`
+  status line now reads "in development toward production-ready; Phase 5
+  in progress, Phase 6 not started".
+  ESTABLISHMENT (owner GO on the reviewed dry run; real run from the
+  operator terminal, 2026-10-18). Approved FACTS_SHA256
+  `630eb0d112bf3a699f84b499e4e78bc6b0c6776cd1b0c3c92141de0f7e7d1323`,
+  recomputed equal by the real run. Appended to
+  `artifacts/phase5_receipt_registry.jsonl` (recorded_at_utc
+  2026-10-18T00:29:30Z): receipt 5 `ONESHOT_MARKER_CONSUMED`
+  `P5D_REPLACEMENT_SONNET_GATE` run `37388164100` attempt 1, source A,
+  artifact `11379088051`, CONSUMED, receipt SHA-256 `50fbb010...77205`;
+  receipt 6 `GATE_EVIDENCE` same purpose and run, source A, artifact
+  `11380108778`, GREEN, receipt SHA-256 = registry head
+  `0cccfb063f5b30a397eeafcac7bd36f4bfabcc68a955e7cbfb99b04d1c8a81cc`.
+  Registry line count 6; the chain validates; the first four receipts and
+  the historical head `9f060888...ccfc39` are unchanged (pure append, 0
+  removed lines). Appended to `telemetry/cost_ledger.jsonl`:
+  `r-bcacf20af69140c89b25ebb82977a296` 597,367 micro-EUR and
+  `r-5d4869f8387d42419f6242f525415277` 476,208 micro-EUR, total 1,073,575
+  micro-EUR (the recorded replacement gate cost); 42 -> 44 rows, each new
+  row exactly once, no duplicate row or run id.
+  TEST ADJUSTMENTS (dependent on the new committed history). Tests that pin
+  the committed registry now pin the six receipts and the new head while
+  still asserting the unchanged historical prefix (receipts, terminal,
+  replacement). The P5-D readiness and gate-runner tests describe the world
+  before the replacement was consumed; they read an exact pre-establishment
+  view of the registry (first 4 lines) and ledger (first 42 lines), a
+  shared `tests/conftest.py` fixture following the latch GENESIS-view
+  precedent; a new test proves the live registry now refuses any further
+  replacement preflight. The receipt tool joins the terminal/journal wiring
+  allowlist (read-only; no writer imported).
+  VERIFICATION (local, SYNTHETIC test fixtures; the establishment itself
+  read REAL GitHub evidence): full pytest 3217 passed, 33 skipped, 0
+  failed, exit 0; 20 of 20 mutations of the new guards killed (seam
+  binding x3; tool digest, run conclusion, gate-record correlation,
+  partial-ledger, registry precondition, hash compare, CostRows and gate
+  files in the hash, exact entry set both ways, terminal verdict, checks
+  call/count/FAIL scan, journal call/integrity/signals); Tier 0 PASS;
+  Phase-1 freeze guard PASS; KOS controls OK (local and CI leg); strict
+  write-set check PASS for each commit; publication gate scan at the index
+  PASS(0) (only the existing owner-adjudicated exemptions). Exact-SHA CI is
+  owed on the merge commit.
+  NON-EVENTS: no workflow other than `sentinel-schedule.yml` changed; cron
+  `37 6 * * *` unchanged; no dispatch; no provider, model, credential,
+  variable, secret, federation-rule or settings change; `SentinelDailyRun`
+  stays Disabled.
+  STATUS AFTER THIS RECORD: P5-A to P5-D COMPLETE. P5-E NOT STARTED. Phase 6
+  NOT STARTED. Production-readiness program OPEN; production-ready claim
+  NOT PERMITTED. v0.7 NOT TAGGED.
+  Executing model: Opus 5.5.
+  Next action: owner merge; exact-SHA CI on the merge commit, which is the
+  candidate qualification source Q; owner actions before freeze (schedule
+  federation rule and variable, Windows disabled-at ruling, merged-branch
+  deletion); then five closed daily intervals at Q with no push to main.
+
 ## Backlog (KOS unit records; Target KOS 06 §D, GOVERNANCE §9)
 
 Rows are read by the KOS computed view (`python core/kos_core.py index

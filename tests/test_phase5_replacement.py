@@ -205,12 +205,15 @@ def test_9c_committed_registry_blocks_both_historical_purposes_durably():
         o.assert_purpose_not_yet_consumed_durably("P5D_OFFICIAL_SONNET_GATE", receipts, [])
 
 
-def test_9d_committed_registry_never_shows_replacement_purpose_consumed():
-    """The replacement purpose has zero receipts in the real committed
-    registry -- it is structural, not armed."""
+def test_9d_committed_registry_shows_the_replacement_consumed_exactly_once():
+    """2026-10-18: the one replacement execution (run 37388164100) is
+    established durably; the purpose is consumed, by exactly one marker
+    receipt, and the historical prefix still showed it unconsumed."""
     receipts = rc.load_registry(COMMITTED_REGISTRY)
-    o.assert_purpose_not_yet_consumed_durably(repl.REPLACEMENT_PURPOSE, receipts, [])
-    assert rc.is_purpose_consumed(receipts, repl.REPLACEMENT_PURPOSE) is False
+    with pytest.raises(o.OneShotAlreadyConsumed):
+        o.assert_purpose_not_yet_consumed_durably(repl.REPLACEMENT_PURPOSE, receipts, [])
+    assert [r.github_run_id for r in rc.marker_receipts(receipts, repl.REPLACEMENT_PURPOSE)] == [repl.REPLACEMENT_RUN_ID]
+    o.assert_purpose_not_yet_consumed_durably(repl.REPLACEMENT_PURPOSE, receipts[:4], [])
 
 
 # ======================================================================
@@ -368,14 +371,17 @@ def test_19_verdict_refuses_when_live_replacement_marker_exists_even_without_dur
     assert "live one-shot marker" in verdict.reason
 
 
-def test_20_committed_registry_permits_replacement_and_refuses_original():
-    """The real committed Stage-1 registry (byte-unchanged) currently
-    permits exactly one future replacement and refuses any verdict for
-    the original purpose -- proving Stage 2A's structural wiring
-    against the actual authoritative history, not a synthetic fixture."""
+def test_20_committed_registry_refuses_a_second_replacement_and_the_original():
+    """The historical prefix (the four Stage-1 receipts) permitted exactly
+    one replacement; after the 2026-10-18 establishment the committed
+    registry permits none, and the original purpose is refused either way
+    -- Stage 2A's structural wiring against the actual authoritative
+    history, not a synthetic fixture."""
     receipts = rc.load_registry(COMMITTED_REGISTRY)
+    assert repl.replacement_history_verdict(receipts[:4], [], repl.REPLACEMENT_PURPOSE).permits_one_replacement is True
     verdict = repl.replacement_history_verdict(receipts, [], repl.REPLACEMENT_PURPOSE)
-    assert verdict.permits_one_replacement is True
+    assert verdict.permits_one_replacement is False
+    assert "already consumed" in verdict.reason
     verdict2 = repl.replacement_history_verdict(receipts, [], repl.ORIGINAL_PURPOSE)
     assert verdict2.permits_one_replacement is False
 

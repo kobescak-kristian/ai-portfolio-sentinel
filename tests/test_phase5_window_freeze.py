@@ -481,10 +481,25 @@ def test_freeze_refuses_when_no_replacement_receipt_exists(tmp_path, monkeypatch
     assert not (work_root / "genesis-out").exists()
 
 
-def test_freeze_refuses_on_committed_registry_today(tmp_path, monkeypatch):
-    """The REAL committed registry (byte-unchanged by this dispatch)
-    has zero replacement receipts, so a freeze attempt against it must
-    refuse today -- proves this dispatch arms nothing end-to-end."""
+def test_seam3_passes_on_the_committed_registry_and_ledger_at_a_q_other_than_a(tmp_path, monkeypatch):
+    """2026-10-18: the REAL committed registry holds the established
+    replacement marker + GREEN gate-evidence receipts at source A, and the
+    REAL committed ledger holds their CostRows. Seam 3 passes on that
+    committed history (receipt-only path: no live artifact) while the
+    freeze SHA Q differs from A."""
+    from sentinel.phase5.receipts import load_registry
+
+    receipts = load_registry(REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl")
+    assert SOURCE_SHA != REPLACEMENT_SOURCE_SHA
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(wf, "REPO_ROOT", REPO_ROOT)
+    assert wf._verify_provider_phase_prerequisites(_FakeClient(bundles={}), tmp_path / "work", receipts) == ()
+
+
+def test_freeze_refuses_on_the_pre_establishment_registry(tmp_path, monkeypatch, phase5_pre_establishment):
+    """The registry as it stood before the 2026-10-18 establishment had
+    zero replacement receipts, so a freeze attempt against it refuses --
+    the establishment, not this code, is what unblocks seam 3."""
     from sentinel.phase5.receipts import load_registry
 
     for key, value in ENV.items():
@@ -494,7 +509,7 @@ def test_freeze_refuses_on_committed_registry_today(tmp_path, monkeypatch):
     (repo_root_fake / "telemetry" / "cost_ledger.jsonl").write_text("", encoding="utf-8")
     monkeypatch.setattr(wf, "REPO_ROOT", repo_root_fake)
 
-    committed = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
+    committed = phase5_pre_establishment.path("artifacts/phase5_receipt_registry.jsonl")
     receipts = load_registry(committed)
     monkeypatch.setattr(wf, "load_durable_history", lambda: receipts)
     monkeypatch.setattr(wf, "build_evidence_client", lambda env: _FakeClient(bundles={}))
