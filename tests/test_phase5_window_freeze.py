@@ -277,7 +277,11 @@ from sentinel.phase5.replacement import (  # noqa: E402
     REPLACEMENT_PURPOSE,
 )
 
-REPLACEMENT_RUN_ID = "999888777"
+from sentinel.phase5.replacement import REPLACEMENT_RUN_ID, REPLACEMENT_SOURCE_SHA  # noqa: E402
+
+# The freeze SHA Q in these tests ("a" * 40) deliberately differs from the
+# replacement's own historical source A (REPLACEMENT_SOURCE_SHA).
+assert SOURCE_SHA != REPLACEMENT_SOURCE_SHA
 
 
 def _fixed_clock():
@@ -291,6 +295,8 @@ def _make_receipts_registry(
     include_replacement_marker: bool = True,
     replacement_disposition: str = "GREEN",
     second_replacement_run_id: "str | None" = None,
+    replacement_source_sha: str = REPLACEMENT_SOURCE_SHA,
+    gate_source_sha: "str | None" = None,
 ) -> "tuple":
     """Build a temporary durable receipt registry reflecting: P5-C
     consumed + CAPABILITY_PASS, the original P5-D consumed +
@@ -336,7 +342,7 @@ def _make_receipts_registry(
         run_id = second_replacement_run_id or REPLACEMENT_RUN_ID
         append_receipt(
             registry_path, clock=_fixed_clock, schema_version=1, receipt_class="ONESHOT_MARKER_CONSUMED",
-            purpose=REPLACEMENT_PURPOSE, github_run_id=run_id, run_attempt=1, source_sha=SOURCE_SHA,
+            purpose=REPLACEMENT_PURPOSE, github_run_id=run_id, run_attempt=1, source_sha=replacement_source_sha,
             artifact_name=oneshot_marker_name(REPLACEMENT_PURPOSE, run_id), artifact_id=5,
             payload_filename="marker.json", payload_sha256="5" * 64, disposition="CONSUMED",
             replacement_of_run_id=REPLACEMENT_OF_RUN_ID, owner_ruling_id=OWNER_RULING_ID,
@@ -344,7 +350,7 @@ def _make_receipts_registry(
         )
         append_receipt(
             registry_path, clock=_fixed_clock, schema_version=1, receipt_class="GATE_EVIDENCE",
-            purpose=REPLACEMENT_PURPOSE, github_run_id=run_id, run_attempt=1, source_sha=SOURCE_SHA,
+            purpose=REPLACEMENT_PURPOSE, github_run_id=run_id, run_attempt=1, source_sha=gate_source_sha or replacement_source_sha,
             artifact_name=gate_evidence_name(run_id, 1), artifact_id=6,
             payload_filename="phase5_official_gate.json", payload_sha256="6" * 64,
             disposition=replacement_disposition, replacement_of_run_id=REPLACEMENT_OF_RUN_ID,
@@ -475,10 +481,25 @@ def test_freeze_refuses_when_no_replacement_receipt_exists(tmp_path, monkeypatch
     assert not (work_root / "genesis-out").exists()
 
 
-def test_freeze_refuses_on_committed_registry_today(tmp_path, monkeypatch):
-    """The REAL committed registry (byte-unchanged by this dispatch)
-    has zero replacement receipts, so a freeze attempt against it must
-    refuse today -- proves this dispatch arms nothing end-to-end."""
+def test_seam3_passes_on_the_committed_registry_and_ledger_at_a_q_other_than_a(tmp_path, monkeypatch):
+    """2026-10-18: the REAL committed registry holds the established
+    replacement marker + GREEN gate-evidence receipts at source A, and the
+    REAL committed ledger holds their CostRows. Seam 3 passes on that
+    committed history (receipt-only path: no live artifact) while the
+    freeze SHA Q differs from A."""
+    from sentinel.phase5.receipts import load_registry
+
+    receipts = load_registry(REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl")
+    assert SOURCE_SHA != REPLACEMENT_SOURCE_SHA
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(wf, "REPO_ROOT", REPO_ROOT)
+    assert wf._verify_provider_phase_prerequisites(_FakeClient(bundles={}), tmp_path / "work", receipts) == ()
+
+
+def test_freeze_refuses_on_the_pre_establishment_registry(tmp_path, monkeypatch, phase5_pre_establishment):
+    """The registry as it stood before the 2026-10-18 establishment had
+    zero replacement receipts, so a freeze attempt against it refuses --
+    the establishment, not this code, is what unblocks seam 3."""
     from sentinel.phase5.receipts import load_registry
 
     for key, value in ENV.items():
@@ -488,7 +509,7 @@ def test_freeze_refuses_on_committed_registry_today(tmp_path, monkeypatch):
     (repo_root_fake / "telemetry" / "cost_ledger.jsonl").write_text("", encoding="utf-8")
     monkeypatch.setattr(wf, "REPO_ROOT", repo_root_fake)
 
-    committed = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
+    committed = phase5_pre_establishment.path("artifacts/phase5_receipt_registry.jsonl")
     receipts = load_registry(committed)
     monkeypatch.setattr(wf, "load_durable_history", lambda: receipts)
     monkeypatch.setattr(wf, "build_evidence_client", lambda env: _FakeClient(bundles={}))
@@ -528,7 +549,7 @@ def test_freeze_refuses_when_two_replacement_marker_receipts_exist(tmp_path, mon
     second_run = "111222333"
     append_receipt(
         registry_path, clock=_fixed_clock, schema_version=1, receipt_class="ONESHOT_MARKER_CONSUMED",
-        purpose=REPLACEMENT_PURPOSE, github_run_id=second_run, run_attempt=1, source_sha=SOURCE_SHA,
+        purpose=REPLACEMENT_PURPOSE, github_run_id=second_run, run_attempt=1, source_sha=REPLACEMENT_SOURCE_SHA,
         artifact_name=oneshot_marker_name(REPLACEMENT_PURPOSE, second_run), artifact_id=7,
         payload_filename="marker.json", payload_sha256="7" * 64, disposition="CONSUMED",
         replacement_of_run_id=REPLACEMENT_OF_RUN_ID, owner_ruling_id=OWNER_RULING_ID, governance_ref=None,
@@ -555,11 +576,16 @@ def test_freeze_refuses_when_two_replacement_marker_receipts_exist(tmp_path, mon
     assert "replacement marker receipt" in refusal
 
 
-def test_seam3_hash_verifies_live_retained_replacement_evidence(tmp_path):
+@pytest.mark.parametrize("evidence_source", ["A", "Q"])
+def test_seam3_hash_verifies_live_retained_replacement_evidence(tmp_path, evidence_source):
     """Defense in depth: when the replacement evidence artifact is
     still live-discoverable, its bytes must independently hash-match
     the durable receipt's payload_sha256 and pass
-    validate_replacement_provenance -- not merely agree on disposition."""
+    validate_replacement_provenance -- not merely agree on disposition.
+    Source binding: retained evidence at the replacement's own source A
+    passes although the freeze SHA Q differs; evidence claiming Q (with
+    a correctly hashed receipt) refuses."""
+    record_source = REPLACEMENT_SOURCE_SHA if evidence_source == "A" else SOURCE_SHA
     import hashlib
 
     from sentinel.phase5.artifact_names import gate_evidence_name, oneshot_marker_name
@@ -597,7 +623,7 @@ def test_seam3_hash_verifies_live_retained_replacement_evidence(tmp_path):
     )
     append_receipt(
         registry_path, clock=_fixed_clock, schema_version=1, receipt_class="ONESHOT_MARKER_CONSUMED",
-        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=SOURCE_SHA,
+        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=REPLACEMENT_SOURCE_SHA,
         artifact_name=oneshot_marker_name(REPLACEMENT_PURPOSE, REPLACEMENT_RUN_ID), artifact_id=5,
         payload_filename="marker.json", payload_sha256="5" * 64, disposition="CONSUMED",
         replacement_of_run_id=REPLACEMENT_OF_RUN_ID, owner_ruling_id=OWNER_RULING_ID, governance_ref=None,
@@ -613,8 +639,8 @@ def test_seam3_hash_verifies_live_retained_replacement_evidence(tmp_path):
     evidence = GateEvidenceRecord(
         schema_version=1, workflow_identity=".github/workflows/sentinel-official-gate.yml",
         github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, event="workflow_dispatch",
-        ref="refs/heads/main", source_sha=SOURCE_SHA, created_at_utc=datetime.now(timezone.utc),
-        steps=(), expected_source_sha=SOURCE_SHA, model="claude-sonnet-5",
+        ref="refs/heads/main", source_sha=record_source, created_at_utc=datetime.now(timezone.utc),
+        steps=(), expected_source_sha=record_source, model="claude-sonnet-5",
         profile_name="sonnet-official-gate", run_ids=("r1", "r2"), scoring={"emitted": 0},
         thresholds={}, invariant_results={"ok": True}, execution_validity={"valid": True},
         miss_patterns=(), failed_checks=(), cost_rows=(real_cost_row,), accounted_total_eur_micros=2000,
@@ -627,7 +653,7 @@ def test_seam3_hash_verifies_live_retained_replacement_evidence(tmp_path):
     payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()
     append_receipt(
         registry_path, clock=_fixed_clock, schema_version=1, receipt_class="GATE_EVIDENCE",
-        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=SOURCE_SHA,
+        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=REPLACEMENT_SOURCE_SHA,
         artifact_name=gate_evidence_name(REPLACEMENT_RUN_ID, 1), artifact_id=6,
         payload_filename="phase5_official_gate.json", payload_sha256=payload_sha256,
         disposition="GREEN", replacement_of_run_id=REPLACEMENT_OF_RUN_ID, owner_ruling_id=OWNER_RULING_ID,
@@ -653,8 +679,12 @@ def test_seam3_hash_verifies_live_retained_replacement_evidence(tmp_path):
     (tmp_path / "work").mkdir()
     try:
         wf.REPO_ROOT = repo_root_fake
+        if evidence_source == "Q":
+            with pytest.raises(wf.Phase5ScriptError, match="provenance invalid"):
+                wf._verify_provider_phase_prerequisites(fake_client, tmp_path / "work", receipts)
+            return
         rows = wf._verify_provider_phase_prerequisites(
-            fake_client, tmp_path / "work", receipts, SOURCE_SHA
+            fake_client, tmp_path / "work", receipts
         )
     finally:
         wf.REPO_ROOT = original_repo_root
@@ -712,14 +742,14 @@ def test_seam3_refuses_replacement_infrastructure_failure_disposition_regardless
     )
     append_receipt(
         registry_path, clock=_fixed_clock, schema_version=1, receipt_class="ONESHOT_MARKER_CONSUMED",
-        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=SOURCE_SHA,
+        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=REPLACEMENT_SOURCE_SHA,
         artifact_name=oneshot_marker_name(REPLACEMENT_PURPOSE, REPLACEMENT_RUN_ID), artifact_id=5,
         payload_filename="marker.json", payload_sha256="5" * 64, disposition="CONSUMED",
         replacement_of_run_id=REPLACEMENT_OF_RUN_ID, owner_ruling_id=OWNER_RULING_ID, governance_ref=None,
     )
     append_receipt(
         registry_path, clock=_fixed_clock, schema_version=1, receipt_class="GATE_EVIDENCE",
-        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=SOURCE_SHA,
+        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=REPLACEMENT_SOURCE_SHA,
         artifact_name="sentinel-p5-gate-evidence-r%s-a1" % REPLACEMENT_RUN_ID, artifact_id=6,
         payload_filename="phase5_official_gate.json", payload_sha256="6" * 64,
         disposition="INFRASTRUCTURE_FAILURE", replacement_of_run_id=REPLACEMENT_OF_RUN_ID,
@@ -730,7 +760,7 @@ def test_seam3_refuses_replacement_infrastructure_failure_disposition_regardless
     fake_client = _FakeClient(bundles={})  # nothing live-discoverable; pure receipt-level refusal
     try:
         wf._verify_provider_phase_prerequisites(
-            fake_client, tmp_path / "work", receipts, SOURCE_SHA
+            fake_client, tmp_path / "work", receipts
         )
         raise AssertionError("seam must refuse an INFRASTRUCTURE_FAILURE replacement disposition")
     except wf.Phase5ScriptError as exc:
@@ -782,7 +812,7 @@ def test_seam3_refuses_live_replacement_with_wrong_marker_purpose_provenance(tmp
     )
     append_receipt(
         registry_path, clock=_fixed_clock, schema_version=1, receipt_class="ONESHOT_MARKER_CONSUMED",
-        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=SOURCE_SHA,
+        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=REPLACEMENT_SOURCE_SHA,
         artifact_name=oneshot_marker_name(REPLACEMENT_PURPOSE, REPLACEMENT_RUN_ID), artifact_id=5,
         payload_filename="marker.json", payload_sha256="5" * 64, disposition="CONSUMED",
         replacement_of_run_id=REPLACEMENT_OF_RUN_ID, owner_ruling_id=OWNER_RULING_ID, governance_ref=None,
@@ -797,8 +827,8 @@ def test_seam3_refuses_live_replacement_with_wrong_marker_purpose_provenance(tmp
     evidence = GateEvidenceRecord(
         schema_version=1, workflow_identity=".github/workflows/sentinel-official-gate.yml",
         github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, event="workflow_dispatch",
-        ref="refs/heads/main", source_sha=SOURCE_SHA, created_at_utc=datetime.now(timezone.utc),
-        steps=(), expected_source_sha=SOURCE_SHA, model="claude-sonnet-5",
+        ref="refs/heads/main", source_sha=REPLACEMENT_SOURCE_SHA, created_at_utc=datetime.now(timezone.utc),
+        steps=(), expected_source_sha=REPLACEMENT_SOURCE_SHA, model="claude-sonnet-5",
         profile_name="sonnet-official-gate", run_ids=("r1", "r2"), scoring={"emitted": 0},
         thresholds={}, invariant_results={"ok": True}, execution_validity={"valid": True},
         miss_patterns=(), failed_checks=(), cost_rows=(real_cost_row,), accounted_total_eur_micros=2000,
@@ -811,7 +841,7 @@ def test_seam3_refuses_live_replacement_with_wrong_marker_purpose_provenance(tmp
     payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()
     append_receipt(
         registry_path, clock=_fixed_clock, schema_version=1, receipt_class="GATE_EVIDENCE",
-        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=SOURCE_SHA,
+        purpose=REPLACEMENT_PURPOSE, github_run_id=REPLACEMENT_RUN_ID, run_attempt=1, source_sha=REPLACEMENT_SOURCE_SHA,
         artifact_name=gate_evidence_name(REPLACEMENT_RUN_ID, 1), artifact_id=6,
         payload_filename="phase5_official_gate.json", payload_sha256=payload_sha256,
         disposition="GREEN", replacement_of_run_id=REPLACEMENT_OF_RUN_ID, owner_ruling_id=OWNER_RULING_ID,
@@ -832,7 +862,7 @@ def test_seam3_refuses_live_replacement_with_wrong_marker_purpose_provenance(tmp
         wf.REPO_ROOT = tmp_path
         try:
             wf._verify_provider_phase_prerequisites(
-                fake_client, tmp_path / "work", receipts, SOURCE_SHA
+                fake_client, tmp_path / "work", receipts
             )
             raise AssertionError("seam must refuse wrong marker_purpose provenance")
         except wf.Phase5ScriptError as exc:
@@ -970,3 +1000,42 @@ def test_freeze_refuses_without_a_prewindow_streak(tmp_path, monkeypatch):
     assert exit_code == 1
     assert "PREWINDOW_DAILY_SLOT_STREAK_UNMET" in (work_root / "freeze_refusal.json").read_text(encoding="utf-8")
     assert not (work_root / "genesis-out").exists()
+
+
+# ---------------------------------------------------------------------------
+# Seam 3 source binding: replacement source A vs qualification source Q
+# ---------------------------------------------------------------------------
+
+
+def _seam3(tmp_path, receipts):
+    (tmp_path / "work").mkdir(exist_ok=True)
+    return wf._verify_provider_phase_prerequisites(_FakeClient(bundles={}), tmp_path / "work", receipts)
+
+
+def test_seam3_accepts_replacement_receipts_at_a_while_q_differs(tmp_path):
+    assert _seam3(tmp_path, _make_receipts_registry(tmp_path)) == ()
+
+
+def test_seam3_refuses_replacement_receipts_bound_to_q_instead_of_a(tmp_path):
+    receipts = _make_receipts_registry(tmp_path, replacement_source_sha=SOURCE_SHA)
+    with pytest.raises(wf.Phase5ScriptError, match="do not bind the recorded replacement run"):
+        _seam3(tmp_path, receipts)
+
+
+def test_seam3_refuses_replacement_receipts_for_another_run(tmp_path):
+    receipts = _make_receipts_registry(tmp_path, second_replacement_run_id="111222333")
+    with pytest.raises(wf.Phase5ScriptError, match="do not bind the recorded replacement run"):
+        _seam3(tmp_path, receipts)
+
+
+def test_seam3_signature_takes_no_qualification_source():
+    import inspect
+
+    params = inspect.signature(wf._verify_provider_phase_prerequisites).parameters
+    assert list(params) == ["client", "work_root", "receipts"]
+
+
+def test_seam3_refuses_gate_receipt_at_q_even_when_the_marker_is_at_a(tmp_path):
+    receipts = _make_receipts_registry(tmp_path, gate_source_sha=SOURCE_SHA)
+    with pytest.raises(wf.Phase5ScriptError, match="do not bind the recorded replacement run"):
+        _seam3(tmp_path, receipts)

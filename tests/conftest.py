@@ -187,6 +187,78 @@ def fake_http():
     return _make
 
 
+# ---------------------------------------------------------------------------
+# Phase-5 pre-establishment view (2026-10-18). The replacement receipts and
+# their CostRows were appended to the committed registry and cost ledger; the
+# P5-D readiness/gate tooling tests describe the world BEFORE that append.
+# Both appends were pure, so the first lines of each committed file are
+# byte-for-byte the earlier file (same precedent as the latch GENESIS view).
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+PHASE5_PRE_ESTABLISHMENT_LINES = {
+    "artifacts/phase5_receipt_registry.jsonl": 4,
+    "telemetry/cost_ledger.jsonl": 42,
+}
+
+
+class Phase5PreEstablishmentView:
+    def __init__(self, root: Path):
+        self.paths = {}
+        for rel, count in PHASE5_PRE_ESTABLISHMENT_LINES.items():
+            lines = (_REPO_ROOT / rel).read_bytes().replace(b"\r\n", b"\n").split(b"\n")
+            assert len(lines) - 1 >= count, rel
+            out = root / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"".join(line + b"\n" for line in lines[:count]))
+            self.paths[rel] = out
+
+    def path(self, rel: str) -> Path:
+        return self.paths[rel]
+
+    def redirect(self, path) -> Path:
+        for rel, view in self.paths.items():
+            if Path(path).resolve() == (_REPO_ROOT / rel).resolve():
+                return view
+        return Path(path)
+
+    def patch_readiness(self, monkeypatch, module, *source_classes) -> None:
+        """Route a readiness script's registry/ledger reads of the committed
+        files to the view: ``registry_facts``/``ledger_facts`` and each
+        Sources class's ``read_bytes``."""
+        for name in ("registry_facts", "ledger_facts"):
+            original = getattr(module, name)
+            monkeypatch.setattr(
+                module, name, lambda path, *a, _original=original, **k: _original(self.redirect(path), *a, **k)
+            )
+        for cls in (module.Sources, *source_classes):
+            original_read = cls.read_bytes
+            monkeypatch.setattr(
+                cls, "read_bytes",
+                lambda src, rel, _original=original_read: (
+                    self.paths[rel].read_bytes()
+                    if rel in self.paths and Path(src.root).resolve() == _REPO_ROOT.resolve()
+                    else _original(src, rel)
+                ),
+            )
+
+    def patch_durable_history(self, monkeypatch, common) -> None:
+        """``common.load_durable_history()`` (the default committed path)
+        reads the view; ``common`` is the loaded ``scripts/_phase5_common``
+        module, which a script loads before any of its functions run."""
+        original = common.load_durable_history
+        view = self.paths["artifacts/phase5_receipt_registry.jsonl"]
+        monkeypatch.setattr(
+            common, "load_durable_history",
+            lambda registry_path=None: original(registry_path if registry_path is not None else view),
+        )
+
+
+@pytest.fixture
+def phase5_pre_establishment(tmp_path_factory) -> Phase5PreEstablishmentView:
+    return Phase5PreEstablishmentView(tmp_path_factory.mktemp("phase5-pre-establishment"))
+
+
 __all__ = [
     "SimulatedCrash",
     "crash_at",

@@ -34,7 +34,9 @@ from sentinel.phase5.evidence_records import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMITTED_REGISTRY = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
-COMMITTED_REGISTRY_HEAD = "9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39"
+COMMITTED_HISTORICAL_HEAD = "9f060888ea963305a512f534873fe056e8f7fe0c08d05137d26c6d95aeccfc39"
+# 2026-10-18: the replacement marker + GREEN gate-evidence receipts appended.
+COMMITTED_REGISTRY_HEAD = "0cccfb063f5b30a397eeafcac7bd36f4bfabcc68a955e7cbfb99b04d1c8a81cc"
 
 NOW = datetime(2026, 9, 15, 12, 0, 0, tzinfo=timezone.utc)
 SHA_A = "a" * 40
@@ -457,9 +459,10 @@ def test_receipt_vocabulary_widened_for_replacement_purpose_only():
         )
 
 
-def test_committed_registry_unchanged_four_lines_same_head():
+def test_committed_registry_is_the_historical_four_plus_the_replacement_pair():
     receipts = rc.load_registry(COMMITTED_REGISTRY)
-    assert len(receipts) == 4
+    assert len(receipts) == 6
+    assert rc.registry_head_sha256(receipts[:4]) == COMMITTED_HISTORICAL_HEAD
     assert rc.registry_head_sha256(receipts) == COMMITTED_REGISTRY_HEAD
 
 
@@ -1184,6 +1187,11 @@ _PERMITTED_WIRING_SCRIPTS = frozenset(
         # the model-free kill-rehearsal driver establishes the same
         # terminal layout and RUNNER journal the official gate does.
         "scripts/run_phase5_kill_rehearsal.py",
+        # P5-E prerequisite (owner instruction 2026-10-18): durable receipt
+        # recording reads the published terminal record through the shared
+        # verify_terminal_bytes and the journal through the strict reader.
+        # Read-only: it imports no writer.
+        "scripts/establish_phase5_replacement_receipts.py",
     }
 )
 # The P5-E seam validator legitimately names the replacement purpose (it

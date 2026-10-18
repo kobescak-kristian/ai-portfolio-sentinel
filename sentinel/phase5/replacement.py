@@ -41,6 +41,13 @@ OWNER_RULING_ID = "q77-p5d-replacement-owner-ruling-a"
 ORIGINAL_INCIDENT_RECORD_REF = "q77-p5d-invalid-run-record-a"
 MAX_REPLACEMENTS = 1
 
+# The one replacement execution that ran (STATE 2026-10-05): run
+# 37388164100 at source A, the latch commit. Historical constants; the
+# P5-E qualification source Q is a different, later commit and is never
+# required to equal A.
+REPLACEMENT_RUN_ID = "37388164100"
+REPLACEMENT_SOURCE_SHA = "612832e4d7bf0706cf994a83462e50cce9d9e1be"
+
 
 class ReplacementHistoryError(RuntimeError):
     """History does not support computing a replacement verdict --

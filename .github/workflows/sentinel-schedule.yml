@@ -20,7 +20,7 @@ concurrency:
 jobs:
   scheduled:
     if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.SENTINEL_SCHEDULE_FEDERATION_RULE_ID }}

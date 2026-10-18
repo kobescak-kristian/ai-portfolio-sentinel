@@ -130,6 +130,31 @@ def _collect_local_third_party_imports(entry_file: Path) -> set[str]:
     return third_party
 
 
+# The registry as it stood before the 2026-10-18 replacement-receipt
+# establishment: the world this gate runner's preflight was built for (the
+# one replacement is now durably consumed, so the live registry refuses
+# every preflight at the one-shot check).
+_PRE_ESTABLISHMENT_REGISTRY: list = [None]
+
+
+@pytest.fixture(autouse=True)
+def _pre_establishment_durable_history(monkeypatch, phase5_pre_establishment):
+    common = sys.modules[_load_module().load_durable_history.__module__]
+    phase5_pre_establishment.patch_durable_history(monkeypatch, common)
+    _PRE_ESTABLISHMENT_REGISTRY[0] = phase5_pre_establishment.path("artifacts/phase5_receipt_registry.jsonl")
+
+
+def test_live_committed_registry_refuses_every_further_replacement_preflight():
+    """Without the view: the established replacement makes the real
+    committed registry refuse the replacement purpose durably."""
+    from sentinel.phase5.receipts import load_registry
+
+    module = _load_module()
+    receipts = load_registry(REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl")
+    with pytest.raises(module.Phase5ScriptError, match="already consumed"):
+        module.assert_oneshot_not_consumed_durably(module.PURPOSE, receipts, [])
+
+
 def _load_module():
     spec = importlib.util.spec_from_file_location("run_phase5_official_gate", GATE_RUNNER_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -278,7 +303,7 @@ def test_committed_registry_already_shows_original_p5d_consumed_and_preflight_re
     from sentinel.phase5.receipts import load_registry
 
     module = _load_module()
-    committed = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
+    committed = _PRE_ESTABLISHMENT_REGISTRY[0]
     receipts = load_registry(committed)
     with pytest.raises(module.Phase5ScriptError):
         module.assert_oneshot_not_consumed_durably(_ORIGINAL_PURPOSE, receipts, [])
@@ -296,7 +321,7 @@ def test_replacement_not_permitted_for_the_original_purpose():
     from sentinel.phase5.receipts import load_registry
 
     module = _load_module()
-    committed = REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl"
+    committed = _PRE_ESTABLISHMENT_REGISTRY[0]
     receipts = load_registry(committed)
     # An admitted latch verdict isolates the refusal to the history/purpose
     # check: the latch (Stage 2C-B6-2) cannot be what refuses here.
@@ -1304,7 +1329,7 @@ def test_eligibility_requires_the_latch_argument_and_an_admitting_verdict():
     module = _load_module()
     from sentinel.phase5.receipts import load_registry
 
-    receipts = load_registry(REPO_ROOT / "artifacts" / "phase5_receipt_registry.jsonl")
+    receipts = load_registry(_PRE_ESTABLISHMENT_REGISTRY[0])
     with pytest.raises(TypeError):
         module.assert_replacement_history_permits(receipts, [], _repl.REPLACEMENT_PURPOSE)  # no default
     unarmed = LatchVerdict(admitted=False, state="UNARMED", reason="LATCH_UNARMED")

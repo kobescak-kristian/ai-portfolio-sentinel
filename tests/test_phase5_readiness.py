@@ -954,13 +954,16 @@ def _committed_genesis_view(directory: Path) -> Path:
     return path
 
 
-def test_frozen_constants_equal_the_committed_artifacts(tmp_path):
+def test_frozen_constants_equal_the_committed_artifacts(tmp_path, phase5_pre_establishment):
     import hashlib
 
     def sha(rel):
         return hashlib.sha256((REPO_ROOT / rel).read_bytes()).hexdigest()
 
-    assert sha("artifacts/phase5_receipt_registry.jsonl") == rd.EXPECTED_REGISTRY_SHA256
+    # the registry pin is the pre-establishment file, which is exactly the
+    # committed registry's first four lines (pure append on 2026-10-18)
+    pre = phase5_pre_establishment.path("artifacts/phase5_receipt_registry.jsonl")
+    assert hashlib.sha256(pre.read_bytes()).hexdigest() == rd.EXPECTED_REGISTRY_SHA256
     assert sha("artifacts/phase5_a8_model_binding.json") == rd.EXPECTED_A8_BINDING_SHA256
     assert sha("artifacts/phase5_execution_envelope.json") == rd.EXPECTED_ENVELOPE_ID
     view = _committed_genesis_view(tmp_path)
@@ -999,6 +1002,13 @@ def test_quality_allowlist_hunk_hashes_equal_the_reviewed_git_diffs():
 # ======================================================================
 
 script = _load_script()
+
+
+@pytest.fixture(autouse=True)
+def _pre_establishment_registry_and_ledger(monkeypatch, phase5_pre_establishment):
+    """The B6-3 readiness tooling describes the world before the 2026-10-18
+    replacement-receipt establishment."""
+    phase5_pre_establishment.patch_readiness(monkeypatch, script, _FakeSources)
 RUNNER_TEXT = (REPO_ROOT / "scripts" / "run_phase5_official_gate.py").read_text(encoding="utf-8")
 COMMON_TEXT = (REPO_ROOT / "scripts" / "_phase5_common.py").read_text(encoding="utf-8")
 

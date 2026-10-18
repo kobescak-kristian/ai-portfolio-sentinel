@@ -77,7 +77,10 @@ def _genesis_view(tmp_dir: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _genesis_only_latch_and_pinned_hunks(monkeypatch, tmp_path_factory):
+def _genesis_only_latch_and_pinned_hunks(monkeypatch, tmp_path_factory, phase5_pre_establishment):
+    # the registry and cost ledger as they stood before the 2026-10-18
+    # replacement-receipt establishment (the world this tooling describes)
+    phase5_pre_establishment.patch_readiness(monkeypatch, script.b63, script.Sources, FakeSources)
     view = _genesis_view(tmp_path_factory.mktemp("latch"))
     original = script.b63.latch_facts_local
 
