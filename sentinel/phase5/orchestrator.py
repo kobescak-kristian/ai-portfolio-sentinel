@@ -143,7 +143,8 @@ def resolve_owned_slot(window: QualificationWindowRecord, created_at: datetime):
 
 
 def discover_active_window(
-    client: GithubEvidenceClient, ctx: GithubActionsContext, work_trusted_root: Path, work_root: Path
+    client: GithubEvidenceClient, ctx: GithubActionsContext, work_trusted_root: Path, work_root: Path,
+    *, require_expected_source: bool = True,
 ) -> tuple[ActiveWindowCandidate, Phase5ControlState, dict[str, ValidatedBundle]]:
     refs = client.list_artifacts(artifact_names.GENESIS_PREFIX)
     candidates: list[ActiveWindowCandidate] = []
@@ -165,6 +166,7 @@ def discover_active_window(
         expected_ref=FROZEN_REF,
         expected_cron=FROZEN_CRON,
         expected_scheduled_workflow_identity=SCHEDULED_WORKFLOW_IDENTITY,
+        require_expected_source=require_expected_source,
     )
     genesis_state = validated_by_identity[tip.genesis_artifact_identity].control_state
     return tip, genesis_state, validated_by_identity

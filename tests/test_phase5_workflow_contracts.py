@@ -34,6 +34,7 @@ EXPECTED_FILES = {
     "sentinel-kill-rehearsal.yml",
     "sentinel-timing-rehearsal.yml",
     "sentinel-latch-read-probe.yml",
+    "sentinel-publication-rehearsal.yml",
     "kos-controls.yml",
 }
 
@@ -56,6 +57,10 @@ P5_WORKFLOWS = {
     # Stage 2C-B6-3a: the model-free durable-latch GitHub-read probe. Same
     # read permissions as the official gate, no id-token.
     "sentinel-latch-read-probe.yml": {"timeout": 10, "concurrency": "sentinel-latch-read-probe", "id_token": False},
+    # P5-E slot-1 recovery (T4): the model-free publication rehearsal.
+    "sentinel-publication-rehearsal.yml": {
+        "timeout": 5, "concurrency": "sentinel-publication-rehearsal", "id_token": False,
+    },
 }
 
 
@@ -95,7 +100,7 @@ def test_schedule_workflow_runner_is_pinned_to_ubuntu_24_04():
 @pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-wif-probe.yml",
                                    "sentinel-official-gate.yml", "sentinel-window-control.yml",
                                    "sentinel-kill-rehearsal.yml", "sentinel-timing-rehearsal.yml",
-                                   "sentinel-latch-read-probe.yml"])
+                                   "sentinel-latch-read-probe.yml", "sentinel-publication-rehearsal.yml"])
 def test_manual_workflows_trigger_only_on_workflow_dispatch(name):
     data = _load(name)
     trigger = data[True]
@@ -104,7 +109,8 @@ def test_manual_workflows_trigger_only_on_workflow_dispatch(name):
 
 @pytest.mark.parametrize("name", ["sentinel-rehearsal.yml", "sentinel-wif-probe.yml",
                                    "sentinel-official-gate.yml", "sentinel-kill-rehearsal.yml",
-                                   "sentinel-timing-rehearsal.yml", "sentinel-latch-read-probe.yml"])
+                                   "sentinel-timing-rehearsal.yml", "sentinel-latch-read-probe.yml",
+                                   "sentinel-publication-rehearsal.yml"])
 def test_manual_workflows_declare_required_expected_source_sha_input(name):
     data = _load(name)
     inputs = data[True]["workflow_dispatch"]["inputs"]
@@ -244,7 +250,7 @@ def test_official_gate_marker_artifact_name_is_the_replacement_canonical_name():
 
 @pytest.mark.parametrize(
     "name", ["sentinel-rehearsal.yml", "sentinel-window-control.yml", "sentinel-kill-rehearsal.yml",
-             "sentinel-latch-read-probe.yml"]
+             "sentinel-latch-read-probe.yml", "sentinel-publication-rehearsal.yml"]
 )
 def test_model_free_workflows_have_no_anthropic_env(name):
     text = (WORKFLOWS_DIR / name).read_text(encoding="utf-8")
@@ -279,6 +285,15 @@ OFFICIAL_GATE_PUBLICATION_IF = (
 )
 
 
+# P5-E slot-1 recovery (E1): the scheduled lane's evidence upload is skipped
+# when only a bundle was staged, so it can no longer fail first and skip the
+# required bundle upload; the publication rehearsal carries the same steps.
+SCHEDULE_EVIDENCE_IF = (
+    "always() && (steps.orchestrate.outputs.evidence_name != '' "
+    "|| steps.orchestrate.outputs.bundle_name == '')"
+)
+
+
 @pytest.mark.parametrize("name", list(P5_WORKFLOWS))
 def test_upload_steps_carry_retention_and_evidence_uploads_are_always(name):
     data = _load(name)
@@ -289,6 +304,8 @@ def test_upload_steps_carry_retention_and_evidence_uploads_are_always(name):
             if "evidence" in step["name"].lower() or "attempt" in step["name"].lower():
                 if name == "sentinel-official-gate.yml":
                     assert step.get("if") == OFFICIAL_GATE_PUBLICATION_IF
+                elif name in ("sentinel-schedule.yml", "sentinel-publication-rehearsal.yml"):
+                    assert step.get("if") == SCHEDULE_EVIDENCE_IF
                 else:
                     assert step.get("if") == "always()"
 
@@ -858,3 +875,60 @@ def test_probe_trigger_is_dispatch_only_with_no_schedule_push_or_pr():
 
 def test_probe_driver_exists():
     assert (Path("scripts") / "run_phase5_latch_read_probe.py").exists()
+
+
+# =====================================================================
+# P5-E slot-1 recovery (T4): the model-free publication rehearsal runs the
+# scheduled lane's exact upload steps on real GitHub.
+# =====================================================================
+
+PUBLICATION_CASES = ["bundle_only", "evidence_only", "failure_with_evidence", "nothing_staged", "bundle_missing"]
+
+
+def _publication_steps() -> list:
+    return next(iter(_load("sentinel-publication-rehearsal.yml")["jobs"].values()))["steps"]
+
+
+def test_publication_rehearsal_upload_steps_are_identical_to_the_scheduled_lane():
+    scheduled = next(iter(_load("sentinel-schedule.yml")["jobs"].values()))["steps"]
+    upload_names = ("upload attempt evidence", "upload successor or refusal bundle")
+    sched = [s for s in scheduled if s.get("name") in upload_names]
+    rehearsal = [s for s in _publication_steps() if s.get("name") in upload_names]
+    assert len(sched) == 2 and rehearsal == sched
+
+
+def test_publication_rehearsal_steps_are_the_stub_then_the_two_uploads():
+    steps = _publication_steps()
+    assert [s.get("name") for s in steps] == [
+        "orchestrate", "upload attempt evidence", "upload successor or refusal bundle",
+    ]
+    assert steps[0]["id"] == "orchestrate"
+    assert _load("sentinel-publication-rehearsal.yml")["jobs"]["rehearsal"]["runs-on"] == "ubuntu-24.04"
+
+
+def test_publication_rehearsal_cases_are_exact():
+    inputs = _load("sentinel-publication-rehearsal.yml")[True]["workflow_dispatch"]["inputs"]
+    assert inputs["case"]["type"] == "choice"
+    assert inputs["case"]["options"] == PUBLICATION_CASES
+    stub = _publication_steps()[0]["run"]
+    for case in PUBLICATION_CASES:
+        assert f"{case})" in stub
+
+
+def test_publication_rehearsal_stub_is_model_free_and_names_cannot_collide_with_discovery():
+    from sentinel.phase5 import artifact_names
+
+    text = (WORKFLOWS_DIR / "sentinel-publication-rehearsal.yml").read_text(encoding="utf-8")
+    for banned in ("python", "ANTHROPIC_", "id-token", "secrets.", "vars.", "actions/checkout"):
+        assert banned not in text
+    stub = _publication_steps()[0]["run"]
+    names = re.findall(r"(?:evidence|bundle)_name=(\S+)", stub)
+    assert names and all(n.startswith("sentinel-p5-pubrehearsal-") for n in names)
+    prefixes = (
+        artifact_names.GENESIS_PREFIX, artifact_names.ONESHOT_PREFIX, artifact_names.PROBE_EVIDENCE_PREFIX,
+        artifact_names.GATE_EVIDENCE_PREFIX, "sentinel-p5-slot-", "sentinel-p5-refusal-",
+        "sentinel-p5-prewindow-", "sentinel-p5-attempt-",
+    )
+    for name in names:
+        assert not name.startswith(prefixes)
+    assert set(re.findall(r"(\w+)_(?:name|path)=", stub)) == {"evidence", "bundle"}

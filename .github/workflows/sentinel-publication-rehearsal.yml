@@ -1,0 +1,91 @@
+name: sentinel-publication-rehearsal
+
+# P5-E slot-1 recovery (T4): model-free, real-GitHub check of the scheduled
+# lane's two upload steps. "orchestrate" here is a stub that emits the same
+# four outputs as scripts/run_phase5_scheduled.py for one chosen artifact
+# shape; the two upload steps are identical to sentinel-schedule.yml's
+# (enforced by tests/test_phase5_workflow_contracts.py). No checkout, no
+# Python, no credential; artifact names match no Phase-5 discovery prefix.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: "Exact 40-lowercase-hex commit SHA this rehearsal must run at"
+        required: true
+      case:
+        description: "Artifact shape the stub stages"
+        required: true
+        type: choice
+        options:
+          - bundle_only
+          - evidence_only
+          - failure_with_evidence
+          - nothing_staged
+          - bundle_missing
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: sentinel-publication-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  rehearsal:
+    if: github.repository == 'kobescak-kristian/ai-portfolio-sentinel'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: orchestrate
+        id: orchestrate
+        env:
+          CASE: ${{ inputs.case }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          WORK: ${{ runner.temp }}/p5-publication
+        run: |
+          echo "PUBLICATION_REHEARSAL case=$CASE sha=$GITHUB_SHA expected=$EXPECTED_SOURCE_SHA"
+          if [ "$GITHUB_SHA" != "$EXPECTED_SOURCE_SHA" ]; then echo "SOURCE_SHA_MISMATCH"; exit 2; fi
+          mkdir -p "$WORK/slot-out"
+          suffix="r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+          stage_evidence() {
+            echo '{"rehearsal": true}' > "$WORK/attempt_evidence.json"
+            echo "evidence_name=sentinel-p5-pubrehearsal-evidence-$suffix" >> "$GITHUB_OUTPUT"
+            echo "evidence_path=$WORK/attempt_evidence.json" >> "$GITHUB_OUTPUT"
+          }
+          stage_bundle() {
+            echo '{"rehearsal": true}' > "$WORK/slot-out/manifest.json"
+            echo "bundle_name=sentinel-p5-pubrehearsal-bundle-$suffix" >> "$GITHUB_OUTPUT"
+            echo "bundle_path=$WORK/slot-out" >> "$GITHUB_OUTPUT"
+          }
+          case "$CASE" in
+            bundle_only) stage_bundle ;;
+            evidence_only) stage_evidence ;;
+            failure_with_evidence) stage_evidence; exit 1 ;;
+            nothing_staged) ;;
+            bundle_missing)
+              echo "bundle_name=sentinel-p5-pubrehearsal-bundle-$suffix" >> "$GITHUB_OUTPUT"
+              echo "bundle_path=$WORK/never-built" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "UNKNOWN_CASE"; exit 2 ;;
+          esac
+      # Evidence is optional when the run staged a successor or refusal
+      # bundle (S06/S17 stage the bundle only); with neither output set the
+      # step still runs and fails on the empty path, so an exit-0 run that
+      # staged nothing stays a failed job (P5-E slot-1 recovery, E1).
+      - name: upload attempt evidence
+        if: always() && (steps.orchestrate.outputs.evidence_name != '' || steps.orchestrate.outputs.bundle_name == '')
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ steps.orchestrate.outputs.evidence_name }}
+          path: ${{ steps.orchestrate.outputs.evidence_path }}
+          retention-days: 90
+          if-no-files-found: error
+      - name: upload successor or refusal bundle
+        if: steps.orchestrate.outputs.bundle_name != ''
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ steps.orchestrate.outputs.bundle_name }}
+          path: ${{ steps.orchestrate.outputs.bundle_path }}
+          retention-days: 90
+          if-no-files-found: error

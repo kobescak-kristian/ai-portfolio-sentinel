@@ -202,7 +202,11 @@ Before slot 1, a machine-readable qualification record freezes:
 - qualifying run mode;
 - the 120-minute qualification tolerance. *(Superseded by the
   daily-slot amendment at the end of this section: the record freezes
-  timing rule `DAILY_SLOT` and five pre-window observations instead.)*
+  timing rule `DAILY_SLOT` and five pre-window observations instead. The
+  five pre-window observations are in turn withdrawn by the 2026-10-26
+  amendment for every window frozen after it: those are schema-version-3
+  records with no pre-window observations. Version-2 records, such as
+  `p5w-40148573833`, keep them.)*
 
 No push to `main` is allowed while that five-slot qualification window
 is active.
@@ -279,6 +283,11 @@ for each closed interval exactly one valid invocation of the frozen
 scheduled workflow must exist, and five closed pre-window intervals
 must show this at the exact SHA to be frozen before any window is
 frozen; the 120-minute tolerance is withdrawn.
+*(The five-interval pre-freeze requirement in this decision is
+superseded, for every window frozen after it, by the 2026-10-26
+amendment below, which governs new schema-version-3 windows. It stays as
+written for the record and still describes the version-2 window
+`p5w-40148573833`. The daily-interval timing rule itself is unchanged.)*
 
 **A. Trigger and evidence.** Stop condition "current GitHub or Anthropic
 platform semantics invalidate a binding assumption in this ADR" (see
@@ -344,6 +353,9 @@ interval are counted. The five observations (interval start, run id,
 `head_sha`, `created_at`, conclusion) are frozen inside the hashed
 window record, so the proof is durable without a later commit.
 Earliest freeze = the last push to `main` plus five closed intervals.
+*(Item D is superseded, for every window frozen after it, by the
+2026-10-26 amendment below, which governs new schema-version-3 windows;
+it stays as written for the record.)*
 
 **E. Claim consequence.** Phase 5 may claim one unattended scheduled
 execution per daily interval (daily cadence). It never claims punctual
@@ -391,6 +403,175 @@ E shrinks with it.
 `schedule` events; if any closed interval of the scheduled workflow
 shows no invocation or more than one in two of any ten consecutive
 intervals; or if any observed delay reaches 1440 minutes.
+
+#### Amendment (2026-10-26): replacement-window pre-freeze evidence
+
+**Status.** Accepted by the owner 2026-10-28 after the T2 gates: two
+independent second-model reviews from raw materials (2026-10-26, the
+second on this zero-interval text: ACCEPT WITH CHANGES, all changes
+applied) and the overnight gate. Prospective: it governs the
+replacement window and every window frozen after it.
+
+**Decision.** For any qualification window frozen after this amendment,
+the five closed pre-window daily intervals of the 2026-10-17 amendment
+item D are withdrawn and not replaced by any shorter interval requirement.
+Instead, a real-GitHub, model-free artifact-publication rehearsal (T4) at
+exactly the SHA to be frozen must pass and be independently verified
+before the owner's freeze GO. The five prospective live qualification
+slots and every acceptance predicate are unchanged.
+
+**A. Trigger and evidence.** Stop condition "a source/workflow change is
+needed during an active five-slot window" (Reopening / stop conditions).
+REAL operational evidence, read 2026-10-25/26 from the GitHub REST API and
+the job log; no synthetic fixture involved. Window `p5w-40148573833`
+(window record `created_at_utc` 2026-10-25T00:55:38Z; control run
+`40148573833`, created 2026-10-25T00:55:20Z; source
+`91827b8e25de6aa3b4f33df7b9d9f425a17b8bf5`). Slot-1 invocation
+`40191045830` (event `schedule`, attempt 1, created
+2026-10-25T11:57:46Z): step `orchestrate` success; step `upload attempt
+evidence` failure, "Input required and not supplied: path"; step `upload
+successor or refusal bundle` skipped; zero artifacts. Cause (code): the
+S06 refusal and S17 success paths stage only a bundle, so the evidence
+output was empty, the unconditional evidence upload failed, and the bundle
+upload (implicit `success()`) was skipped. The Sentinel terminal outcome,
+qualification classification and cost of that invocation are NOT
+established by any surviving evidence. The `orchestrate` step ran 8 min
+16 s (log 11:57:58Z to 12:06:14Z) and printed nothing. The GENESIS state
+(DAILY, EUR 2.14 accounted) rules out the S06 refusal. The duration is
+therefore consistent with a paid live run (inference, not evidence), and
+that run's CostRow was lost with the runner. The missing CostRow does not
+make that spend zero or irrelevant: accounted trailing-30-day spend may
+understate real spend by about one Haiku run (start limit 750,000
+micro-EUR; honest overshoot possible). The readiness review for the
+replacement window checks Console usage for 2026-10-25, discloses the
+result, and evaluates §6 headroom conservatively, counting that run at
+the higher of its 750,000 micro-EUR start limit and the Console figure.
+Owner ruling 2026-10-26: the window
+FAILED at slot 1 and cannot qualify; `sentinel-schedule.yml` was disabled
+as containment (REST `actions/workflows/{id}` state `disabled_manually`,
+`updated_at` 2026-10-26T01:21:47Z).
+
+The five pre-window intervals before that window (2026-10-19 to
+2026-10-23, all clean) exercised only the no-window early exit
+(`NO_ACTIVE_WINDOW`), which stages evidence and no bundle. They could not
+reach the failing path and did not detect it; they proved scheduler
+cadence at the frozen SHA, their only stated purpose.
+
+**B. The rule.**
+1. *No pre-window interval requirement.* The freeze no longer reads the
+   scheduled workflow's run listing. New window records are
+   `QualificationWindowRecord` `schema_version` 3 with no
+   `prewindow_observations`. Version-2 records (including
+   `p5w-40148573833`) remain valid and are read unchanged.
+2. *Publication rehearsal (T4).* `.github/workflows/sentinel-publication-rehearsal.yml`
+   is dispatched once per case on `main` at exactly the SHA to be frozen,
+   with `expected_source_sha` equal to it, `run_attempt` 1. A case PASSES
+   only when the run's `head_sha` is that SHA and its step conclusions,
+   run conclusion and artifacts are exactly:
+
+   | Case | orchestrate | evidence upload | bundle upload | Run | Artifacts |
+   |---|---|---|---|---|---|
+   | `bundle_only` | success | skipped | success | success | 1 bundle |
+   | `evidence_only` | success | success | skipped | success | 1 evidence |
+   | `failure_with_evidence` | failure | success | skipped | failure | 1 evidence |
+   | `nothing_staged` | success | failure | skipped | failure | 0 |
+   | `bundle_missing` | success | skipped | failure | failure | 0 |
+
+   A negative case passes only by failing at the step shown; any other
+   failure (for example `SOURCE_SHA_MISMATCH` in `orchestrate`) is a FAIL.
+   `nothing_staged` and `bundle_missing` are told apart only by step
+   conclusions, so verification reads the jobs API. The rehearsal's two
+   upload steps are identical to the scheduled workflow's (repository
+   contract test); its artifact names match no Phase-5 discovery prefix;
+   it is model-free and uses no credential. It is never a qualifying,
+   pre-window or interval-relevant invocation (2026-10-17 ruling D4).
+3. *Binding (reviewed, not hashed).* T4 evidence is NOT frozen in the
+   window record. Before the owner's freeze GO, an independent second
+   reader verifies every case in item 2 from the REST API (run, jobs and
+   artifacts endpoints) and records each run ID, `head_sha`,
+   `head_branch` (must be `main`), `event` (must be `workflow_dispatch`),
+   `run_attempt` (must be 1), step conclusions, run conclusion and
+   artifact names. The GitHub run records
+   are the primary evidence. Because any commit to `main` would change the
+   SHA to be frozen, that record lands in `STATE.md` in the first allowed
+   commit window after the window ends (the same deferral already used for
+   the provider-side owner actions and the freeze record). A push to
+   `main` after T4 and before the freeze voids T4; it must be rerun at the
+   new SHA.
+4. *Re-enable order.* `sentinel-schedule.yml` stays disabled through the
+   merge of the repair, the T4 rehearsal and its verification, and the
+   readiness review. It is re-enabled only on an explicit owner
+   authorization, and never while `main` is
+   `91827b8e25de6aa3b4f33df7b9d9f425a17b8bf5`: at that SHA a slot-2..5
+   invocation restores GENESIS (the missing slot 1 leaves the
+   qualification frontier at GENESIS) and reaches the paid model path
+   before the predecessor check fails. The replacement freeze is then
+   completed and its GENESIS verified before slot 1 opens. If too little
+   time remains before the next 06:37 UTC, slot 1 is the following day's
+   06:37 UTC. If the freeze fails after the re-enable, the workflow is
+   disabled again and the failure is reported to the owner before any
+   further step. No scheduled invocation is required or awaited before
+   the freeze (item 1).
+5. *Replacement lineage.* The replacement window names
+   `p5w-40148573833` in `supersedes_window_id` with its record hash.
+
+Earliest freeze = the repair and this amendment on `main`, T4 passed and
+verified at that SHA, and the remaining readiness review complete.
+
+**C. Assurance lost (disclosed).** Relative to the 2026-10-17 rule:
+- ANY pre-freeze evidence that the scheduler fires at the exact frozen
+  SHA. The first scheduled invocation at that SHA may be slot 1 itself.
+  If GitHub does not schedule the re-enabled workflow at that SHA, slot 1
+  is `MISSING_LOST` and the window fails; this is discovered only after
+  the freeze.
+- Evidence that the re-enable of `sentinel-schedule.yml` (disabled
+  2026-10-26) took effect before slot 1. The readiness review can read the
+  workflow `state` (`active`), but not that a scheduled run will be
+  created.
+- Five daily intervals of evidence against an intermittent miss or
+  duplicate before slot 1; the 2026-10-17 ruling D1 guarantee that the
+  exact frozen source was seen scheduled; and five days for a
+  time-dependent fault (runner image, platform change) to surface before
+  slot 1.
+- Pre-freeze evidence that the no-window early-exit path works at the new
+  SHA in a real `schedule` event (T4 is `workflow_dispatch`).
+Partly offsetting history (REAL, model-free): 54 consecutive daily
+intervals 2026-08-25 to 2026-10-17 each held exactly one invocation, and
+no interval was missed across the source changes to `72bbc8f`, `91df005`,
+`de0e6f7` and `91827b8` (one invocation per interval 2026-10-13 to
+2026-10-25 in the REST listing). That history includes no disable and
+re-enable of the workflow. It is context, not a bound; a missed slot after
+this amendment is still `MISSING_LOST` and fails the window.
+
+**D. What neither the old nor the new rule proves.** The WIF exchange, the
+live caged run and successor publication in a real `schedule` event at the
+frozen SHA. The schedule federation rule accepts only `event_name =
+schedule`, and §3 authorized exactly one capability probe (consumed in
+P5-C). Slot 1 is the first proof; this amendment authorizes no probe.
+
+**E. Unchanged.** Five prospective live scheduled qualification slots;
+prospective freezing; exact source SHA, workflow identity, ref, cron and
+timezone; `DAILY_SLOT` timing (2026-10-17 items C, E, G); `event ==
+schedule`, `run_attempt == 1`; live, agent judgment, terminal, within
+budget, exactly one CostRow per qualifying run; the one-to-one chain to an
+intact successor bundle; §6 cost, cadence and headroom; no push to `main`
+while a window is active; reruns, `workflow_dispatch`, manual and
+historical runs never count; P5-G reconstruction before closure
+(2026-10-17 item H). ADR-0012 untouched.
+
+**F. Not a silent weakening.** Prospective; recorded after the failed
+window was ruled failed and before any replacement freeze; no window
+exists whose result it could rescue. It removes cadence-only evidence that
+did not exercise the failing path and adds evidence that does; the
+cadence assurance it removes is disclosed in C. The claim in 2026-10-17
+item E is unchanged.
+
+**G. Reopening.** Reopen if the first replacement window loses any slot to
+`MISSING_LOST` or `DUPLICATE_NONQUALIFYING`. A T4 case whose outcome
+differs from the table in B.2 is a failed readiness test, not a reopening
+trigger: it blocks the freeze and is investigated under the existing test
+procedure. It reopens this ADR only if the investigation shows that a
+binding assumption of this contract is invalid.
 
 ### 6. Cost and cadence contract
 

@@ -639,6 +639,69 @@ def test_window_schema_v2_required_fields(missing):
         m.QualificationWindowRecord(**data)
 
 
+# ADR-0011 §5 amendment 2026-10-26: schema version 3 freezes no pre-window
+# observations; version-2 records keep every rule above, unchanged.
+
+
+def test_window_schema_v3_freezes_no_prewindow_observations():
+    window = make_window(schema_version=3, prewindow_observations=())
+    assert window.schema_version == 3 and window.prewindow_observations == ()
+    with pytest.raises(ValidationError):
+        make_window(schema_version=3)  # the five v2 observations are refused under v3
+
+
+def test_window_schema_v2_still_requires_five_observations():
+    with pytest.raises(ValidationError):
+        make_window(schema_version=2, prewindow_observations=())
+
+
+# The frozen record of window p5w-40148573833 (GENESIS of control run
+# 40148573833), verbatim from its public artifact. Its hash binds that GENESIS
+# and the replacement window's supersession; v3 support must not change it.
+P5W_40148573833_RECORD = (
+    '{"control_run_id":"40148573833","control_workflow_identity":".github/workflows/sentinel-window-c'
+    'ontrol.yml","created_at_utc":"2026-10-25T00:55:38+00:00","cron":"37 6 * * *","disabled_at_utc":"'
+    '2026-09-23T00:32:26+00:00","dual_scheduler_verification_at_utc":"2026-10-25T00:41:17+00:00","exp'
+    'ected_slots":[{"expected_at_utc":"2026-10-25T06:37:00+00:00","slot_index":1},{"expected_at_utc":'
+    '"2026-10-26T06:37:00+00:00","slot_index":2},{"expected_at_utc":"2026-10-27T06:37:00+00:00","slot'
+    '_index":3},{"expected_at_utc":"2026-10-28T06:37:00+00:00","slot_index":4},{"expected_at_utc":"20'
+    '26-10-29T06:37:00+00:00","slot_index":5}],"final_legacy_db_sha256":"7428636b4826898be298cc6fcb9e'
+    '089957416eb480c68a8ae9b075cc5fb1a0f0","legacy_row_counts":{"agent_calls":0,"agent_tool_attempts"'
+    ':0,"findings":4,"loop_iterations":0,"loop_runs":0,"runs":40,"tasks":7938},"prewindow_observation'
+    's":[{"conclusion":"success","created_at_utc":"2026-10-19T13:54:03+00:00","event":"schedule","git'
+    'hub_run_id":"39264123179","head_sha":"91827b8e25de6aa3b4f33df7b9d9f425a17b8bf5","interval_start_'
+    'utc":"2026-10-19T06:37:00+00:00","run_attempt":1},{"conclusion":"success","created_at_utc":"2026'
+    '-10-20T12:05:55+00:00","event":"schedule","github_run_id":"39419709671","head_sha":"91827b8e25de'
+    '6aa3b4f33df7b9d9f425a17b8bf5","interval_start_utc":"2026-10-20T06:37:00+00:00","run_attempt":1},'
+    '{"conclusion":"success","created_at_utc":"2026-10-21T12:20:01+00:00","event":"schedule","github_'
+    'run_id":"39598748536","head_sha":"91827b8e25de6aa3b4f33df7b9d9f425a17b8bf5","interval_start_utc"'
+    ':"2026-10-21T06:37:00+00:00","run_attempt":1},{"conclusion":"success","created_at_utc":"2026-10-'
+    '22T12:21:26+00:00","event":"schedule","github_run_id":"39777663703","head_sha":"91827b8e25de6aa3'
+    'b4f33df7b9d9f425a17b8bf5","interval_start_utc":"2026-10-22T06:37:00+00:00","run_attempt":1},{"co'
+    'nclusion":"success","created_at_utc":"2026-10-23T12:02:50+00:00","event":"schedule","github_run_'
+    'id":"39950413652","head_sha":"91827b8e25de6aa3b4f33df7b9d9f425a17b8bf5","interval_start_utc":"20'
+    '26-10-23T06:37:00+00:00","run_attempt":1}],"qualifying_judgment_mode":"agent","qualifying_source'
+    '":"live","ref":"refs/heads/main","scheduled_workflow_identity":".github/workflows/sentinel-sched'
+    'ule.yml","schema_version":2,"source_sha":"91827b8e25de6aa3b4f33df7b9d9f425a17b8bf5","supersedes_'
+    'window_id":null,"supersedes_window_record_sha256":null,"timezone":"UTC","timing_rule":"DAILY_SLO'
+    'T","window_id":"p5w-40148573833","windows_task_name":"SentinelDailyRun"}'
+)
+P5W_40148573833_SHA256 = "44dd420231d32c444976d10ca6f765e38def64bac38c207a6a47ede1b203f6cb"
+
+
+def test_frozen_v2_record_of_the_failed_window_still_validates_with_its_hash():
+    window = m.QualificationWindowRecord.model_validate_json(P5W_40148573833_RECORD)
+    assert (window.schema_version, window.window_id) == (2, "p5w-40148573833")
+    assert len(window.prewindow_observations) == 5
+    assert m.sha256_hex_of_model(window) == P5W_40148573833_SHA256
+
+
+@pytest.mark.parametrize("version", [1, 4])
+def test_window_schema_versions_outside_2_and_3_are_refused(version):
+    with pytest.raises(ValidationError):
+        make_window(schema_version=version, prewindow_observations=())
+
+
 def _shift_obs(obs, days=0, **update):
     start = obs.interval_start_utc + timedelta(days=days)
     return obs.model_copy(

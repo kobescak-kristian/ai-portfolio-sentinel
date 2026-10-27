@@ -467,7 +467,12 @@ def select_active_window(
     expected_ref: str,
     expected_cron: str,
     expected_scheduled_workflow_identity: str,
+    require_expected_source: bool = True,
 ) -> ActiveWindowCandidate:
+    """``require_expected_source=False`` is for the window-control freeze
+    only: it must see an unsuperseded tip frozen at another source SHA so a
+    replacement GENESIS can name it in ``supersedes_window_id``. Scheduled
+    runs always keep the default."""
     by_id: dict[str, ActiveWindowCandidate] = {}
     for c in candidates:
         w, g, gid = c.window, c.genesis, c.genesis_artifact_identity
@@ -536,7 +541,7 @@ def select_active_window(
     tip = by_id[tips[0]]
     w = tip.window
     if (
-        w.source_sha != expected_source_sha
+        (require_expected_source and w.source_sha != expected_source_sha)
         or w.ref != expected_ref
         or w.cron != expected_cron
         or w.scheduled_workflow_identity != expected_scheduled_workflow_identity
