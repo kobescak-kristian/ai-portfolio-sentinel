@@ -40,8 +40,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/anthropic_identity_token
           PHASE5_WORK_ROOT: ${{ runner.temp }}/p5
+      # Evidence is optional when the run staged a successor or refusal
+      # bundle (S06/S17 stage the bundle only); with neither output set the
+      # step still runs and fails on the empty path, so an exit-0 run that
+      # staged nothing stays a failed job (P5-E slot-1 recovery, E1).
       - name: upload attempt evidence
-        if: always()
+        if: always() && (steps.orchestrate.outputs.evidence_name != '' || steps.orchestrate.outputs.bundle_name == '')
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ${{ steps.orchestrate.outputs.evidence_name }}

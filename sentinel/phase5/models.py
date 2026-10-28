@@ -185,7 +185,10 @@ class QualificationWindowRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[2]
+    # 2: five frozen pre-window observations (2026-10-17 amendment).
+    # 3: none (2026-10-26 amendment; T4 rehearsal evidence is verified at
+    # readiness, not frozen here). Version-2 records stay valid unchanged.
+    schema_version: Literal[2, 3]
     window_id: str
     created_at_utc: datetime
     control_workflow_identity: str
@@ -230,18 +233,22 @@ class QualificationWindowRecord(BaseModel):
             raise ValueError("slot 1 must be strictly prospective relative to creation")
 
         observations = self.prewindow_observations
-        if len(observations) != 5:
-            raise ValueError("a qualification window freezes exactly five pre-window observations")
-        starts = [o.interval_start_utc for o in observations]
-        for earlier, later in zip(starts, starts[1:]):
-            if later - earlier != timedelta(hours=24):
-                raise ValueError("pre-window observations must cover five consecutive daily intervals")
-        if starts[-1] + timedelta(hours=24) > self.created_at_utc:
-            raise ValueError("every pre-window interval must be closed before the window is frozen")
-        if len({o.github_run_id for o in observations}) != 5:
-            raise ValueError("pre-window observations must be five distinct invocations")
-        if any(o.head_sha != self.source_sha for o in observations):
-            raise ValueError("every pre-window observation must run at exactly the frozen source SHA")
+        if self.schema_version == 3:
+            if observations:
+                raise ValueError("a schema-version-3 window freezes no pre-window observations")
+        else:
+            if len(observations) != 5:
+                raise ValueError("a qualification window freezes exactly five pre-window observations")
+            starts = [o.interval_start_utc for o in observations]
+            for earlier, later in zip(starts, starts[1:]):
+                if later - earlier != timedelta(hours=24):
+                    raise ValueError("pre-window observations must cover five consecutive daily intervals")
+            if starts[-1] + timedelta(hours=24) > self.created_at_utc:
+                raise ValueError("every pre-window interval must be closed before the window is frozen")
+            if len({o.github_run_id for o in observations}) != 5:
+                raise ValueError("pre-window observations must be five distinct invocations")
+            if any(o.head_sha != self.source_sha for o in observations):
+                raise ValueError("every pre-window observation must run at exactly the frozen source SHA")
 
         supersedes_pair = (self.supersedes_window_id, self.supersedes_window_record_sha256)
         if (supersedes_pair[0] is None) != (supersedes_pair[1] is None):

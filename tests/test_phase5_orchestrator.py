@@ -177,6 +177,7 @@ def test_slot_not_open_makes_zero_provider_calls(tmp_path):
     assert recorder.calls == ["shutdown_oidc"]
     assert result.ledger.to_records()[-1].step_id == "S03_RESOLVE_OWNED_SLOT"
     assert result.ledger.to_records()[-1].status == "EARLY_EXIT"
+    assert [a.name for a in result.staged_artifacts] == [an.prewindow_evidence_name(RUN_ID, 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +201,7 @@ def test_wrong_event_refuses_before_any_provider_call(tmp_path):
     assert result.exit_code == 1
     assert recorder.calls == ["shutdown_oidc"]
     assert result.ledger.to_records()[-1].step_id == "S04_VALIDATE_PROVENANCE"
+    assert [a.name for a in result.staged_artifacts] == [an.attempt_evidence_name(RUN_ID, 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +261,8 @@ def test_happy_path_qualifying_run_reaches_s18_in_exact_order(tmp_path):
     ]
     slot_artifacts = [a for a in result.staged_artifacts if "slot" in a.name]
     assert len(slot_artifacts) == 1
+    # P5-E slot-1 recovery: the success path stages the bundle and nothing else
+    assert [a.name for a in result.staged_artifacts] == [an.slot_name(window.window_id, 1, RUN_ID)]
     validated = b.validate_bundle(slot_artifacts[0].path)
     assert validated.manifest.qualification_outcome == "QUALIFYING"
 
@@ -312,6 +316,7 @@ def test_cost_cadence_refusal_builds_refusal_bundle_and_makes_zero_provider_call
     assert result.ledger.to_records()[-1].status == "EARLY_EXIT"
     refusal_artifacts = [a for a in result.staged_artifacts if "refusal" in a.name]
     assert len(refusal_artifacts) == 1
+    assert [a.name for a in result.staged_artifacts] == [an.refusal_name(window.window_id, RUN_ID)]
     validated = b.validate_bundle(refusal_artifacts[0].path)
     assert validated.manifest.bundle_kind == "CONTROL_REFUSAL"
     assert validated.manifest.qualification_outcome == "COST_CADENCE_REFUSAL"
@@ -364,6 +369,7 @@ def test_failed_sentinel_run_builds_durable_failed_nonterminal_successor(tmp_pat
     assert result.exit_code == 0, [r for r in result.ledger.to_records()]
     slot_artifacts = [a for a in result.staged_artifacts if "slot" in a.name]
     assert len(slot_artifacts) == 1
+    assert [a.name for a in result.staged_artifacts] == [an.slot_name(window.window_id, 1, RUN_ID)]
     validated = b.validate_bundle(slot_artifacts[0].path)
     assert validated.manifest.qualification_outcome == "FAILED_NONTERMINAL"
     assert validated.control_state.window_consumed is True

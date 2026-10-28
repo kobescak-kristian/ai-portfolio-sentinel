@@ -406,13 +406,10 @@ def test_freeze_succeeds_and_produces_a_validate_bundle_clean_genesis(tmp_path, 
     assert len(validated.window.expected_slots) == 5
     assert validated.window.expected_slots[0].expected_at_utc.hour == 6
     assert validated.window.expected_slots[0].expected_at_utc.minute == 37
-    assert validated.window.schema_version == 2
+    assert validated.window.schema_version == 3
     assert validated.window.timing_rule == "DAILY_SLOT"
-    observations = validated.window.prewindow_observations
-    assert len(observations) == 5
-    assert all(o.head_sha == SOURCE_SHA and o.conclusion == "success" for o in observations)
-    assert observations[-1].interval_start_utc + timedelta(hours=24) <= validated.window.created_at_utc
-    assert fake_client.listed and fake_client.listed[0][0] == SCHEDULED_PATH
+    assert validated.window.prewindow_observations == ()
+    assert fake_client.listed == []
 
 
 def test_freeze_succeeds_with_honest_fail_replacement_identically(tmp_path, monkeypatch):
@@ -882,99 +879,14 @@ def test_genesis_manifest_constructible_only_via_bundle_build(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Pre-window daily-slot streak (ADR-0011 §5 daily-slot amendment, D1/D2/D4)
+# ADR-0011 §5 amendment 2026-10-26: the five-interval pre-window streak is
+# withdrawn; new windows are schema version 3 with no observations.
 # ---------------------------------------------------------------------------
 
-STREAK_NOW = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
-STREAK_STARTS = [datetime(2026, 10, d, 6, 37, 0, tzinfo=timezone.utc) for d in range(15, 20)]
 
+def test_freeze_needs_no_prewindow_streak_and_never_lists_scheduled_runs(tmp_path, monkeypatch):
+    from sentinel.phase5.bundle import validate_bundle
 
-def _good_streak():
-    return [_schedule_run(6000 + i, start + timedelta(minutes=300)) for i, start in enumerate(STREAK_STARTS)]
-
-
-def _streak(runs, now=STREAK_NOW):
-    client = _FakeClient(bundles={}, schedule_runs=runs, server_now=now)
-    return wf._verify_prewindow_daily_slot_streak(client, SOURCE_SHA, now)
-
-
-def test_streak_passes_with_five_clean_closed_intervals():
-    observations = _streak(_good_streak())
-    assert [o.interval_start_utc for o in observations] == STREAK_STARTS
-    assert [o.github_run_id for o in observations] == [str(6000 + i) for i in range(5)]
-
-
-def test_streak_accepts_any_delay_inside_the_interval():
-    runs = _good_streak()
-    runs[0] = _schedule_run(6000, STREAK_STARTS[0] + timedelta(minutes=1439, seconds=59))
-    runs[1] = _schedule_run(6001, STREAK_STARTS[1])
-    assert len(_streak(runs)) == 5
-
-
-def test_streak_ignores_the_still_open_interval():
-    runs = _good_streak() + [_schedule_run(6100, datetime(2026, 10, 20, 11, 0, 0, tzinfo=timezone.utc))]
-    assert len(_streak(runs)) == 5
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        pytest.param(lambda runs: runs.pop(2), id="missing-mid-gap"),
-        pytest.param(lambda runs: runs.pop(0), id="fewer-than-five-closed-intervals"),
-        pytest.param(lambda runs: runs.append(_schedule_run(6200, STREAK_STARTS[3] + timedelta(minutes=600))),
-                     id="duplicate"),
-        pytest.param(lambda runs: runs.append(
-            _schedule_run(6201, STREAK_STARTS[3] + timedelta(minutes=10), event="workflow_dispatch")),
-            id="stray-wrong-event-extra-run"),
-        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(6001, runs[1].created_at, run_attempt=2)),
-                     id="run-attempt-2"),
-        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(6001, runs[1].created_at, event="push")),
-                     id="wrong-event"),
-        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(
-            6001, runs[1].created_at, workflow_path=".github/workflows/other.yml")), id="wrong-path"),
-        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(6001, runs[1].created_at, head_branch="dev")),
-                     id="wrong-branch"),
-        pytest.param(lambda runs: runs.__setitem__(4, _schedule_run(6004, runs[4].created_at, sha="b" * 40)),
-                     id="wrong-head-sha-push-reset"),
-        pytest.param(lambda runs: runs.__setitem__(1, _schedule_run(6001, runs[1].created_at, conclusion="failure")),
-                     id="conclusion-failure"),
-        pytest.param(lambda runs: runs.__setitem__(
-            1, _schedule_run(6001, runs[1].created_at, status="in_progress", conclusion=None)), id="in-progress"),
-        pytest.param(lambda runs: runs.__setitem__(
-            1, _schedule_run(6001, runs[1].created_at, status="queued")), id="status-not-completed-alone"),
-        pytest.param(lambda runs: runs.__setitem__(
-            1, _schedule_run(6001, STREAK_STARTS[1] - timedelta(seconds=1))), id="created-before-interval"),
-        pytest.param(lambda runs: runs.__setitem__(
-            1, _schedule_run(6001, STREAK_STARTS[2])), id="created-at-next-interval-start"),
-    ],
-)
-def test_streak_refuses(mutate):
-    runs = _good_streak()
-    mutate(runs)
-    with pytest.raises(wf.Phase5ScriptError, match="PREWINDOW_DAILY_SLOT_STREAK_UNMET"):
-        _streak(runs)
-
-
-def test_streak_refuses_when_the_listing_is_unreadable():
-    class _Broken(_FakeClient):
-        def list_workflow_runs_counted(self, *args, **kwargs):
-            raise RuntimeError("total_count mismatch")
-
-    client = _Broken(bundles={}, server_now=STREAK_NOW)
-    with pytest.raises(wf.Phase5ScriptError, match="PREWINDOW_DAILY_SLOT_STREAK_UNMET"):
-        wf._verify_prewindow_daily_slot_streak(client, SOURCE_SHA, STREAK_NOW)
-
-
-def test_streak_closure_uses_the_earlier_of_server_time_and_now():
-    """A server clock ahead of the window's own ``now`` must not close an
-    interval that is still open at the window creation instant."""
-    runs = _good_streak()[1:] + [_schedule_run(6005, datetime(2026, 10, 20, 7, 0, 0, tzinfo=timezone.utc))]
-    client = _FakeClient(bundles={}, schedule_runs=runs, server_now=datetime(2026, 10, 21, 7, 0, 0, tzinfo=timezone.utc))
-    with pytest.raises(wf.Phase5ScriptError, match="PREWINDOW_DAILY_SLOT_STREAK_UNMET"):
-        wf._verify_prewindow_daily_slot_streak(client, SOURCE_SHA, STREAK_NOW)
-
-
-def test_freeze_refuses_without_a_prewindow_streak(tmp_path, monkeypatch):
     for key, value in ENV.items():
         monkeypatch.setenv(key, value)
     repo_root_fake = tmp_path / "repo"
@@ -983,7 +895,8 @@ def test_freeze_refuses_without_a_prewindow_streak(tmp_path, monkeypatch):
     monkeypatch.setattr(wf, "REPO_ROOT", repo_root_fake)
     receipts = _make_receipts_registry(tmp_path)
     monkeypatch.setattr(wf, "load_durable_history", lambda: receipts)
-    monkeypatch.setattr(wf, "build_evidence_client", lambda env: _FakeClient(bundles={}, schedule_runs=[]))
+    client = _FakeClient(bundles={}, schedule_runs=[])  # zero scheduled invocations anywhere
+    monkeypatch.setattr(wf, "build_evidence_client", lambda env: client)
     monkeypatch.setattr(wf, "assert_expected_source_on_disk", lambda sha: None)
 
     work_root = tmp_path / "work"
@@ -997,9 +910,12 @@ def test_freeze_refuses_without_a_prewindow_streak(tmp_path, monkeypatch):
         "--dual-scheduler-verification-at-utc", "2027-05-30T01:00:00+00:00",
         "--work-root", str(work_root),
     ])
-    assert exit_code == 1
-    assert "PREWINDOW_DAILY_SLOT_STREAK_UNMET" in (work_root / "freeze_refusal.json").read_text(encoding="utf-8")
-    assert not (work_root / "genesis-out").exists()
+    assert exit_code == 0
+    window = validate_bundle(work_root / "genesis-out").window
+    assert window.schema_version == 3
+    assert window.prewindow_observations == ()
+    assert client.listed == []
+    assert not hasattr(wf, "_verify_prewindow_daily_slot_streak")
 
 
 # ---------------------------------------------------------------------------
@@ -1039,3 +955,158 @@ def test_seam3_refuses_gate_receipt_at_q_even_when_the_marker_is_at_a(tmp_path):
     receipts = _make_receipts_registry(tmp_path, gate_source_sha=SOURCE_SHA)
     with pytest.raises(wf.Phase5ScriptError, match="do not bind the recorded replacement run"):
         _seam3(tmp_path, receipts)
+
+
+# ---------------------------------------------------------------------------
+# P5-E slot-1 recovery, E2: a replacement freeze at a new source SHA must be
+# able to supersede the prior window by name; scheduled runs keep the
+# source-SHA filter.
+# ---------------------------------------------------------------------------
+
+PRIOR_SHA = "b" * 40
+assert PRIOR_SHA != SOURCE_SHA
+
+
+def _prior_window_genesis(tmp_path: Path, *, consumed: bool = False):
+    """GENESIS of a prior window frozen at PRIOR_SHA; with ``consumed`` it
+    also carries a linked slot-1 successor that consumed the window."""
+    from sentinel.phase5 import artifact_names as an
+    from sentinel.phase5.orchestrator import SCHEDULED_WORKFLOW_IDENTITY
+    from tests.test_phase5_bundle import (
+        build_valid_bundle, make_control_state, make_genesis, make_slot_successor, make_window, slot_ts,
+    )
+
+    window = make_window(
+        window_id="p5w-prior", control_run_id="prior", source_sha=PRIOR_SHA,
+        control_workflow_identity=wf.CONTROL_WORKFLOW_IDENTITY,
+        scheduled_workflow_identity=SCHEDULED_WORKFLOW_IDENTITY,
+    )
+    genesis_src = tmp_path / "prior-genesis-src"
+    genesis_src.mkdir()
+    genesis = build_valid_bundle(
+        genesis_src, window=window,
+        manifest_fields=make_genesis(window).model_dump(exclude={"carried_files"}),
+        control_state=make_control_state(window),
+    )
+    genesis_name = an.genesis_name(window.window_id, window.control_run_id)
+    bundles = {genesis_name: genesis.root}
+    if consumed:
+        # _FakeClient ids are positions in the sorted name list: GENESIS sorts first.
+        successor = make_slot_successor(
+            window, 1, predecessor_identity=f"{genesis_name}::0", predecessor_manifest=genesis.manifest,
+            qualification_outcome="FAILED_NONTERMINAL", window_consumed=True,
+        )
+        slot_src = tmp_path / "prior-slot-src"
+        slot_src.mkdir()
+        slot = build_valid_bundle(
+            slot_src, window=window, manifest_fields=successor.model_dump(exclude={"carried_files"}),
+            control_state=make_control_state(
+                window, slot_index=1, window_consumed=True, window_consume_reason="FAILED_NONTERMINAL",
+                evaluated_at=slot_ts(1),
+            ),
+        )
+        bundles[an.slot_name(window.window_id, 1, "prior-slot-run")] = slot.root
+    return window, bundles
+
+
+def _freeze_over_prior(tmp_path, monkeypatch, bundles, *extra_args):
+    for key, value in ENV.items():
+        monkeypatch.setenv(key, value)
+    repo_root_fake = tmp_path / "repo"
+    (repo_root_fake / "telemetry").mkdir(parents=True)
+    (repo_root_fake / "telemetry" / "cost_ledger.jsonl").write_text("", encoding="utf-8")
+    monkeypatch.setattr(wf, "REPO_ROOT", repo_root_fake)
+    receipts = _make_receipts_registry(tmp_path)
+    monkeypatch.setattr(wf, "load_durable_history", lambda: receipts)
+    monkeypatch.setattr(wf, "build_evidence_client", lambda env: _FakeClient(bundles=bundles))
+    monkeypatch.setattr(wf, "assert_expected_source_on_disk", lambda sha: None)
+    work_root = tmp_path / "work"
+    exit_code = wf.main([
+        "--expected-source-sha", SOURCE_SHA,
+        "--first-slot-date", "2027-06-01",
+        "--windows-task-name", "SentinelDailyRun",
+        "--disabled-at-utc", "2027-05-30T00:00:00+00:00",
+        "--final-legacy-db-sha256", "c" * 64,
+        "--legacy-row-counts", VALID_ROW_COUNTS,
+        "--dual-scheduler-verification-at-utc", "2027-05-30T01:00:00+00:00",
+        "--work-root", str(work_root),
+        *extra_args,
+    ])
+    return exit_code, work_root
+
+
+def _refusal_reason(work_root: Path) -> str:
+    import json
+
+    return json.loads((work_root / "freeze_refusal.json").read_text(encoding="utf-8"))["reason"]
+
+
+def test_freeze_at_a_new_sha_supersedes_the_unconsumed_prior_window_by_name(tmp_path, monkeypatch):
+    from sentinel.phase5 import bundle as b
+    from sentinel.phase5.bundle import ActiveWindowCandidate, validate_bundle
+    from sentinel.phase5.models import sha256_hex_of_model
+    from sentinel.phase5.orchestrator import FROZEN_CRON, FROZEN_REF, SCHEDULED_WORKFLOW_IDENTITY
+
+    prior, bundles = _prior_window_genesis(tmp_path)
+    exit_code, work_root = _freeze_over_prior(tmp_path, monkeypatch, bundles, "--supersedes", prior.window_id)
+
+    assert exit_code == 0, _refusal_reason(work_root) if (work_root / "freeze_refusal.json").exists() else ""
+    new = validate_bundle(work_root / "genesis-out")
+    assert new.window.source_sha == SOURCE_SHA
+    assert (prior.schema_version, new.window.schema_version) == (2, 3)  # v3 replacement over a v2 window
+    assert new.window.supersedes_window_id == prior.window_id
+    assert new.window.supersedes_window_record_sha256 == sha256_hex_of_model(prior)
+
+    # The first scheduled run at the new SHA selects the replacement, unambiguously.
+    prior_validated = validate_bundle(next(iter(bundles.values())))
+    candidates = [
+        ActiveWindowCandidate(window=prior_validated.window, genesis=prior_validated.manifest,
+                              genesis_artifact_identity="prior-genesis"),
+        ActiveWindowCandidate(window=new.window, genesis=new.manifest, genesis_artifact_identity="new-genesis"),
+    ]
+    tip = b.select_active_window(
+        candidates, expected_source_sha=SOURCE_SHA, expected_ref=FROZEN_REF, expected_cron=FROZEN_CRON,
+        expected_scheduled_workflow_identity=SCHEDULED_WORKFLOW_IDENTITY,
+    )
+    assert tip.window.window_id == new.window.window_id
+
+
+def test_freeze_at_a_new_sha_without_supersedes_refuses_while_the_prior_window_is_unconsumed(tmp_path, monkeypatch):
+    _, bundles = _prior_window_genesis(tmp_path)
+    exit_code, work_root = _freeze_over_prior(tmp_path, monkeypatch, bundles)
+    assert exit_code == 1
+    assert _refusal_reason(work_root) == "ACTIVE_WINDOW_INTACT"
+    assert not (work_root / "genesis-out").exists()
+
+
+def test_freeze_naming_the_wrong_prior_window_refuses(tmp_path, monkeypatch):
+    _, bundles = _prior_window_genesis(tmp_path)
+    exit_code, work_root = _freeze_over_prior(tmp_path, monkeypatch, bundles, "--supersedes", "p5w-other")
+    assert exit_code == 1
+    assert _refusal_reason(work_root) == "ACTIVE_WINDOW_INTACT"
+
+
+def test_freeze_over_a_consumed_prior_window_still_requires_naming_it(tmp_path, monkeypatch):
+    """A consumed window is still an unsuperseded tip to select_active_window,
+    so a replacement that does not name it would leave two tips."""
+    _, bundles = _prior_window_genesis(tmp_path, consumed=True)
+    exit_code, work_root = _freeze_over_prior(tmp_path, monkeypatch, bundles)
+    assert exit_code == 1
+    assert _refusal_reason(work_root) == "SUPERSEDES_REQUIRED"
+
+
+def test_scheduled_discovery_keeps_the_source_sha_filter(tmp_path):
+    """Runtime validation is unchanged: a scheduled run at the new SHA never
+    adopts a window frozen at another SHA; only the freeze opts out."""
+    from sentinel.phase5 import bundle as b
+    from sentinel.phase5.bundle import ActiveWindowCandidate, validate_bundle
+    from sentinel.phase5.orchestrator import FROZEN_CRON, FROZEN_REF, SCHEDULED_WORKFLOW_IDENTITY
+
+    _, bundles = _prior_window_genesis(tmp_path)
+    prior = validate_bundle(next(iter(bundles.values())))
+    candidates = [ActiveWindowCandidate(window=prior.window, genesis=prior.manifest, genesis_artifact_identity="g")]
+    kwargs = dict(expected_source_sha=SOURCE_SHA, expected_ref=FROZEN_REF, expected_cron=FROZEN_CRON,
+                  expected_scheduled_workflow_identity=SCHEDULED_WORKFLOW_IDENTITY)
+    with pytest.raises(b.NoActiveWindow):
+        b.select_active_window(candidates, **kwargs)
+    assert b.select_active_window(candidates, **kwargs, require_expected_source=False).window.source_sha == PRIOR_SHA

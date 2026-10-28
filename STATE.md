@@ -7685,6 +7685,188 @@ merges every change."
   federation rule and variable, Windows disabled-at ruling, merged-branch
   deletion); then five closed daily intervals at Q with no push to main.
 
+- 2026-10-28 - P5-E: FIRST QUALIFICATION WINDOW FROZEN AND FAILED AT SLOT 1;
+  RECOVERY REPAIR AND ADR-0011 AMENDMENT (ZERO PRE-FREEZE INTERVALS)
+  RECORDED (one commit; owner merge pending). **No replacement window
+  frozen. `sentinel-schedule.yml` disabled. P5-G NOT implemented.**
+  Covers 2026-10-18 to 2026-10-28; every commit to `main` in that period
+  was forbidden, so this is the first allowed commit window.
+  OWNER ACTIONS, PROVIDER AND GITHUB SIDE (2026-10-18; no push). Anthropic
+  federation rule `sentinel-schedule`, ID `fdrl_01JFsGiY8kWB6hK2LKZygHpo`,
+  created; owner-reported Console readback 19 of 19 PASS against
+  `FROZEN_RULE_EXPECTATION` with `event_name = schedule` and
+  `workflow_ref` `.../sentinel-schedule.yml@refs/heads/main`: Static, issuer
+  `github-actions` with JTI replay protection, service account
+  `sentinel-github`, workspace `sentinel` only, scope
+  `workspace:developer`, lifetime 600 s, audience
+  `https://api.anthropic.com`, subject prefix
+  `repo:kobescak-kristian/ai-portfolio-sentinel:ref:refs/heads/main`,
+  exactly four claims, no condition, zero authentication events. Variable
+  `SENTINEL_SCHEDULE_FEDERATION_RULE_ID` set; `gh variable get` returned
+  exactly that ID; 7 variables; OIDC subject customization
+  `use_default: true`, `use_immutable_subject: false` (re-read
+  2026-10-25: rule unchanged, zero authentication attempts in the
+  Console's maximum 7-day range).
+  PRE-FREEZE STREAK AT Q (REAL scheduler observations, model-free). Q =
+  `91827b8e25de6aa3b4f33df7b9d9f425a17b8bf5`. One `schedule` invocation,
+  attempt 1, `success`, branch `main`, head Q, in each interval starting
+  2026-10-18 to 2026-10-24: runs `39124145024`, `39264123179`,
+  `39419709671`, `39598748536`, `39777663703`, `39950413652`,
+  `40090444009`.
+  READINESS (2026-10-24/25). `origin/main` == HEAD == Q, clean. Windows
+  task `SentinelDailyRun` (folder `\Sentinel\`) Disabled, `Enabled=False`,
+  last run 2026-09-22T12:45:25Z result 0; no other Windows or Claude
+  scheduled task can compete. Legacy DB `var/sentinel.sqlite3`
+  (read-only, unchanged since 2026-09-22T12:47:56Z, empty WAL) SHA-256
+  `7428636b4826898be298cc6fcb9e089957416eb480c68a8ae9b075cc5fb1a0f0`; rows
+  runs 40, tasks 7938, findings 4, agent_calls 0, agent_tool_attempts 0,
+  loop_runs 0, loop_iterations 0. Owner ruling (ADR-0011 §8): the
+  2026-09-22 temporary B5 hold is the permanent Windows-to-Actions
+  disable; the task stays disabled and is not deleted; `disabled_at_utc`
+  = 2026-09-23T00:32:26Z, the GitHub-attested push
+  (`20e6142..4a9f59e`) that first put the disable record `4adaaf1` on
+  `main` (local-clock context only: task definition written
+  2026-09-22T23:31:26Z, `4adaaf1` authored 23:32:51Z). Trailing-30-day
+  accounted spend 2,135,191 micro-EUR (committed ledger, 44 rows);
+  + 5 x 750,000 = 5,885,191 <= 40,000,000: §6 headroom PASS. Provider,
+  owner-reported Console readback: `sentinel` workspace cap USD 9.00,
+  month-to-date USD 1.03, reset 2026-11-01 UTC; prepaid credit USD 5.33,
+  promotional credit USD 67.66, auto-reload off; organization cap USD
+  1,000 with an owner attestation of more than USD 5 remaining (the exact
+  organization month-to-date figure is deliberately not recorded).
+  Five-run exposure EUR 3.75 = USD 4.20 at ECB 1.1193 (reference date
+  2026-10-23). `claude-haiku-4-5-20251001` Active on the provider's
+  model-deprecations page (read 2026-10-24).
+  FREEZE (owner GO). Owner-dispatched `sentinel-window-control.yml` run
+  `40148573833` (2026-10-25T00:55:20Z) success; GENESIS artifact
+  `sentinel-p5-genesis-p5w-40148573833-r40148573833`; window
+  `p5w-40148573833`, `schema_version` 2, record `created_at_utc`
+  2026-10-25T00:55:38Z, record SHA-256
+  `44dd420231d32c444976d10ca6f765e38def64bac38c207a6a47ede1b203f6cb`,
+  manifest SHA-256
+  `d9e09e0a9861046e1904b966ba34c83e6e032d37c36cd8587b663be8e7f8989f`;
+  slots 2026-10-25 to 2026-10-29 at 06:37 UTC; pre-window observations
+  for the intervals 2026-10-19 to 2026-10-23; `validate_bundle` PASS on the
+  downloaded bundle. A second, redundant dispatch by the agent, run
+  `40148652781` (00:56:26Z), was refused `ACTIVE_WINDOW_INTACT`; its
+  artifact `sentinel-p5-freeze-refusal-r40148652781-a1` matches no
+  discovery prefix. Near-miss: dispatch issued without first listing
+  existing runs.
+  SLOT 1 FAILED (REAL). `sentinel-schedule.yml` run `40191045830`
+  (`schedule`, attempt 1, head Q, created 2026-10-25T11:57:46Z) concluded
+  `failure`: step `orchestrate` success (11:57:58Z to 12:06:14Z, no
+  output in the log); step `upload attempt evidence` failure, "Input
+  required and not supplied: path"; step `upload successor or refusal
+  bundle` skipped; zero artifacts. Cause: the S06 refusal and S17
+  success paths stage only a bundle, so the evidence output was empty;
+  the evidence upload ran unconditionally (`if: always()`) and failed;
+  the bundle upload (implicit `success()`) was then skipped. The
+  successor bundle, the run's CostRow and its step ledger were lost with
+  the runner. NOT ESTABLISHED by any surviving evidence: the Sentinel
+  terminal outcome, its qualification classification, its run ID and its
+  cost. Inference only: S06 refusal is ruled out by the GENESIS state
+  (DAILY, 2,135,191 micro-EUR), and 8 min 16 s is consistent with a paid
+  live Haiku run.
+  SPEND DISCLOSURE. The committed ledger has no CostRow for that run, so
+  accounted trailing-30-day spend may understate real spend by about one
+  Haiku run (start limit 750,000 micro-EUR; honest overshoot possible).
+  The provider-side figure for 2026-10-25 has NOT yet been read from the
+  Console (7-day history: read before 2026-11-01) and will be disclosed
+  when read. Conservative headroom for the replacement window: 2,135,191
+  + 750,000 (slot 1, nominal) + 5 x 750,000 = 6,635,191 <= 40,000,000.
+  OWNER RULING AND CONTAINMENT (2026-10-26). Stop condition "a
+  source/workflow change is needed during an active five-slot window":
+  window `p5w-40148573833` FAILED at slot 1 and cannot qualify; no repair,
+  rerun or manual qualification. `sentinel-schedule.yml` disabled
+  2026-10-26T01:21Z from the operator terminal (`gh` exit 0; REST state
+  `disabled_manually`, `updated_at` 2026-10-26T01:21:47Z) with zero
+  queued or running invocations before and after; no invocation since
+  run `40191045830`, so slots 2 to 5 did not run. Reason: at Q a slot-2..5
+  run restores GENESIS, passes S06, makes the paid model call and only
+  then fails S15 on the missing slot-1 predecessor.
+  REPAIR (this commit). (E1) `sentinel-schedule.yml`: the evidence upload
+  runs only when evidence was staged or no bundle was staged; the bundle
+  upload is unchanged. Exit 0 with nothing staged still fails the job.
+  (E2) `select_active_window` and `discover_active_window` take
+  `require_expected_source` (default True; scheduled runs unchanged); the
+  freeze passes False so a replacement at a new SHA sees the prior tip,
+  and it must name any existing tip in `--supersedes` (refusals
+  `ACTIVE_WINDOW_INTACT`, `SUPERSEDES_MISMATCH`, new `SUPERSEDES_REQUIRED`
+  for a consumed tip, which would otherwise leave two unsuperseded tips).
+  (Amendment code) `QualificationWindowRecord` `schema_version` 2 or 3:
+  v3 freezes no pre-window observations; v2 rules unchanged; the freeze
+  builds v3 and no longer reads the scheduled run listing (streak check
+  removed). (T4) new model-free `sentinel-publication-rehearsal.yml`:
+  dispatch-only, a stub `orchestrate` step and the two upload steps
+  identical to the scheduled lane (contract test), five cases, artifact
+  prefix `sentinel-p5-pubrehearsal-`; not dispatched. Deferred, untouched:
+  success-path step ledger, explicit output roles, REST publication
+  confirmation, predecessor check before the paid run, catch-all
+  exception evidence, `upload-artifact` Node 20 target.
+  ADR-0011 AMENDMENT (2026-10-26; accepted by the owner 2026-10-28). The
+  five pre-window intervals are withdrawn and not replaced by any interval
+  requirement; T4 must pass at the exact SHA to be frozen and be verified
+  by an independent second reader (run, jobs and artifacts APIs) before
+  the freeze GO; T4 evidence is not hashed into the window record and is
+  recorded here in the first commit window after the replacement window
+  ends; the schedule stays disabled through merge, T4 and readiness and
+  is re-enabled only on owner authorization, then the freeze completes
+  before slot 1 (next day's slot if time is short; re-disable and report
+  if the freeze fails). Assurance lost, accepted by the owner: any
+  pre-freeze proof that the scheduler fires at the frozen SHA or that the
+  re-enable took effect; slot 1 may be the first scheduled invocation at
+  that SHA. Five live slots and every acceptance predicate unchanged.
+  T2 GATES: independent second-model reviews from raw materials,
+  2026-10-26, of the repair and of the zero-interval text: both ACCEPT
+  WITH CHANGES, every required change applied (record times corrected;
+  re-enable order; jobs-API step evidence; pinned real record hash;
+  run-identity fields; lost-spend disclosure); overnight gate passed;
+  owner acceptance 2026-10-28.
+  ACTUAL WRITE SET (exactly 13 paths):
+  `adr/0011-phase5-unattended-operation-contract.md`,
+  `.github/workflows/sentinel-schedule.yml`,
+  `.github/workflows/sentinel-publication-rehearsal.yml` (new),
+  `sentinel/phase5/bundle.py`, `sentinel/phase5/models.py`,
+  `sentinel/phase5/orchestrator.py`, `scripts/run_phase5_window_freeze.py`,
+  `tests/test_phase5_bundle.py`, `tests/test_phase5_orchestrator.py`,
+  `tests/test_phase5_window_freeze.py`,
+  `tests/test_phase5_workflow_contracts.py`,
+  `tests/test_phase5_schedule_publication.py` (new), `STATE.md` (this
+  entry).
+  VERIFICATION (local, on the final tree; SYNTHETIC test fixtures except
+  the embedded public record of `p5w-40148573833`): full pytest 3229 passed, 33 skipped,
+  0 failed, exit 0 (20 tests of the withdrawn streak removed, new T1 to T4
+  and schema tests added); coverage 93.8%; 9 of 9 mutations killed (E1
+  reverted; E1 nothing-staged guard dropped; freeze keeps the SHA filter;
+  selection ignores the flag; consumed tip unnamed; flag not passed
+  through; v3 accepts observations; v2 accepts zero; freeze builds v2),
+  tree restored byte-identical; the downloaded GENESIS of
+  `p5w-40148573833` passes `validate_bundle` under the new model with its
+  record hash unchanged; Tier 0 PASS; Phase-1 freeze guard PASS; KOS
+  controls OK; strict write-set check PASS (exactly the 13 paths);
+  publication gate scan at the index PASS. Exact-SHA CI is owed on the
+  merge commit.
+  NON-EVENTS: no push, pull request or merge; no T4 dispatch; no window
+  frozen after `p5w-40148573833`; no model or provider call by this work;
+  no federation-rule, variable, secret or settings change after
+  2026-10-18; `SentinelDailyRun` Disabled; `sentinel-schedule.yml` stays
+  disabled.
+  OWED, OUTSIDE THIS REPOSITORY: failure-register entries in the private
+  governance repository for the untested success-path publication and for
+  the two readiness near-misses (a disabled-at value proposed against an
+  already established boundary; the redundant freeze dispatch).
+  STATUS AFTER THIS RECORD: P5-A to P5-D COMPLETE. P5-E IN PROGRESS (first
+  window failed; replacement not frozen). Phase 6 NOT STARTED.
+  Production-readiness program OPEN; production-ready claim NOT
+  PERMITTED. v0.7 NOT TAGGED.
+  Executing model: Opus 5.5.
+  Next action: owner push, pull request, exact-SHA CI and merge = Q'; the
+  schedule stays disabled; with a separate GO, T4 x5 at Q' and
+  independent verification; fresh readiness review with the slot-1 spend
+  disclosure; with a separate GO, re-enable the schedule; freeze the
+  replacement window with `--supersedes p5w-40148573833` before slot 1;
+  verify the v3 GENESIS and the supersession.
+
 ## Backlog (KOS unit records; Target KOS 06 §D, GOVERNANCE §9)
 
 Rows are read by the KOS computed view (`python core/kos_core.py index
